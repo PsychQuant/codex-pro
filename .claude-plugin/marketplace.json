@@ -1,0 +1,12 @@
+{
+  "name": "codex-pro",
+  "owner": { "name": "Che Cheng" },
+  "description": "Advanced Codex integration marketplace for Claude Code — drop-in upgrade for openai/codex-plugin-cc with ensemble pattern, hard timeouts, circuit breaker, and structured observability.",
+  "plugins": [
+    {
+      "name": "codex-pro",
+      "source": "./plugins/codex-pro",
+      "description": "Codex integration plugin — environment setup, ensemble review, rescue delegation, and structured background jobs. Read-only setup; mutating commands require explicit user invocation."
+    }
+  ]
+}

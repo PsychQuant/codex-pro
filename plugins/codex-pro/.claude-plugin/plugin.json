@@ -1,0 +1,8 @@
+{
+  "name": "codex-pro",
+  "version": "0.1.0",
+  "description": "Advanced Codex integration for Claude Code — drop-in upgrade for openai/codex-plugin-cc with ensemble pattern, hard timeouts, circuit breaker, and structured observability.",
+  "author": { "name": "Che Cheng" },
+  "license": "MIT",
+  "keywords": ["claude-code", "codex", "openai", "ai", "ensemble", "code-review", "rescue"]
+}
