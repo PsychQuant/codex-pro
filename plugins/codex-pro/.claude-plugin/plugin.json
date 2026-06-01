@@ -1,8 +1,8 @@
 {
   "name": "codex-pro",
-  "version": "0.2.0",
-  "description": "Advanced Codex integration for Claude Code — drop-in upgrade for openai/codex-plugin-cc with ensemble pattern, hard timeouts, circuit breaker, and structured observability. v0.2: adds /codex-pro:review v0.1, /codex-pro:rescue v0.1.1, and /codex-pro:adversarial-review v0.1 to the v0.1 setup + batch baseline.",
+  "version": "0.3.0",
+  "description": "Advanced Codex integration for Claude Code — drop-in upgrade for openai/codex-plugin-cc with ensemble pattern, hard timeouts, circuit breaker, and structured observability. v0.3: adds /codex-pro:status, /codex-pro:result, /codex-pro:cancel triple (read-only consumer category), completing the drop-in surface — 7/7 codex-plugin-cc commands now have codex-pro counterparts (setup / batch / review / rescue / adversarial-review / status / result / cancel).",
   "author": { "name": "Che Cheng" },
   "license": "MIT",
-  "keywords": ["claude-code", "codex", "openai", "ai", "ensemble", "code-review", "rescue", "adversarial-review", "hostile-review", "circuit-breaker"]
+  "keywords": ["claude-code", "codex", "openai", "ai", "ensemble", "code-review", "rescue", "adversarial-review", "hostile-review", "circuit-breaker", "read-only-consumer", "drop-in", "informational"]
 }
