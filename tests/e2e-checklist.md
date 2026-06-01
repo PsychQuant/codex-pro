@@ -1,4 +1,8 @@
-# Layer 3 — Manual e2e checklist for codex-pro
+# Layer 3 — e2e checklist for codex-pro
+
+Layer 3 = Claude 跑 SKILL.md prose 真正觸發 codex-call。補 Layer 2 的 SKILL.md→runtime drift blind spot（Layer 2 跑 test-script 自 implement 的 mock；Layer 3 跑 Claude 解讀 SKILL.md 的 real invocation）。
+
+**兩種跑法**：自動化 `bash tests/e2e.sh`（preferred）+ manual checklist（plugin install 等 UI flow）。
 
 跑前先確保 Layer 1 + 2 通過：
 
@@ -7,11 +11,47 @@ cd <codex-pro repo root>
 bash tests/run.sh
 ```
 
-跑完 `tests/run.sh` 全綠後，再走以下 manual checklist。每項打勾代表你親自在 fresh Claude Code session 觀察到該行為。
+## Automated Layer 3 — `bash tests/e2e.sh`
+
+`tests/e2e.sh` 在 fresh `claude --print --plugin-dir` session 觸發 SKILL.md、verify result file 結構 + behavioral marker。5 scenario × 2 producer skill = 10 組合。
+
+**Quota budget**：
+- 每組合 = 1 codex-call quota + ~50k Claude API tokens + 60-180s
+- 完整 10 組合 = ~10 codex-call + ~500k Claude API tokens + 10-30 min + ~$0.5-$2
+
+**Rate limit recovery**：
+- `tests/e2e.sh` 內建 retry — 觀察到 stdout 含 `Server is temporarily limiting requests` 字串時自動 sleep 30s/60s/120s exponential backoff、最多 3 次 retry
+- 若 3 次仍 throttle、script exit 4；user 手動 wait 5min 後重跑該組合
+- Codex-call 本身的 fail-fast (rate_limit / oauth_invalid / timeout / target_invalid) 是 valid e2e 結果、不 retry
+
+跑 10 組合（建議分次跑、便於 spot regression）：
+
+```bash
+# Review × 5 scenarios
+bash tests/e2e.sh --skill review --scenario mixed
+bash tests/e2e.sh --skill review --scenario binary
+bash tests/e2e.sh --skill review --scenario oversize
+bash tests/e2e.sh --skill review --scenario empty-repo
+bash tests/e2e.sh --skill review --scenario all-empty
+
+# Adversarial-review × 5 scenarios
+bash tests/e2e.sh --skill adversarial-review --scenario mixed
+bash tests/e2e.sh --skill adversarial-review --scenario binary
+bash tests/e2e.sh --skill adversarial-review --scenario oversize
+bash tests/e2e.sh --skill adversarial-review --scenario empty-repo
+bash tests/e2e.sh --skill adversarial-review --scenario all-empty
+```
+
+完整 matrix 通過後算 release gate clear。10/10 PASS 是目標、acceptable 1-2 個因偶發 rate limit / codex quota 個別 fail 需 retry。
+
+## Manual Layer 3 — UI Flow Checklist
+
+跑完 `tests/run.sh` 與 automated `tests/e2e.sh` 全綠後，再走以下 manual checklist（covering plugin install UI flow）。每項打勾代表你親自在 fresh Claude Code session 觀察到該行為。
 
 ## Preconditions
 
-- [ ] **Layer 1+2 已綠**：跑完 `bash tests/run.sh` 顯示 0 fail / exit 0（這是進入 e2e 的前置）
+- [ ] **Layer 1+2 已綠**：跑完 `bash tests/run.sh` 顯示 0 fail / exit 0
+- [ ] **Layer 3 automated 已綠**：跑完 `bash tests/e2e.sh` 10 組合全 PASS（或 acceptable 1-2 個個別 rate-limit fail 已 retry pass）
 
 ## A. Plugin install path（正規 marketplace 路徑）
 

@@ -183,11 +183,12 @@ Future skill design：先決定 category 再寫 SKILL.md、prevent 散亂的 ski
 
 三層 test scenarios（見 `tests/` 目錄）：
 
-| Layer | Entry | 內容 | 自動化 |
-|---|---|---|---|
-| 1 static | `bash tests/static.sh` | manifest JSON schema、SKILL.md frontmatter、`bash -n`、batch template sha256（hardcoded invariant）、namespace consistency grep | 全自動 |
-| 2 behavioral | `bash tests/setup.sh` + `bash tests/batch.sh` | setup 三 check 在 isolated env 重跑（fake `HOME` / 剝離 `PATH` / mktemp fake plugin root）、read-only 紀律驗證、batch SKILL exception 標記 + template parallel orchestration markers | 全自動 |
-| 3 manual | `tests/e2e-checklist.md` | claude --plugin-dir + skill UI 觸發 + 輸出比對 + post-test cleanup | 手動 checklist（≥ 12 條） |
+| Layer | Entry | 內容 | 自動化 | 跑 cadence |
+|---|---|---|---|---|
+| 1 static | `bash tests/static.sh` | manifest JSON schema、SKILL.md frontmatter、`bash -n`、batch template sha256（hardcoded invariant）、namespace consistency grep | 全自動 | per commit |
+| 2 behavioral | `bash tests/setup.sh` + 各 skill `.sh` + `lib/assert.sh` | setup isolated env、producer skill collection logic mock + fixture、read-only consumer behavioral runtime test、batch exception markers | 全自動 | per commit |
+| 3 e2e (automated) | `bash tests/e2e.sh --skill X --scenario Y` | 跑 `claude --print --plugin-dir` 真正觸發 SKILL.md、5 scenario × 2 producer skill = 10 組合、result file 結構 + behavioral marker verify | 全自動 **opt-in**（不入 `tests/run.sh`）| per release（~10 codex-call quota + ~500k Claude tokens + 10-30min + retry policy on rate limit） |
+| 3 manual | `tests/e2e-checklist.md` | plugin install UI flow、marketplace add / install / setup 觸發 + 輸出比對 | 手動 checklist | per release |
 
 一條命令跑 Layer 1+2：
 

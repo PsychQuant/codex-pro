@@ -1,9 +1,14 @@
 #!/usr/bin/env bash
-# tests/run.sh — codex-pro test dispatcher.
-# Runs Layer 1 (static.sh) and Layer 2 (setup.sh + batch.sh) sequentially,
-# aggregates pass/fail counts from each layer, and exits non-zero if any
-# layer reported a failure. Layer 3 is the manual e2e checklist
-# (tests/e2e-checklist.md) and is NOT executed here.
+# tests/run.sh — codex-pro test dispatcher (Layer 1 + Layer 2 only).
+# Runs Layer 1 (static.sh) and Layer 2 (per-skill behavioral) sequentially,
+# aggregates pass/fail counts, exits non-zero on any failure.
+#
+# Layer 3 e2e (`tests/e2e.sh`) is OPT-IN and NOT dispatched here — it triggers
+# real `claude --print --plugin-dir` sessions, costs ~10 codex-call quota +
+# ~500k Claude API tokens for the full 10-combination matrix, and is subject
+# to Anthropic API server-side rate-limit flakiness. Run Layer 3 per release
+# (release gate), not per commit. See tests/e2e-checklist.md for the
+# automated invocation and manual UI flow.
 
 set -uo pipefail
 
