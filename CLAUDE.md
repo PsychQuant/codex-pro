@@ -79,7 +79,9 @@ codex-pro/                                ← marketplace root（自身為 catal
 │           ├── review/SKILL.md           ← 已落地：/codex-pro:review v0.1（codex-call HTTPS direct、Design constraint #1 default rule；adversarial-review 留 v0.2）
 │           ├── rescue/SKILL.md           ← 已落地：/codex-pro:rescue v0.1.1（codex-call HTTPS direct、Design constraint #1 default rule；task delegation；fail-fast 4 類含 task_unclear；session continuity 為 known limitation、待 upstream codex-call 加 session support）
 │           ├── adversarial-review/SKILL.md ← 已落地 v0.1（hostile review、4 mandatory H2 sections 各 non-empty、fail-fast 4 類含 target_invalid pre-flight、--focus 200-char cap + fenced delimiter 防 #333、--depth shallow|deep）
-│           └── jobs-status/jobs-result/jobs-cancel/  ← 未來：/codex-pro:status / :result / :cancel
+│           ├── status/SKILL.md            ← 已落地 v0.1（read-only consumer — 掃 .codex-pro/*.md + markdown table summary、--skill filter）
+│           ├── result/SKILL.md            ← 已落地 v0.1（read-only consumer — 顯示特定 result file、三 selection mode）
+│           └── cancel/SKILL.md            ← 已落地 v0.1（informational only — stateless explainer + 3 remediation、永遠 exit 0）
 ├── openspec/                             ← Spectra SDD 工件
 ├── README.md                             ← marketplace 對外入口（install user）
 └── CLAUDE.md                             ← AI / collaborator 設計指引
@@ -126,9 +128,9 @@ codex-pro/                                ← marketplace root（自身為 catal
 | `/codex:review` | `/codex-pro:review` — 已落地 v0.1 | 走 codex-call HTTPS direct、Design constraint #1 default rule 範例（與 batch exception 對比）；結果寫 `.codex-pro/review-<ts>.md`；fail-fast 紀律 |
 | `/codex:adversarial-review` | `/codex-pro:adversarial-review` — 已落地 v0.1 | 走 codex-call HTTPS direct、Design constraint #1 default rule（與 review / rescue 同模板、與 batch exception 對比、3:1 default vs exception）；single-oracle hostile reviewer pass；結果寫 `.codex-pro/adversarial-review-<ts>.md` 含 4 mandatory H2 sections（Assumptions Challenged / Failure Modes / Alternative Approaches / Trade-off Counterarguments）各 non-empty；fail-fast 4 類含 adversarial-specific **`target_invalid`** pre-flight class（防空 prompt 浪費 quota）；`--focus <area>` 經 200-char cap + fenced delimiter（`<<<USER_FOCUS_START>>>` / `<<<USER_FOCUS_END>>>`）+ role-protection 防 prompt-injection（解上游 #333）；`--depth shallow\|deep` 控制 adversarial 強度（預設 deep） |
 | `/codex:rescue` | `/codex-pro:rescue` — 已落地 v0.1.1 | 走 codex-call HTTPS direct、Design constraint #1 default rule（與 review 同模板、與 batch exception 對比）；task delegation；fail-fast 4 類含 task_unclear；結果寫 `.codex-pro/rescue-<ts>.md`；**known limitation**：session continuity 暫已移除（codex-call 尚無 session flag upstream support、待 restore） |
-| `/codex:status` | `/codex-pro:status` — 規劃中 | 含 token / cost / tier |
-| `/codex:result` | `/codex-pro:result` — 規劃中 | 一律從 structured file 讀，不重 spawn |
-| `/codex:cancel` | `/codex-pro:cancel` — 規劃中 | 不靠 taskkill，HTTPS connection cancel |
+| `/codex:status` | `/codex-pro:status` — 已落地 v0.1 | Read-only consumer — 掃 `.codex-pro/*.md` + markdown table summary（columns：filename / skill type / target / outcome summary / timestamp / error）、`--skill <review\|rescue\|adversarial-review>` filter、missing/empty `.codex-pro/` 為 informational case（exit 0、不建目錄） |
+| `/codex:result` | `/codex-pro:result` — 已落地 v0.1 | Read-only consumer — 顯示特定 result file（frontmatter + body verbatim）、三 selection mode 互斥：位置 `<filename>` / `--latest <skill>` / `--latest`（無 arg）；用 filename ISO8601 portion 決定 most recent（不查 mtime / frontmatter timestamp）；fail-fast with `/codex-pro:status` 或 producer skill 之 remediation、不 silent fallback |
+| `/codex:cancel` | `/codex-pro:cancel` — 已落地 v0.1 | **informational only** — codex-pro v0.2 為 stateless single-shot、無 background job、無 PID 可殺、無 upstream cancel API；輸出 deterministic explainer + 3 remediation（Ctrl-C / `--max-time 600` timeout / future v0.3+ background mode）；零 file ops、零 process signal、永遠 exit 0；displayed limitation 而非 silent stub |
 
 codex-pro 與 codex-plugin-cc 的命令名不衝突，可同時安裝做 A/B 比較。
 
@@ -146,6 +148,25 @@ codex-pro 與 codex-plugin-cc 的命令名不衝突，可同時安裝做 A/B 比
 | 需要 ensemble 多角度 | 留 v0.2 review-v2-ensemble | 留 v0.2 |
 
 兩個 skill 的 output 結構也反映 mental model 差異 — review 的 `## Findings` 是 enumerative（findings count 可變），adversarial-review 的 4 H2 sections（Assumptions Challenged / Failure Modes / Alternative Approaches / Trade-off Counterarguments）是 perspectival（固定四個視角、每段 non-empty）。
+
+## Read-only consumer skills（status / result / cancel）— v0.2 起 mental model 轉軸
+
+v0.2 起 codex-pro 把 skill 分四 category：
+
+| Category | Skills | 屬性 |
+|---|---|---|
+| **Read-only environment** | setup | 環境檢查、無 disk mutation、無 Codex 互動 |
+| **Read-only consumer**（v0.2 新增）| status / result / cancel | 讀 `.codex-pro/` producer output（cancel 不讀）、無 disk mutation、無 Codex 互動 |
+| **Mutating producer** | review / rescue / adversarial-review | 寫 `.codex-pro/<skill>-<ts>.md`、走 Codex HTTP wrapper、Design constraint #1 default rule |
+| **Mutating exception** | batch | `codex exec --full-auto` 平行批次、Design constraint #1 explicit exception |
+
+User 一眼看出「我跑這 skill 會不會動 disk / 燒 Codex quota」— 是 mental model 必備 affordance：
+
+- Read-only category（4 skill）跑都安全、不耗 quota、不破壞既有 disk 狀態
+- Producer category（3 skill）會建 `.codex-pro/` + 寫 result file + 燒 quota（一次 codex-call）
+- Exception（batch）會 fan-out shell jobs + 寫 output dir + 燒大量 quota
+
+Future skill design：先決定 category 再寫 SKILL.md、prevent 散亂的 skill 屬性蔓延。如 v0.3 可能加 `/codex-pro:doctor` 既檢查環境（read-only）也修配置（mutating）— 走 design 一輪歸主屬性類、配 secondary tag。
 
 ## Development workflow
 

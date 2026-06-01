@@ -76,6 +76,9 @@ run_layer batch
 run_layer review
 run_layer rescue
 run_layer adversarial-review
+run_layer status
+run_layer result
+run_layer cancel
 
 # ── Aggregate summary ─────────────────────────────────────────────
 printf '\n%b════ run.sh aggregate summary%b\n' "$C_HEAD" "$C_RESET"

@@ -15,7 +15,9 @@
 | `/codex:review` | `/codex-pro:review` — 已落地 v0.1 |
 | `/codex:adversarial-review` | `/codex-pro:adversarial-review` — 已落地 v0.1 |
 | `/codex:rescue` | `/codex-pro:rescue` — 已落地 v0.1.1 |
-| `/codex:status` / `/codex:result` / `/codex:cancel` | `/codex-pro:status` / `:result` / `:cancel` — 規劃中 |
+| `/codex:status` | `/codex-pro:status` — 已落地 v0.1 |
+| `/codex:result` | `/codex-pro:result` — 已落地 v0.1 |
+| `/codex:cancel` | `/codex-pro:cancel` — 已落地 v0.1（informational only） |
 
 ## Why a marketplace shell, not just a single plugin
 
@@ -41,7 +43,9 @@ Marketplace 殼存在的理由是給未來「對外發布到 GitHub + `/plugin m
 | `review` (`/codex-pro:review`) | v0.1.0 | Single-oracle read-only review。target 三選一：current uncommitted diff / file path / `--base <ref>` branch comparison。走 codex-call HTTPS direct（**無 subprocess**、嚴守 Design constraint #1，與 batch exception 對比）。結果寫 `.codex-pro/review-<ts>.md`（YAML frontmatter + Summary + Findings）。Rate limit / OAuth invalid / timeout 走 circuit-breaker fail-fast、不 retry。 |
 | `adversarial-review` (`/codex-pro:adversarial-review`) | v0.1.0 | Single-oracle hostile review。Target 三選一同 review：current uncommitted diff / file path / `--base <ref>` branch comparison。走 codex-call HTTPS direct（**無 subprocess**、與 review / rescue 同 Design constraint #1 default rule、與 batch exception 對比、3:1 default vs exception）。結果寫 `.codex-pro/adversarial-review-<ts>.md`（YAML frontmatter 6 必填 + optional `error` + body **4 mandatory H2 sections 各 non-empty**：Assumptions Challenged / Failure Modes / Alternative Approaches / Trade-off Counterarguments）。`--focus <area>` 經 200-char cap + fenced delimiter（`<<<USER_FOCUS_START>>>` / `<<<USER_FOCUS_END>>>`）+ role-protection 防 prompt-injection（解上游 #333）。`--depth shallow\|deep` 控制 adversarial 強度（預設 deep）。Fail-fast 4 類含 **`target_invalid`** pre-flight class（target 解析後為空 / unreadable / zero-byte / whitespace-only 時 abort、防止把空 prompt 送進 codex 浪費 quota）。 |
 | `rescue` (`/codex-pro:rescue`) | v0.1.1 | Single-oracle task delegation 給 Codex（與 review 同 default rule、與 batch exception 對比）。argument 三欄：`<task description>` + `--context <path>` (可重複) + `--criteria <text>`。結果寫 `.codex-pro/rescue-<ts>.md`（YAML frontmatter 7 fields + Task Brief + Outcome + Suggested Next Steps）。Fail-fast 4 類含 **task_unclear**（Codex 無法 commit 答案時顯式回報、消除 #324 silent stub）。**v0.1.1 known limitation**：session continuity 已移除（codex-call 尚無 session flag upstream support、待 restore）。 |
-| `status` / `result` / `cancel` | 規劃中 | Background job 管理（含 token / cost / tier 觀測） |
+| `status` (`/codex-pro:status`) | v0.1.0 | Read-only consumer — 掃 `.codex-pro/*.md` 並輸出 markdown table summary（columns：filename / skill type / target / outcome summary / timestamp / error）、`--skill <review\|rescue\|adversarial-review>` filter、missing/empty `.codex-pro/` 為 informational case（exit 0、不建目錄）。 |
+| `result` (`/codex-pro:result`) | v0.1.0 | Read-only consumer — 顯示特定 result file（frontmatter + body verbatim）、三 selection mode 互斥：位置 `<filename>` / `--latest <skill>` / `--latest`（無 arg）；用 filename ISO8601 portion 決定 most recent（不查 mtime / frontmatter timestamp）；fail-fast with `/codex-pro:status` 或 producer skill 之 remediation、不 silent fallback。 |
+| `cancel` (`/codex-pro:cancel`) | v0.1.0 | **Informational only** — codex-pro v0.2 為 stateless single-shot、不殺任何 PID、不送 HTTPS；輸出 stateless explainer + 3 條 remediation（Ctrl-C / `--max-time 600` timeout / future v0.3+ background mode）、永遠 exit 0、deterministic byte-identical output；displayed limitation 而非 silent stub。 |
 
 ## Review vs adversarial-review — when to use which
 
@@ -62,6 +66,22 @@ Decision table 給 user 一眼對應自己情境：
 | 需要 ensemble 多角度 | 留 v0.2 review-v2-ensemble | 留 v0.2 |
 
 兩個 skill 命令名不衝突，可同一 session 順跑：先 `/codex-pro:review` 找具體 bug、再 `/codex-pro:adversarial-review` 對設計面壓力測試。
+
+## Read-only vs producer skills — v0.2 起 mental model 轉軸
+
+v0.2 起 codex-pro 把 skill 分四 category 讓使用者一眼看出「跑這個會不會動 disk / 燒 Codex quota」：
+
+- **Read-only category（不耗 quota、不破壞 disk）**：`setup`（環境檢查）+ `status`（list result files）+ `result`（顯示單一 result file）+ `cancel`（informational only）
+- **Mutating producer category（會建 `.codex-pro/` + 寫 result file + 一次 Codex HTTP wrapper call）**：`review`（assessment）+ `rescue`（task delegation）+ `adversarial-review`（hostile review）
+- **Mutating exception category（fan-out shell jobs + 寫 output dir + 大量 quota）**：`batch`（Design constraint #1 explicit exception）
+
+實務 workflow：
+
+1. 安裝後先跑 `/codex-pro:setup` 確認環境（read-only、零成本）
+2. 用 producer skill 跑 review / rescue / adversarial-review（each 一次 quota）
+3. 用 `/codex-pro:status` 列出累積的 result files（read-only）
+4. 用 `/codex-pro:result --latest` 看最近一次 detail（read-only）
+5. 想 cancel 跑到一半的 producer call？用 Ctrl-C 或等 `--max-time 600`（`/codex-pro:cancel` 為 informational explainer、解釋為何 v0.2 stateless model 無法真 cancel）
 
 ## Install
 
