@@ -14,7 +14,7 @@
 | `/codex:setup` | `/codex-pro:setup` — 已落地 |
 | `/codex:review` | `/codex-pro:review` — 已落地 v0.1 |
 | `/codex:adversarial-review` | `/codex-pro:adversarial-review` — 規劃中 |
-| `/codex:rescue` | `/codex-pro:rescue` — 規劃中 |
+| `/codex:rescue` | `/codex-pro:rescue` — 已落地 v0.1 |
 | `/codex:status` / `/codex:result` / `/codex:cancel` | `/codex-pro:status` / `:result` / `:cancel` — 規劃中 |
 
 ## Why a marketplace shell, not just a single plugin
@@ -40,7 +40,7 @@ Marketplace 殼存在的理由是給未來「對外發布到 GitHub + `/plugin m
 | `batch` (`/codex-pro:batch`) | v0.1.0 | 用 `codex exec --full-auto` 平行批次處理大型 reference doc 多 chunk（textbook 解題 / 翻譯 / 摘要）。產生 shell script + 跑 subprocess + 寫 output dir，**非 read-only**（與 setup 區別）。本 skill 為 Design constraint #1 的 explicit exception。 |
 | `review` (`/codex-pro:review`) | v0.1.0 | Single-oracle read-only review。target 三選一：current uncommitted diff / file path / `--base <ref>` branch comparison。走 codex-call HTTPS direct（**無 subprocess**、嚴守 Design constraint #1，與 batch exception 對比）。結果寫 `.codex-pro/review-<ts>.md`（YAML frontmatter + Summary + Findings）。Rate limit / OAuth invalid / timeout 走 circuit-breaker fail-fast、不 retry。 |
 | `adversarial-review` | 規劃中 | Ensemble pattern：4 Claude teammates + N Codex 角色平行對 review 結果做 devil's advocate 質疑（review v0.2 範圍）。 |
-| `rescue` | 規劃中 | Delegate task 給 Codex，HTTPS direct 無 subprocess |
+| `rescue` (`/codex-pro:rescue`) | v0.1.0 | Single-oracle task delegation 給 Codex（與 review 同 default rule、與 batch exception 對比）。argument 三欄：`<task description>` + `--context <path>` (可重複) + `--criteria <text>`。支援 `--resume <session-id>` / `--fresh` 接續 previous session（mutually exclusive）。結果寫 `.codex-pro/rescue-<ts>.md`（YAML frontmatter 8 fields + Task Brief + Outcome + Suggested Next Steps）。Fail-fast 4 類含 **task_unclear**（Codex 無法 commit 答案時顯式回報、消除 #324 silent stub）。 |
 | `status` / `result` / `cancel` | 規劃中 | Background job 管理（含 token / cost / tier 觀測） |
 
 ## Install
