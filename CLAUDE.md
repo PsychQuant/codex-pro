@@ -78,6 +78,7 @@ codex-pro/                                ← marketplace root（自身為 catal
 │           ├── batch/SKILL.md            ← 已落地：/codex-pro:batch（codex exec 平行批次；Design constraint #1 的 explicit exception）
 │           ├── review/SKILL.md           ← 已落地：/codex-pro:review v0.1（codex-call HTTPS direct、Design constraint #1 default rule；adversarial-review 留 v0.2）
 │           ├── rescue/SKILL.md           ← 已落地：/codex-pro:rescue v0.1.1（codex-call HTTPS direct、Design constraint #1 default rule；task delegation；fail-fast 4 類含 task_unclear；session continuity 為 known limitation、待 upstream codex-call 加 session support）
+│           ├── adversarial-review/SKILL.md ← 已落地 v0.1（hostile review、4 mandatory H2 sections 各 non-empty、fail-fast 4 類含 target_invalid pre-flight、--focus 200-char cap + fenced delimiter 防 #333、--depth shallow|deep）
 │           └── jobs-status/jobs-result/jobs-cancel/  ← 未來：/codex-pro:status / :result / :cancel
 ├── openspec/                             ← Spectra SDD 工件
 ├── README.md                             ← marketplace 對外入口（install user）
@@ -123,13 +124,28 @@ codex-pro/                                ← marketplace root（自身為 catal
 | `/codex:setup` | `/codex-pro:setup` — 已落地 | 檢查 `~/.codex/auth.json` 與 `codex-call` 在 PATH，純 read-only |
 | （無對應）| `/codex-pro:batch` — 已落地 | `codex exec --full-auto` 平行批次處理大型 reference doc 多 chunk（textbook 解題 / 翻譯 / 摘要）；**Design constraint #1 的 explicit exception**（fan-out shell job control，非 single-shot pipe）；mutating（產生 shell script + 寫 output dir）|
 | `/codex:review` | `/codex-pro:review` — 已落地 v0.1 | 走 codex-call HTTPS direct、Design constraint #1 default rule 範例（與 batch exception 對比）；結果寫 `.codex-pro/review-<ts>.md`；fail-fast 紀律 |
-| `/codex:adversarial-review` | `/codex-pro:adversarial-review` — 規劃中 | Devils-advocate 為獨立 ensemble 角色 |
+| `/codex:adversarial-review` | `/codex-pro:adversarial-review` — 已落地 v0.1 | 走 codex-call HTTPS direct、Design constraint #1 default rule（與 review / rescue 同模板、與 batch exception 對比、3:1 default vs exception）；single-oracle hostile reviewer pass；結果寫 `.codex-pro/adversarial-review-<ts>.md` 含 4 mandatory H2 sections（Assumptions Challenged / Failure Modes / Alternative Approaches / Trade-off Counterarguments）各 non-empty；fail-fast 4 類含 adversarial-specific **`target_invalid`** pre-flight class（防空 prompt 浪費 quota）；`--focus <area>` 經 200-char cap + fenced delimiter（`<<<USER_FOCUS_START>>>` / `<<<USER_FOCUS_END>>>`）+ role-protection 防 prompt-injection（解上游 #333）；`--depth shallow\|deep` 控制 adversarial 強度（預設 deep） |
 | `/codex:rescue` | `/codex-pro:rescue` — 已落地 v0.1.1 | 走 codex-call HTTPS direct、Design constraint #1 default rule（與 review 同模板、與 batch exception 對比）；task delegation；fail-fast 4 類含 task_unclear；結果寫 `.codex-pro/rescue-<ts>.md`；**known limitation**：session continuity 暫已移除（codex-call 尚無 session flag upstream support、待 restore） |
 | `/codex:status` | `/codex-pro:status` — 規劃中 | 含 token / cost / tier |
 | `/codex:result` | `/codex-pro:result` — 規劃中 | 一律從 structured file 讀，不重 spawn |
 | `/codex:cancel` | `/codex-pro:cancel` — 規劃中 | 不靠 taskkill，HTTPS connection cancel |
 
 codex-pro 與 codex-plugin-cc 的命令名不衝突，可同時安裝做 A/B 比較。
+
+## Review vs adversarial-review — when to use which
+
+`/codex-pro:review` 與 `/codex-pro:adversarial-review` 共用 single-oracle codex-call infrastructure、但 mental model 不同：review 找 bug（assessment）、adversarial-review 找盲點（challenge）。Decision table 給 user 一眼對應自己情境：
+
+| 情境 | 用 `/codex-pro:review` | 用 `/codex-pro:adversarial-review` |
+|---|---|---|
+| 我寫了 code、不確定有沒有 bug | ✓ | ✗（過 hostile） |
+| 我設計了方案、想被挑刺 | ✗（assessment 不 challenge） | ✓ |
+| Code review 為主、附帶建議 | ✓ | ✗ |
+| 想 stress-test trade-off | ✗ | ✓ |
+| 找 bug + 想 alternatives | 跑 review 先、有疑慮再跑 adversarial-review | — |
+| 需要 ensemble 多角度 | 留 v0.2 review-v2-ensemble | 留 v0.2 |
+
+兩個 skill 的 output 結構也反映 mental model 差異 — review 的 `## Findings` 是 enumerative（findings count 可變），adversarial-review 的 4 H2 sections（Assumptions Challenged / Failure Modes / Alternative Approaches / Trade-off Counterarguments）是 perspectival（固定四個視角、每段 non-empty）。
 
 ## Development workflow
 

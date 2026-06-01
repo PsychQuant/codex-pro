@@ -1,2 +1,5 @@
 .spectra/
 openspec/.vector-search.db*
+
+# codex-pro skill runtime output (review / rescue / adversarial-review result files)
+.codex-pro/

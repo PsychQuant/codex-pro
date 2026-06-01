@@ -13,7 +13,7 @@
 | `openai/codex-plugin-cc`（單一 plugin、200+ open issues） | `codex-pro` marketplace + 同名 plugin |
 | `/codex:setup` | `/codex-pro:setup` — 已落地 |
 | `/codex:review` | `/codex-pro:review` — 已落地 v0.1 |
-| `/codex:adversarial-review` | `/codex-pro:adversarial-review` — 規劃中 |
+| `/codex:adversarial-review` | `/codex-pro:adversarial-review` — 已落地 v0.1 |
 | `/codex:rescue` | `/codex-pro:rescue` — 已落地 v0.1.1 |
 | `/codex:status` / `/codex:result` / `/codex:cancel` | `/codex-pro:status` / `:result` / `:cancel` — 規劃中 |
 
@@ -39,9 +39,29 @@ Marketplace 殼存在的理由是給未來「對外發布到 GitHub + `/plugin m
 | `setup` | v0.1.0 | 驗證 OAuth、codex-call runtime、plugin manifest 環境是否就緒。**Read-only**，跑其他 skill 前先確認。 |
 | `batch` (`/codex-pro:batch`) | v0.1.0 | 用 `codex exec --full-auto` 平行批次處理大型 reference doc 多 chunk（textbook 解題 / 翻譯 / 摘要）。產生 shell script + 跑 subprocess + 寫 output dir，**非 read-only**（與 setup 區別）。本 skill 為 Design constraint #1 的 explicit exception。 |
 | `review` (`/codex-pro:review`) | v0.1.0 | Single-oracle read-only review。target 三選一：current uncommitted diff / file path / `--base <ref>` branch comparison。走 codex-call HTTPS direct（**無 subprocess**、嚴守 Design constraint #1，與 batch exception 對比）。結果寫 `.codex-pro/review-<ts>.md`（YAML frontmatter + Summary + Findings）。Rate limit / OAuth invalid / timeout 走 circuit-breaker fail-fast、不 retry。 |
-| `adversarial-review` | 規劃中 | Ensemble pattern：4 Claude teammates + N Codex 角色平行對 review 結果做 devil's advocate 質疑（review v0.2 範圍）。 |
+| `adversarial-review` (`/codex-pro:adversarial-review`) | v0.1.0 | Single-oracle hostile review。Target 三選一同 review：current uncommitted diff / file path / `--base <ref>` branch comparison。走 codex-call HTTPS direct（**無 subprocess**、與 review / rescue 同 Design constraint #1 default rule、與 batch exception 對比、3:1 default vs exception）。結果寫 `.codex-pro/adversarial-review-<ts>.md`（YAML frontmatter 6 必填 + optional `error` + body **4 mandatory H2 sections 各 non-empty**：Assumptions Challenged / Failure Modes / Alternative Approaches / Trade-off Counterarguments）。`--focus <area>` 經 200-char cap + fenced delimiter（`<<<USER_FOCUS_START>>>` / `<<<USER_FOCUS_END>>>`）+ role-protection 防 prompt-injection（解上游 #333）。`--depth shallow\|deep` 控制 adversarial 強度（預設 deep）。Fail-fast 4 類含 **`target_invalid`** pre-flight class（target 解析後為空 / unreadable / zero-byte / whitespace-only 時 abort、防止把空 prompt 送進 codex 浪費 quota）。 |
 | `rescue` (`/codex-pro:rescue`) | v0.1.1 | Single-oracle task delegation 給 Codex（與 review 同 default rule、與 batch exception 對比）。argument 三欄：`<task description>` + `--context <path>` (可重複) + `--criteria <text>`。結果寫 `.codex-pro/rescue-<ts>.md`（YAML frontmatter 7 fields + Task Brief + Outcome + Suggested Next Steps）。Fail-fast 4 類含 **task_unclear**（Codex 無法 commit 答案時顯式回報、消除 #324 silent stub）。**v0.1.1 known limitation**：session continuity 已移除（codex-call 尚無 session flag upstream support、待 restore）。 |
 | `status` / `result` / `cancel` | 規劃中 | Background job 管理（含 token / cost / tier 觀測） |
+
+## Review vs adversarial-review — when to use which
+
+`/codex-pro:review` 與 `/codex-pro:adversarial-review` 共用 single-oracle codex-call infrastructure，但 mental model 完全不同：
+
+- **review**：「對既有 code 跑診斷、找 bug」(assessment) — output 是 `## Findings`（findings count 可變、enumerative）
+- **adversarial-review**：「對既有 code 或 plan 跑壓力測試、找盲點」(challenge) — output 是 4 個固定 H2 sections 各 non-empty（perspectival，固定四個視角）
+
+Decision table 給 user 一眼對應自己情境：
+
+| 情境 | 用 `/codex-pro:review` | 用 `/codex-pro:adversarial-review` |
+|---|---|---|
+| 我寫了 code、不確定有沒有 bug | ✓ | ✗（過 hostile） |
+| 我設計了方案、想被挑刺 | ✗（assessment 不 challenge） | ✓ |
+| Code review 為主、附帶建議 | ✓ | ✗ |
+| 想 stress-test trade-off | ✗ | ✓ |
+| 找 bug + 想 alternatives | 跑 review 先、有疑慮再跑 adversarial-review | — |
+| 需要 ensemble 多角度 | 留 v0.2 review-v2-ensemble | 留 v0.2 |
+
+兩個 skill 命令名不衝突，可同一 session 順跑：先 `/codex-pro:review` 找具體 bug、再 `/codex-pro:adversarial-review` 對設計面壓力測試。
 
 ## Install
 

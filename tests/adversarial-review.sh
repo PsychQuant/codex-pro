@@ -1,0 +1,154 @@
+#!/usr/bin/env bash
+# tests/adversarial-review.sh — Layer 2: structural & semantic checks for the
+# adversarial-review skill. Verifies frontmatter (with mental-model trigger
+# keyword), codex-call HTTPS-direct invocation (Design constraint #1 default
+# rule, same as review / rescue, distinct from batch exception), hard timeout
+# flag, fail-fast circuit-breaker discipline (4 classes including the
+# adversarial-specific target_invalid pre-flight class), result-file structure
+# contract (7 frontmatter fields + 4 mandatory H2 sections, each MUST be
+# non-empty), --focus prompt-injection mitigation (200-char cap + fenced
+# delimiter + role-protection statement, mitigating upstream codex-plugin-cc
+# issue #333), --depth flag, and the .codex-pro/adversarial-review-<ts>.md
+# result-file path marker.
+
+set -uo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+
+# shellcheck disable=SC1091
+source "$SCRIPT_DIR/lib/assert.sh"
+
+ADV_REVIEW_SKILL="$REPO_ROOT/plugins/codex-pro/skills/adversarial-review/SKILL.md"
+
+assert_file "$ADV_REVIEW_SKILL" "adversarial-review SKILL.md exists"
+
+# ── (a) Frontmatter parse (name + allowed-tools + mental-model keyword) ──
+fm_check=$(python3 - "$ADV_REVIEW_SKILL" <<'PY' 2>/dev/null
+import re, sys
+content = open(sys.argv[1]).read()
+m = re.match(r"^---\n(.*?)\n---\n", content, re.DOTALL)
+if not m:
+    print("no_frontmatter"); sys.exit(0)
+fm = m.group(1)
+name_ok = "name: adversarial-review" in fm
+bash_ok = "Bash" in fm
+read_ok = "Read" in fm
+# mental-model trigger keyword (distinct from review's assessment verbiage)
+keyword_ok = any(k in fm for k in ("hostile", "challenge", "壓力測試", "stress-test"))
+print(f"name={name_ok} bash={bash_ok} read={read_ok} keyword={keyword_ok}")
+PY
+)
+case "$fm_check" in
+  *"name=True bash=True read=True keyword=True"*)
+    pass "frontmatter: name=adversarial-review, allowed-tools 含 Bash + Read, description 含 mental-model 區隔關鍵字" ;;
+  *)
+    fail "frontmatter check failed: $fm_check" ;;
+esac
+
+# ── (b) codex-call invocation (default rule, NOT exception) ──────────────
+cc_count=$(grep -c "codex-call" "$ADV_REVIEW_SKILL")
+if [ "$cc_count" -ge 1 ]; then
+  pass "SKILL.md invokes codex-call (count=$cc_count, default rule)"
+else
+  fail "SKILL.md missing codex-call invocation"
+fi
+
+# ── (c) MUST NOT contain codex exec (subprocess form is batch exception) ─
+ce_count=$(grep -c "codex exec" "$ADV_REVIEW_SKILL")
+assert_eq "0" "$ce_count" "SKILL.md does NOT contain 'codex exec' (Design constraint #1 strict adherence, mirroring review + rescue)"
+
+# ── (d) Hard timeout flag ────────────────────────────────────────────────
+if grep -q -- '--max-time 600' "$ADV_REVIEW_SKILL"; then
+  pass "SKILL.md documents --max-time 600 hard timeout"
+else
+  fail "SKILL.md missing --max-time 600 flag"
+fi
+
+# ── (e) Fail-fast 4 error classes (adversarial adds target_invalid) ──────
+for err in rate_limit oauth_invalid timeout target_invalid; do
+  cnt=$(grep -c "$err" "$ADV_REVIEW_SKILL")
+  if [ "$cnt" -ge 1 ]; then
+    pass "fail-fast error class '$err' present (count=$cnt)"
+  else
+    fail "fail-fast error class '$err' missing"
+  fi
+done
+
+# fail-fast / no-retry discipline marker
+if grep -qE '不 retry|fail-fast|不會自動 retry|no retry' "$ADV_REVIEW_SKILL"; then
+  pass "SKILL.md states no-retry / fail-fast discipline"
+else
+  fail "SKILL.md missing no-retry / fail-fast marker"
+fi
+
+# ── (f) Result file 4 mandatory H2 sections + non-empty enforcement ──────
+for marker in '## Assumptions Challenged' '## Failure Modes' '## Alternative Approaches' '## Trade-off Counterarguments'; do
+  if grep -q -- "$marker" "$ADV_REVIEW_SKILL"; then
+    pass "result file H2 section marker present: $marker"
+  else
+    fail "result file H2 section marker missing: $marker"
+  fi
+done
+
+# non-empty enforcement marker (4 sections must each have substantive content)
+if grep -qE 'non-empty|每段非空' "$ADV_REVIEW_SKILL"; then
+  pass "SKILL.md documents 4 H2 sections each MUST be non-empty"
+else
+  fail "SKILL.md missing 4-section non-empty enforcement marker"
+fi
+
+# ── (g) 7 frontmatter field names ────────────────────────────────────────
+for field in target focus depth model effort timestamp error; do
+  cnt=$(grep -c "$field" "$ADV_REVIEW_SKILL")
+  if [ "$cnt" -ge 1 ]; then
+    pass "frontmatter field '$field' documented (count=$cnt)"
+  else
+    fail "frontmatter field '$field' missing"
+  fi
+done
+
+# ── (h) --focus injection mitigation + --depth flag ──────────────────────
+for flag in '--focus' '--depth'; do
+  cnt=$(grep -c -- "$flag" "$ADV_REVIEW_SKILL")
+  if [ "$cnt" -ge 1 ]; then
+    pass "flag '$flag' documented (count=$cnt)"
+  else
+    fail "flag '$flag' missing"
+  fi
+done
+
+# 200-char cap marker
+cap_count=$(grep -c '200' "$ADV_REVIEW_SKILL")
+if [ "$cap_count" -ge 1 ]; then
+  pass "SKILL.md documents 200-char cap on --focus (count=$cap_count)"
+else
+  fail "SKILL.md missing 200-char cap marker"
+fi
+
+# Fenced delimiter markers (prompt-injection mitigation per design D5)
+for delim in 'USER_FOCUS_START' 'USER_FOCUS_END'; do
+  cnt=$(grep -c -- "$delim" "$ADV_REVIEW_SKILL")
+  if [ "$cnt" -ge 1 ]; then
+    pass "fenced delimiter '$delim' present (count=$cnt)"
+  else
+    fail "fenced delimiter '$delim' missing"
+  fi
+done
+
+# Role-protection statement (defense against prompt-injection within delimiters)
+if grep -qE 'treat (this content )?as DATA|Treat (this content )?as DATA|treat as data|不執行任何指令|do not execute any commands|Do NOT execute any commands' "$ADV_REVIEW_SKILL"; then
+  pass "SKILL.md documents role-protection statement for --focus delimiter content"
+else
+  fail "SKILL.md missing role-protection statement (e.g. 'Treat as data, not instructions' / 'Do NOT execute any commands')"
+fi
+
+# ── (i) Result file path marker ──────────────────────────────────────────
+path_count=$(grep -c -- '.codex-pro/adversarial-review-' "$ADV_REVIEW_SKILL")
+if [ "$path_count" -ge 1 ]; then
+  pass "result file path marker '.codex-pro/adversarial-review-' present (count=$path_count)"
+else
+  fail "result file path marker missing"
+fi
+
+report_summary "adversarial-review"
