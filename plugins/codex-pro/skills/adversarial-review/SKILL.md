@@ -1,7 +1,7 @@
 ---
 name: adversarial-review
 description: |
-  對 code（uncommitted diff / file / branch comparison）跑 single-oracle hostile reviewer pass — 把 user 設計 / 既有 code 當作要被攻擊的目標、產出 challenges 而非 assessment。透過 codex-call HTTPS direct（無 subprocess、嚴守 Design constraint #1）跑、結果寫入 .codex-pro/adversarial-review-<timestamp>.md 結構化檔案。
+  對 code（uncommitted diff / file / branch comparison）跑 single-oracle hostile reviewer pass — 把 user 設計 / 既有 code 當作要被攻擊的目標、產出 challenges 而非 assessment。v0.2 — untracked-by-default：`--diff` mode 現在含 `git diff HEAD` + untracked file enumeration（v0.1 silent omission bug 已修），含 binary path-only + per-file 64KB / aggregate 512KB size cap + pre-first-commit fallback + target_invalid post-filter pre-flight 延伸 condition。透過 codex-call HTTPS direct（無 subprocess、嚴守 Design constraint #1）跑、結果寫入 .codex-pro/adversarial-review-<timestamp>.md 結構化檔案。
   與 /codex-pro:review 的差別：review 是「assessment — 我幫你找 bug」、adversarial-review 是「challenge — 我幫你壓力測試 trade-off / assumption」。Mental model 一句話對比：review 找 bug、adversarial-review 找盲點。
   Output 為 4 mandatory H2 sections（Assumptions Challenged / Failure Modes / Alternative Approaches / Trade-off Counterarguments）、每段 non-empty。
   支援 --focus <area>（≤200 chars after strip、fenced-delimiter 注入防 prompt-injection）+ --depth shallow|deep（預設 deep）。
@@ -48,9 +48,9 @@ review 找 bug、adversarial-review 找盲點。
 解析 argument 為四欄輸入：
 
 - **Target**（optional 位置參數）：三種模式
-  - 無 argument 或 `--diff`：跑 `git diff` 拿 uncommitted changes 作為 target
-  - File path（如 `path/to/foo.swift`）：Read 該檔內容作為 target
-  - `--base <ref>`：跑 `git diff <ref>...HEAD` 拿 branch diff 作為 target
+  - **無 argument 或 `--diff`（預設、v0.2 untracked-by-default）**：跑 `git diff HEAD` 取 tracked changes + `git ls-files --others --exclude-standard` 列舉 untracked（respect `.gitignore`），再走 Step 1.1 binary detect / Step 1.2 size cap / Step 1.3 pre-first-commit fallback / Step 1.4 pre-flight 四道 filter
+  - File path（如 `path/to/foo.swift`）：Read 該檔內容作為 target（v0.1 行為不變）
+  - `--base <ref>`：跑 `git diff <ref>...HEAD` 拿 branch diff 作為 target（v0.1 行為不變）
 - **`--focus <area>`**（optional）：壓力測試焦點（如 `security` / `perf` / `design` / `data-loss` / `race-conditions`）
   - Strip leading/trailing whitespace
   - **Length cap**：若 > 200 chars、截斷至前 200 chars 並在 result file frontmatter `focus` field 記錄截斷標記（例 `focus: "security; user supplied 350 chars, truncated to 200"`）
@@ -59,7 +59,51 @@ review 找 bug、adversarial-review 找盲點。
   - `shallow`：表層 challenge、列舉式輸出
   - `deep`：深度反駁含 alternatives + 詳細 reasoning trace
 
-**Pre-flight target check**：若 target 解析後為空（zero-byte、whitespace-only、unreadable）→ abort 並走 fail-fast 第 4 類 `target_invalid`、result file frontmatter 寫 `error: target_invalid`、回報「請確認 target 存在且非空（file path 可讀 / git diff 非空 / branch ref 有效）」。
+**注意**：`--diff` mode 在 v0.1 為 `git diff`（silent omit untracked）— v0.2 已修為 untracked-by-default。無 opt-out flag、避免固化舊 bug 行為。Minor bump (v0.1 → v0.2) 反映於 frontmatter description。
+
+### Step 1.1: Binary file detection
+
+對每個 untracked file 用 **雙 stage binary detect**：
+
+- **Stage 1: `git check-attr binary <path>`** — 用 `.gitattributes` user-defined binary marker；若返回 `binary` 則 path-list 不注 content
+- **Stage 2: NUL-byte sniff (first 8KB)** — 讀檔前 8KB（industry convention、grep/file(1) 同等技術）、若含 `\x00` (NUL byte) 則為 binary
+
+Binary file 列在 prompt body 內 `### Untracked binaries omitted` heading 下、**只列 path、不注 content**（防 `.png in node_modules` 注入污染 prompt）。
+
+### Step 1.2: Size cap
+
+對非 binary、untracked 的 content-eligible file 套兩道 size cap：
+
+- **Per-file cap 64KB**：超過 truncate、行尾加 marker `… [truncated at 64KB of N bytes]`（N 為原檔 size）
+- **Aggregate cap 512KB**：合併所有 included content 後超過 cap、剩餘 file 列在 `### Untracked files omitted (aggregate size cap)` heading 下、**只列 path、不注 content**
+
+理由：未 cap 會 silent 把 un-gitignored `node_modules` / `.swiftpm` cache（動輒 MB 級）灌進 Codex context、real review content 被 truncate 但 user 不知。
+
+### Step 1.3: Pre-first-commit (empty-repo) fallback
+
+`git diff HEAD` 在 pre-first-commit repo（無任何 commit）會 exit 128 + stderr `unknown revision 'HEAD'` 或 `ambiguous argument 'HEAD'`。偵測雙條件：
+
+```bash
+diff_out=$(git diff HEAD 2>&1)
+diff_rc=$?
+if [ $diff_rc -eq 128 ] && echo "$diff_out" | grep -qE "unknown revision|ambiguous argument 'HEAD'"; then
+    # Pre-first-commit: degrade fallback path
+    cached_diff=$(git diff --cached 2>/dev/null)
+    workingtree_diff=$(git diff 2>/dev/null)
+    untracked=$(git ls-files --others --exclude-standard)
+    target_marker="diff (pre-first-commit)"
+fi
+```
+
+Frontmatter `target` field 值改為 `diff (pre-first-commit)`（明示 fallback codepath）。
+
+### Step 1.4: target_invalid pre-flight（v0.2 post-filter condition）
+
+**v0.1 行為**：原 pre-flight 只檢查 raw target body 是否為空 / whitespace-only / zero-byte / unreadable。
+
+**v0.2 延伸**：合併 (a) `git diff HEAD`（或 fallback path）+ (b) 過 binary filter 與 size cap filter 後的 untracked content + (c) binary path-list section + (d) omitted path-list section、若整段 target body **post-filter** 為 whitespace-only → 觸發 fail-fast 第 4 類 `target_invalid`、在 codex-call 之前 abort、result file frontmatter 寫 `error: target_invalid`、回報「Target body 為空 after binary 與 size filter — verify there are real changes to review (uncommitted tracked changes, or untracked text files within 64KB each)」。
+
+實務情境：repo 只有 binary untracked file（純 image asset folder）、或所有 untracked 都 > 64KB binary、合併後仍空 → 過 pre-flight 紀律守住。
 
 Usage hint（target 為空但無 flag 時提示）：`/codex-pro:adversarial-review [target | --base <ref>] [--focus <area>] [--depth shallow|deep]`。
 

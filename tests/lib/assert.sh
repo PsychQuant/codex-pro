@@ -95,6 +95,18 @@ assert_exit() {
   fi
 }
 
+assert_git_fixture() {
+  # assert_git_fixture <dir>
+  # Initialize a deterministic fixture git repo at <dir> for behavioral tests.
+  # Bakes init.defaultBranch + user identity so tests don't pick up maintainer
+  # machine's global git config (cross-machine determinism).
+  local dir="$1"
+  git -C "$dir" init -q
+  git -C "$dir" config init.defaultBranch main
+  git -C "$dir" config user.email "test@codex-pro.local"
+  git -C "$dir" config user.name "codex-pro test"
+}
+
 report_summary() {
   # report_summary <label?>
   local label="${1:-tests}"

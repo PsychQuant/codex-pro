@@ -2,8 +2,9 @@
 name: review
 description: |
   對 code 跑 read-only Codex review — 接受三種 target：current uncommitted diff（無 argument）、specific file path、或 branch comparison（--base <ref>）。
+  v0.2 — untracked-by-default：`--diff` mode 現在含 `git diff HEAD` + untracked file enumeration（v0.1 silent omission bug 已修），含 binary path-only + per-file 64KB / aggregate 512KB size cap + pre-first-commit fallback + target_invalid post-filter pre-flight。
   透過 codex-call HTTPS direct 執行（無 subprocess），結果寫入 .codex-pro/review-<timestamp>.md 結構化檔案，不直接 inline echo（避免 silent stub failure）。
-  Findings 無數量上限。Rate limit / OAuth invalid / timeout 走 circuit-breaker fail-fast、不 retry。
+  Findings 無數量上限。Rate limit / OAuth invalid / timeout / target_invalid（v0.2 第 4 類）走 circuit-breaker fail-fast、不 retry。
   Use when: 使用者輸入 /codex-pro:review、或 review uncommitted changes、code review 在 commit 前。
   Trigger keywords: codex review, review code, review changes, review branch, review uncommitted
 allowed-tools:
@@ -19,11 +20,12 @@ allowed-tools:
 
 本 skill 嚴守 codex-pro **Design constraint #1**「No subprocess spawn for Codex — 一律走 codex-call HTTPS direct」。Review 為 single-shot codex call、不像 batch 需 fan-out parallel job control。因此 review 是 constraint #1 的 **default rule 代表**（與 batch 的 explicit exception 形成明顯對比）。
 
-**Fail-fast 三條件**：下列三種 codex-call failure 觸發 circuit breaker、不 retry：
+**Fail-fast 四條件**（v0.2：原 3 class + target_invalid pre-flight、與 adversarial-review template 對齊）：下列四種 failure 觸發 circuit breaker、不 retry：
 
 1. **Rate limit**（HTTP 429 或 output 含 "rate limit"）→ result file frontmatter 寫 `error: rate_limit`、提示等待 Codex tier 限額重置或升級
 2. **OAuth invalid**（HTTP 401 或 output 含 "auth"）→ frontmatter 寫 `error: oauth_invalid`、提示跑 /codex-pro:setup 確認 token 狀態
 3. **Hard timeout**（超過 --max-time 600 秒）→ frontmatter 寫 `error: timeout`、提示縮小 review target 或檢查 Codex tier
+4. **Target invalid**（v0.2 pre-flight class）→ `--diff` mode 在 binary + size filter 後仍 whitespace-only → frontmatter 寫 `error: target_invalid`、`findings_count: 0`、在 codex-call 之前 abort（防空 prompt 燒 quota）
 
 理由：retry 是 `openai/codex-plugin-cc` issue #306 的根因（無限 retry 吃光 Claude token cost）。Review 為 user-initiated、user-observable — fail 後由 user 自己決定 retry 而非 plugin 偷重 spawn。**「不 retry」紀律是 fail-fast circuit breaker 的核心**。
 
@@ -31,11 +33,53 @@ allowed-tools:
 
 依以下 precedence 解析 review target：
 
-- `--base <ref>`（flag）→ branch comparison：跑 `git diff <ref>...HEAD` 取 diff
-- 顯式 file path argument（例 `plugins/codex-pro/skills/setup/SKILL.md`）→ Read 該檔內容
-- 無 argument 或 `--diff`（預設）→ uncommitted diff：跑 `git diff` 取工作樹 diff
+- `--base <ref>`（flag）→ branch comparison：跑 `git diff <ref>...HEAD` 取 diff（v0.1 行為不變）
+- 顯式 file path argument（例 `plugins/codex-pro/skills/setup/SKILL.md`）→ Read 該檔內容（v0.1 行為不變）
+- 無 argument 或 `--diff`（預設）→ **v0.2 untracked-by-default**：跑 `git diff HEAD` 取 tracked changes + `git ls-files --others --exclude-standard` 列舉 untracked（respect `.gitignore`），再走 binary detect / size cap / pre-first-commit fallback / pre-flight 四道 filter
 
-若 argument 同時含 path 與 `--base`，後者勝（branch 範圍涵蓋 single file）。若無 argument 且 `git diff` 為空（無 uncommitted changes）、abort 並提示 user 三種 target 形式。
+若 argument 同時含 path 與 `--base`，後者勝（branch 範圍涵蓋 single file）。**`--diff` mode 的 v0.1 行為（`git diff` 不含 untracked）已修為 v0.2 untracked-by-default**（無 opt-out flag、避免固化舊 bug 行為）；本 change 是 minor bump (v0.1 → v0.2)、行為 change 反映在 frontmatter description。
+
+### Step 1.1: Binary file detection
+
+對每個 untracked file 用 **雙 stage binary detect**：
+
+- **Stage 1: `git check-attr binary <path>`** — 用 `.gitattributes` user-defined binary marker；若返回 `binary` 則 path-list 不注 content
+- **Stage 2: NUL-byte sniff (first 8KB)** — 讀檔前 8KB（industry convention、grep/file(1) 同等技術）、若含 `\x00` (NUL byte) 則為 binary
+
+Binary file 列在 prompt body 內 `### Untracked binaries omitted` heading 下、**只列 path、不注 content**（防 `.png in node_modules` 注入污染 prompt）。
+
+### Step 1.2: Size cap
+
+對非 binary、untracked 的 content-eligible file 套兩道 size cap：
+
+- **Per-file cap 64KB**：超過 truncate、行尾加 marker `… [truncated at 64KB of N bytes]`（N 為原檔 size）
+- **Aggregate cap 512KB**：合併所有 included content 後超過 cap、剩餘 file 列在 `### Untracked files omitted (aggregate size cap)` heading 下、**只列 path、不注 content**
+
+理由：未 cap 會 silent 把 un-gitignored `node_modules` / `.swiftpm` cache（動輒 MB 級）灌進 Codex context、real review content 被 truncate 但 user 不知。64KB 是「正常 source file 上限」approximation（≈16k token），512KB 是「給 codex-call xhigh prompt 留 head-room」approximation。
+
+### Step 1.3: Pre-first-commit (empty-repo) fallback
+
+`git diff HEAD` 在 pre-first-commit repo（無任何 commit）會 exit 128 + stderr `unknown revision 'HEAD'` 或 `ambiguous argument 'HEAD'`。偵測雙條件：
+
+```bash
+diff_out=$(git diff HEAD 2>&1)
+diff_rc=$?
+if [ $diff_rc -eq 128 ] && echo "$diff_out" | grep -qE "unknown revision|ambiguous argument 'HEAD'"; then
+    # Pre-first-commit: degrade fallback path
+    cached_diff=$(git diff --cached 2>/dev/null)        # staged content
+    workingtree_diff=$(git diff 2>/dev/null)            # working-tree vs index
+    untracked=$(git ls-files --others --exclude-standard)
+    target_marker="diff (pre-first-commit)"
+fi
+```
+
+Frontmatter `target` field 值改為 `diff (pre-first-commit)`（明示 fallback codepath、result file 後可追溯）。
+
+### Step 1.4: target_invalid pre-flight
+
+合併 (a) `git diff HEAD`（或 fallback path）+ (b) 過 binary filter 與 size cap filter 後的 untracked content + (c) binary path-list section + (d) omitted path-list section、若整段 target body 為 whitespace-only → 觸發第 4 fail-fast class `target_invalid`、在 codex-call 之前 abort（防止把空 prompt 送進去燒 Codex quota、見 Step 5）。
+
+實務情境：repo 只有 binary untracked file（純 image asset folder）、或所有 untracked 都 > 64KB binary、或合併後仍空 → 過 pre-flight 紀律守住。
 
 ## Step 2: Collect prompt
 
@@ -103,17 +147,18 @@ codex-call \
   - `error`: 不寫（success 不出現此 field）
 - 回報 user：result file 路徑 + findings count
 
-**Failure（exit non-zero）**：
+**Failure（exit non-zero 或 pre-flight target_invalid）**：
 
-依 stderr / output 內容判定 error class、寫 result file frontmatter `error` field、`findings_count: 0`、body 空或單行 error description：
+依 stderr / output / pre-flight 判定 error class、寫 result file frontmatter `error` field、`findings_count: 0`、body 空或單行 error description：
 
-| stderr/output 含 | frontmatter `error` 值 | 回報訊息 |
+| 來源 stderr/output / pre-flight | frontmatter `error` 值 | 回報訊息 |
 |---|---|---|
 | `rate limit` / `429` | `rate_limit` | 「Codex 限額耗盡。等待限額重置或升級 tier 後重 retry。**不會自動 retry**。」 |
 | `auth` / `401` / `unauthorized` | `oauth_invalid` | 「OAuth token 失效。跑 /codex-pro:setup 確認 ~/.codex/auth.json 狀態並重 login。」 |
 | timeout / >600 秒 | `timeout` | 「Review 超過 10 分鐘 hard timeout。考慮縮小 review target（如 `--base` 指更近 ref、改 review 單檔），或檢查 Codex tier 處理速度。」 |
+| pre-flight：`--diff` mode 過 binary + size filter 後 body 仍 whitespace-only（v0.2 第 4 類）| `target_invalid` | 「Target body 為空 after binary 與 size filter — verify there are real changes to review (uncommitted tracked changes, or untracked text files within 64KB each)。**不會自動 retry**、也不會發送空 prompt 給 Codex。」 |
 
-**所有 failure 仍寫 result file**（讓 user 有 trace、可從 frontmatter `error` field 觀察 fail mode 頻率）、**所有 failure 都不 retry**（fail-fast circuit-breaker 紀律、避免 #306 token-burn）。
+**所有 failure 仍寫 result file**（讓 user 有 trace、可從 frontmatter `error` field 觀察 fail mode 頻率）、**所有 failure 都不 retry**（fail-fast circuit-breaker 紀律、避免 #306 token-burn）。**target_invalid 為 pre-flight class**（在 codex-call 之前 abort、保留 0 quota cost）、不像前 3 class 需 Codex round-trip 才知道。
 
 ## Result file structure（完整契約）
 
