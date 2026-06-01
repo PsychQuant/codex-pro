@@ -77,7 +77,7 @@ codex-pro/                                ← marketplace root（自身為 catal
 │           ├── setup/SKILL.md            ← 已落地：/codex-pro:setup（read-only 環境檢查）
 │           ├── batch/SKILL.md            ← 已落地：/codex-pro:batch（codex exec 平行批次；Design constraint #1 的 explicit exception）
 │           ├── review/SKILL.md           ← 已落地：/codex-pro:review v0.1（codex-call HTTPS direct、Design constraint #1 default rule；adversarial-review 留 v0.2）
-│           ├── rescue/SKILL.md           ← 已落地：/codex-pro:rescue v0.1（codex-call HTTPS direct、Design constraint #1 default rule；task delegation；fail-fast 4 類含 task_unclear）
+│           ├── rescue/SKILL.md           ← 已落地：/codex-pro:rescue v0.1.1（codex-call HTTPS direct、Design constraint #1 default rule；task delegation；fail-fast 4 類含 task_unclear；session continuity 為 known limitation、待 upstream codex-call 加 session support）
 │           └── jobs-status/jobs-result/jobs-cancel/  ← 未來：/codex-pro:status / :result / :cancel
 ├── openspec/                             ← Spectra SDD 工件
 ├── README.md                             ← marketplace 對外入口（install user）
@@ -124,7 +124,7 @@ codex-pro/                                ← marketplace root（自身為 catal
 | （無對應）| `/codex-pro:batch` — 已落地 | `codex exec --full-auto` 平行批次處理大型 reference doc 多 chunk（textbook 解題 / 翻譯 / 摘要）；**Design constraint #1 的 explicit exception**（fan-out shell job control，非 single-shot pipe）；mutating（產生 shell script + 寫 output dir）|
 | `/codex:review` | `/codex-pro:review` — 已落地 v0.1 | 走 codex-call HTTPS direct、Design constraint #1 default rule 範例（與 batch exception 對比）；結果寫 `.codex-pro/review-<ts>.md`；fail-fast 紀律 |
 | `/codex:adversarial-review` | `/codex-pro:adversarial-review` — 規劃中 | Devils-advocate 為獨立 ensemble 角色 |
-| `/codex:rescue` | `/codex-pro:rescue` — 已落地 v0.1 | 走 codex-call HTTPS direct、Design constraint #1 default rule（與 review 同模板、與 batch exception 對比）；task delegation；fail-fast 4 類含 task_unclear；結果寫 `.codex-pro/rescue-<ts>.md` |
+| `/codex:rescue` | `/codex-pro:rescue` — 已落地 v0.1.1 | 走 codex-call HTTPS direct、Design constraint #1 default rule（與 review 同模板、與 batch exception 對比）；task delegation；fail-fast 4 類含 task_unclear；結果寫 `.codex-pro/rescue-<ts>.md`；**known limitation**：session continuity 暫已移除（codex-call 尚無 session flag upstream support、待 restore） |
 | `/codex:status` | `/codex-pro:status` — 規劃中 | 含 token / cost / tier |
 | `/codex:result` | `/codex-pro:result` — 規劃中 | 一律從 structured file 讀，不重 spawn |
 | `/codex:cancel` | `/codex-pro:cancel` — 規劃中 | 不靠 taskkill，HTTPS connection cancel |

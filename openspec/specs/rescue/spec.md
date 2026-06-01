@@ -8,7 +8,7 @@ The rescue capability provides task delegation to Codex via `/codex-pro:rescue`,
 
 ### Requirement: Rescue skill registration and argument parsing
 
-The plugin SHALL expose a `/codex-pro:rescue` skill registered at `plugins/codex-pro/skills/rescue/SKILL.md` with a YAML frontmatter declaring `name: rescue`, a descriptive `description` block, and an `allowed-tools` list containing at least `Bash` (for `codex-call` invocation) and `Read` (for context file collection). The skill SHALL accept a required positional task description argument and three optional flags: `--context <path>` (may repeat) for additional context files, `--criteria <text>` for completion criteria, and the mutually-exclusive pair `--resume <session-id>` / `--fresh` for session continuity (with `--fresh` as the default behaviour when neither is provided). The skill SHALL abort with a usage hint when invoked with an empty task description.
+The plugin SHALL expose a `/codex-pro:rescue` skill registered at `plugins/codex-pro/skills/rescue/SKILL.md` with a YAML frontmatter declaring `name: rescue`, a descriptive `description` block, and an `allowed-tools` list containing at least `Bash` (for `codex-call` invocation) and `Read` (for context file collection). The skill SHALL accept a required positional task description argument and two optional flags: `--context <path>` (may repeat) for additional context files and `--criteria <text>` for completion criteria. The skill SHALL abort with a usage hint when invoked with an empty task description. Every invocation is a stateless single-shot codex-call (no session continuity); the `--resume` / `--fresh` flags from v0.1 are removed in v0.1.1 because the underlying `codex-call` Swift wrapper has no `--session` flag and cannot support session continuation without upstream changes.
 
 #### Scenario: Skill is registered and discoverable
 
@@ -28,24 +28,24 @@ The plugin SHALL expose a `/codex-pro:rescue` skill registered at `plugins/codex
 
 - **WHEN** a user invokes `/codex-pro:rescue` with no positional task description argument (only flags or completely empty)
 - **THEN** the skill SHALL abort without invoking codex-call
-- **AND** the skill SHALL emit a usage hint listing the required and optional argument forms
+- **AND** the skill SHALL emit a usage hint listing the required and optional argument forms (task description plus `--context`, `--criteria`)
 
-#### Scenario: --resume and --fresh are mutually exclusive
+#### Scenario: Session continuity flags are not accepted
 
-- **WHEN** a user invokes `/codex-pro:rescue <task> --resume abc --fresh`
-- **THEN** the skill SHALL emit an error explaining the flags are mutually exclusive
+- **WHEN** a user invokes `/codex-pro:rescue <task> --resume sess_xyz` or `/codex-pro:rescue <task> --fresh`
+- **THEN** the skill SHALL emit a clear error explaining that session continuity is removed in v0.1.1 because `codex-call` has no `--session` flag
+- **AND** the error message SHALL mention that the limitation is tracked for future restoration when upstream `codex-call` gains session-tagging support
 - **AND** the skill SHALL NOT invoke codex-call
 
 
 <!-- @trace
-source: rescue-minimal
+source: fix-rescue-session-flags
 updated: 2026-06-01
 code:
-  - README.md
+  - CLAUDE.md
   - plugins/codex-pro/skills/rescue/SKILL.md
   - tests/rescue.sh
-  - CLAUDE.md
-  - tests/run.sh
+  - README.md
 -->
 
 ---
@@ -80,7 +80,7 @@ code:
 ---
 ### Requirement: Rescue output is a structured Markdown result file
 
-The skill SHALL write the Codex rescue output to a Markdown file at `.codex-pro/rescue-<ISO8601-timestamp>.md` inside the project root. The directory `.codex-pro/` MUST be created on first run if absent. The result file MUST contain a YAML frontmatter block with the required fields `task_description`, `session_id`, `model`, `effort`, `timestamp`, and `outcome`; an optional `resume_from` field when `--resume` was used; and an optional `error` field when a fail-fast condition fires. The `outcome` field MUST be one of the four enum values: `completed`, `partial`, `unclear`, `requires_external`. On success (any outcome except fail-fast), the body MUST contain three sections: `## Task Brief`, `## Outcome`, and `## Suggested Next Steps`. The skill MUST NOT return the outcome inline to Claude as the primary delivery path; the result file is the contract — this discipline prevents the silent-stub failure mode (issue #324 from upstream `openai/codex-plugin-cc`).
+The skill SHALL write the Codex rescue output to a Markdown file at `.codex-pro/rescue-<ISO8601-timestamp>.md` inside the project root. The directory `.codex-pro/` MUST be created on first run if absent. The result file MUST contain a YAML frontmatter block with the required fields `task_description`, `session_id`, `model`, `effort`, `timestamp`, and `outcome`; and an optional `error` field when a fail-fast condition fires. The `session_id` field records whatever conversation identifier codex-call surfaces from its HTTP response (or `null` when codex-call does not surface one); it does NOT imply any session-continuation capability. The `resume_from` field from v0.1 is removed because session continuity is not supported in v0.1.1. The `outcome` field MUST be one of the four enum values: `completed`, `partial`, `unclear`, `requires_external`. On success (any outcome except fail-fast), the body MUST contain three sections: `## Task Brief`, `## Outcome`, and `## Suggested Next Steps`. The skill MUST NOT return the outcome inline to Claude as the primary delivery path; the result file is the contract — this discipline prevents the silent-stub failure mode (issue #324 from upstream `openai/codex-plugin-cc`).
 
 #### Scenario: Success case writes structured result file
 
@@ -99,12 +99,6 @@ The skill SHALL write the Codex rescue output to a Markdown file at `.codex-pro/
 | timestamp        | `2026-06-01T10:30:48+08:00`                    |
 | outcome          | `completed`                                    |
 
-#### Scenario: Resume flag records original session
-
-- **WHEN** a user invokes `/codex-pro:rescue <task> --resume sess_original`
-- **THEN** the result file frontmatter MUST include `resume_from: sess_original`
-- **AND** the new `session_id` field MUST contain the session ID returned by codex-call (which may equal or differ from `resume_from` depending on codex-call session semantics)
-
 #### Scenario: First run creates output directory
 
 - **WHEN** the skill runs and `.codex-pro/` does not exist
@@ -113,14 +107,13 @@ The skill SHALL write the Codex rescue output to a Markdown file at `.codex-pro/
 
 
 <!-- @trace
-source: rescue-minimal
+source: fix-rescue-session-flags
 updated: 2026-06-01
 code:
-  - README.md
+  - CLAUDE.md
   - plugins/codex-pro/skills/rescue/SKILL.md
   - tests/rescue.sh
-  - CLAUDE.md
-  - tests/run.sh
+  - README.md
 -->
 
 ---

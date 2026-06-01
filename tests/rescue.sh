@@ -2,8 +2,9 @@
 # tests/rescue.sh — Layer 2: structural & semantic checks for the rescue skill.
 # Verifies frontmatter, codex-call HTTPS-direct invocation, hard timeout flag,
 # fail-fast circuit-breaker discipline (4 classes), result-file structure
-# contract (8 frontmatter fields + 3 sections), outcome enum (4 values), and
-# session continuity flags (--resume / --fresh).
+# contract (7 frontmatter fields + 3 sections), outcome enum (4 values), and
+# v0.1.1 known limitation: session continuity flags (--resume / --fresh /
+# resume_from / mutually exclusive) MUST NOT appear in SKILL.md.
 
 set -uo pipefail
 
@@ -83,8 +84,8 @@ for marker in '.codex-pro/rescue-' '## Task Brief' '## Outcome' '## Suggested Ne
   fi
 done
 
-# ── (g) 8 frontmatter field names ────────────────────────────────
-for field in task_description session_id resume_from model effort timestamp outcome error; do
+# ── (g) 7 frontmatter field names ────────────────────────────────
+for field in task_description session_id model effort timestamp outcome error; do
   cnt=$(grep -c "$field" "$RESCUE_SKILL")
   if [ "$cnt" -ge 1 ]; then
     pass "frontmatter field '$field' documented (count=$cnt)"
@@ -103,21 +104,16 @@ for outcome_val in completed partial unclear requires_external; do
   fi
 done
 
-# ── (i) Session continuity flags ─────────────────────────────────
-for flag in '--resume' '--fresh'; do
-  cnt=$(grep -c -- "$flag" "$RESCUE_SKILL")
-  if [ "$cnt" -ge 1 ]; then
-    pass "session flag '$flag' documented (count=$cnt)"
-  else
-    fail "session flag '$flag' missing"
-  fi
-done
+# ── (i) Session continuity removed in v0.1.1 (known limitation) ──
+# Consolidated regression guard: NONE of the four session-flag tokens may appear.
+forbidden_count=$(grep -cE '\-\-resume|\-\-fresh|resume_from|mutually exclusive' "$RESCUE_SKILL")
+assert_eq "0" "$forbidden_count" "SKILL.md contains zero session-continuity tokens (--resume/--fresh/resume_from/mutually exclusive)"
 
-# Mutually exclusive marker
-if grep -qE 'mutually exclusive|互斥' "$RESCUE_SKILL"; then
-  pass "SKILL.md documents --resume / --fresh mutually exclusive"
+# v0.1.1 known-limitation marker required so users see why session flags are gone
+if grep -qE 'session continuity|known limitation' "$RESCUE_SKILL"; then
+  pass "SKILL.md documents v0.1.1 session-continuity known limitation"
 else
-  fail "SKILL.md missing mutually exclusive marker for --resume / --fresh"
+  fail "SKILL.md missing v0.1.1 session-continuity known-limitation marker"
 fi
 
 report_summary "rescue"

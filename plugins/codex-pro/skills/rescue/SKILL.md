@@ -2,7 +2,7 @@
 name: rescue
 description: |
   把難題交給 Codex 處理（task delegation）。接收 task description + optional context files (--context) + optional completion criteria (--criteria)，包成 prompt 交 codex-call HTTPS direct 跑（無 subprocess），結果寫入 .codex-pro/rescue-<timestamp>.md 結構化檔案。
-  支援 --resume <session-id> 接續 previous rescue session、--fresh 顯式新 session（兩者 mutually exclusive、`--fresh` 為預設）。
+  v0.1.1 stateless only — session continuity 暫已移除（known limitation，待 upstream codex-call 加 session support 後 restore）。
   Fail-fast 4 類：rate_limit / oauth_invalid / timeout / task_unclear（Codex 無法 commit 答案時的 rescue-specific 第 4 類）。**不 retry**。
   Use when: 使用者輸入 /codex-pro:rescue、需要把 hard problem 交給 Codex 解、debug / refactor / 解 bug 卡住 fallback。
   Trigger keywords: codex rescue, delegate to codex, rescue task, ask codex
@@ -35,9 +35,10 @@ allowed-tools:
 - **Task description**（必填）：所有非 flag 段落合併成 task brief
 - **`--context <path>`**（optional、可多次重複）：Read 該檔內容、附入 prompt header 作為額外 context
 - **`--criteria <text>`**（optional）：附入 instructions 作為 success rubric（completion criteria）
-- **`--resume <session-id>`** / **`--fresh`**（mutually exclusive、`--fresh` 為預設）：session 控制 — `--resume` 接續 previous rescue session（傳 `--session <id>` 給 codex-call）、`--fresh` 開新 session（codex-call 預設行為）。同時提供兩者 → abort 並提示 mutually exclusive。
 
-若 task description 為空（純 flag 或空 argument）→ abort 並提示 usage：`/codex-pro:rescue <task description> [--context <path>...] [--criteria <text>] [--resume <session-id> | --fresh]`。
+若 task description 為空（純 flag 或空 argument）→ abort 並提示 usage：`/codex-pro:rescue <task description> [--context <path>...] [--criteria <text>]`。
+
+**Session continuity 已於 v0.1.1 移除**（known limitation）：本 skill 不再接受 session continuity flag。若 user 傳入任何 session-related flag、skill 必須 abort 並回報「session continuity removed in v0.1.1 — 待 upstream `codex-call` 加 session flag support 後 restore」。Rescue 在 v0.1.1 永遠 stateless — 每次 invoke 都是新的 codex-call HTTPS 呼叫，rescue v0.1 documented session flags 是 broken promise（codex-call 從未支援 session flag）、本版本顯式移除。
 
 ## Step 2: Collect prompt
 
@@ -89,8 +90,7 @@ codex-call \
   --effort xhigh \
   --max-time 600 \
   --instructions "<Step 3 system instructions>" \
-  --prompt-file <Step 2 prompt 暫存檔> \
-  [--session <session-id>]    # 當 --resume <id> 時加
+  --prompt-file <Step 2 prompt 暫存檔>
 ```
 
 關鍵 flag：
@@ -99,7 +99,6 @@ codex-call \
 - `--model gpt-5.5`：codex-pro v0.1 預設 model
 - `--effort xhigh`：rescue 任務需深度推理
 - `--output <path>`：codex-call 直接寫 markdown 到該路徑（不 echo stdout）
-- `--session <id>`：當 user 給 `--resume <id>` 才傳；否則不傳（codex-call 自動產生新 session ID）
 
 **Skill 嚴禁 spawn `codex` CLI**。所有 rescue 必經 `codex-call` HTTPS direct（與 review 同 default rule）。若未來 future skill 想 spawn subprocess，須在 design.md 明列 explicit exception（如 batch skill）並於 SKILL body 明文標記。
 
@@ -110,16 +109,15 @@ codex-call \
 **Success（exit 0）**：
 
 - codex-call 已將 rescue markdown 寫入 `--output` 指定路徑
-- skill 額外於 result file 開頭 prepend YAML frontmatter（8 個 field）：
+- skill 額外於 result file 開頭 prepend YAML frontmatter（7 個 field）：
   - `task_description`: user 提供的 task brief（截斷至 200 char）
-  - `session_id`: codex-call 回傳的 session ID
-  - `resume_from`: 若使用 `--resume <id>`、記原 session ID；否則不寫此 field
+  - `session_id`: codex-call HTTP response 若 surface 任何 session/conversation identifier 則記入；無則記 `null`。**本 field 不 promise continuation capability**（v0.1.1 known limitation：codex-call 尚無 session flag upstream support）
   - `model`: `gpt-5.5`（與 Step 4 一致）
   - `effort`: `xhigh`（與 Step 4 一致）
   - `timestamp`: ISO8601 含時區（例 `2026-06-01T10:30:48+08:00`）
   - `outcome`: 解析 body H2 outcome 段、抽出 enum 值（`completed` / `partial` / `unclear` / `requires_external`）
   - `error`: 不寫（success 不出現此 field）
-- 回報 user：result file 路徑 + outcome 分類 + session_id（讓 user 後續可 `--resume`）
+- 回報 user：result file 路徑 + outcome 分類
 
 **Failure（exit non-zero 或 outcome unclear）**：
 
@@ -139,8 +137,7 @@ codex-call \
 ```
 ---
 task_description: <user 提供 task brief 截至 200 char>
-session_id: <codex-call 回傳 session ID>
-resume_from: <原 session ID>      # 僅 --resume 時出現
+session_id: <codex-call response 若 surface 則記、否則 null>
 model: gpt-5.5
 effort: xhigh
 timestamp: 2026-06-01T10:30:48+08:00
@@ -172,7 +169,7 @@ Fail-fast case：保留 frontmatter + 空 body 或單行 `Rescue aborted: <error
 | 面向 | `/codex-pro:review` v0.1 | `/codex-pro:rescue` v0.1 |
 |---|---|---|
 | Mental model | 對既有 code 跑診斷 | 把待解 task 交給 Codex |
-| Argument 結構 | target 三選一（diff / file / --base） | task description + --context + --criteria + --resume/--fresh |
+| Argument 結構 | target 三選一（diff / file / --base） | task description + --context + --criteria |
 | Result file H2 sections | `## Summary` / `## Findings` | `## Task Brief` / `## Outcome` / `## Suggested Next Steps` |
 | Frontmatter outcome | findings_count (整數、無上限) | outcome enum (4 值) |
 | Fail-fast 類別 | 3 類 (rate_limit / oauth_invalid / timeout) | **4 類**（rescue 加 `task_unclear`） |
