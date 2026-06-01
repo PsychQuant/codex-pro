@@ -76,7 +76,7 @@ codex-pro/                                ← marketplace root（自身為 catal
 │       └── skills/
 │           ├── setup/SKILL.md            ← 已落地：/codex-pro:setup（read-only 環境檢查）
 │           ├── batch/SKILL.md            ← 已落地：/codex-pro:batch（codex exec 平行批次；Design constraint #1 的 explicit exception）
-│           ├── review/                   ← 未來：/codex-pro:review、/codex-pro:adversarial-review
+│           ├── review/SKILL.md           ← 已落地：/codex-pro:review v0.1（codex-call HTTPS direct、Design constraint #1 default rule；adversarial-review 留 v0.2）
 │           ├── rescue/                   ← 未來：/codex-pro:rescue
 │           └── jobs-status/jobs-result/jobs-cancel/  ← 未來：/codex-pro:status / :result / :cancel
 ├── openspec/                             ← Spectra SDD 工件
@@ -122,7 +122,7 @@ codex-pro/                                ← marketplace root（自身為 catal
 |---|---|---|
 | `/codex:setup` | `/codex-pro:setup` — 已落地 | 檢查 `~/.codex/auth.json` 與 `codex-call` 在 PATH，純 read-only |
 | （無對應）| `/codex-pro:batch` — 已落地 | `codex exec --full-auto` 平行批次處理大型 reference doc 多 chunk（textbook 解題 / 翻譯 / 摘要）；**Design constraint #1 的 explicit exception**（fan-out shell job control，非 single-shot pipe）；mutating（產生 shell script + 寫 output dir）|
-| `/codex:review` | `/codex-pro:review` — 規劃中 | Ensemble 模式可選 independent / hybrid |
+| `/codex:review` | `/codex-pro:review` — 已落地 v0.1 | 走 codex-call HTTPS direct、Design constraint #1 default rule 範例（與 batch exception 對比）；結果寫 `.codex-pro/review-<ts>.md`；fail-fast 紀律 |
 | `/codex:adversarial-review` | `/codex-pro:adversarial-review` — 規劃中 | Devils-advocate 為獨立 ensemble 角色 |
 | `/codex:rescue` | `/codex-pro:rescue` — 規劃中 | 走 `codex-call`、無 subagent stub |
 | `/codex:status` | `/codex-pro:status` — 規劃中 | 含 token / cost / tier |

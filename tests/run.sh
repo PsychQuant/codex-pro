@@ -73,6 +73,7 @@ run_layer() {
 run_layer static
 run_layer setup
 run_layer batch
+run_layer review
 
 # ── Aggregate summary ─────────────────────────────────────────────
 printf '\n%b════ run.sh aggregate summary%b\n' "$C_HEAD" "$C_RESET"

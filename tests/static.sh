@@ -129,6 +129,48 @@ for f in "$REPO_ROOT/CLAUDE.md" "$REPO_ROOT/README.md"; do
   fi
 done
 
+# Per-skill namespace presence: every skill under plugins/codex-pro/skills/
+# must have its `/codex-pro:<skill>` namespace mentioned in CLAUDE.md and
+# README.md, plus its main spec OR the in-progress change's delta spec.
+for skill_dir in "$REPO_ROOT/plugins/$PLUGIN_NAME/skills/"*/; do
+  skill_name=$(basename "$skill_dir")
+  ns="/$PLUGIN_NAME:$skill_name"
+  for f in "$REPO_ROOT/CLAUDE.md" "$REPO_ROOT/README.md"; do
+    rel="${f#$REPO_ROOT/}"
+    count=$(count_matches "$ns" "$f")
+    if [ "$count" -ge 1 ]; then
+      pass "namespace '$ns' present in $rel (count=$count)"
+    else
+      fail "namespace '$ns' missing in $rel"
+    fi
+  done
+  # Spec: prefer main spec, fall back to any in-progress change delta spec
+  spec_main="$REPO_ROOT/openspec/specs/$skill_name/spec.md"
+  if [ -r "$spec_main" ]; then
+    count=$(count_matches "$ns" "$spec_main")
+    if [ "$count" -ge 1 ]; then
+      pass "namespace '$ns' present in main spec openspec/specs/$skill_name/spec.md (count=$count)"
+    else
+      fail "namespace '$ns' missing in main spec openspec/specs/$skill_name/spec.md"
+    fi
+  else
+    # Look for delta spec under any active change directory
+    delta_spec=$(find "$REPO_ROOT/openspec/changes" -maxdepth 4 -type f \
+                  -path "*/specs/$skill_name/spec.md" -not -path "*/archive/*" 2>/dev/null | head -1)
+    if [ -n "$delta_spec" ] && [ -r "$delta_spec" ]; then
+      count=$(count_matches "$ns" "$delta_spec")
+      rel="${delta_spec#$REPO_ROOT/}"
+      if [ "$count" -ge 1 ]; then
+        pass "namespace '$ns' present in delta spec $rel (count=$count, main spec not yet synced)"
+      else
+        fail "namespace '$ns' missing in delta spec $rel"
+      fi
+    else
+      fail "namespace '$ns' has no spec file (neither main nor delta found)"
+    fi
+  fi
+done
+
 # ── Summary ─────────────────────────────────────────────────────
 report_summary "static"
 exit_code=$?
