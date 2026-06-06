@@ -3,6 +3,7 @@ name: rescue
 description: |
   把難題交給 Codex 處理（task delegation）。接收 task description + optional context files (--context) + optional completion criteria (--criteria)，包成 prompt 交 codex-call HTTPS direct 跑（無 subprocess），結果寫入 .codex-pro/rescue-<timestamp>.md 結構化檔案。
   v0.1.1 stateless only — session continuity 暫已移除（known limitation，待 upstream codex-call 加 session support 後 restore）。
+  v0.2 — profile-aware：`--model` / `--effort` / `--max-time` 從 `~/.codex-pro/profile.yaml`（global）+ `.codex-pro/profile.yaml`（project）resolve；未設 profile 時沿用 hardcoded default（gpt-5.5 / xhigh / 600）、100% backward compatible。見 `/codex-pro:config`。
   Fail-fast 4 類：rate_limit / oauth_invalid / timeout / task_unclear（Codex 無法 commit 答案時的 rescue-specific 第 4 類）。**不 retry**。
   Use when: 使用者輸入 /codex-pro:rescue、需要把 hard problem 交給 Codex 解、debug / refactor / 解 bug 卡住 fallback。
   Trigger keywords: codex rescue, delegate to codex, rescue task, ask codex
@@ -81,26 +82,80 @@ is better than a silent stub answer.
 
 ## Step 4: Invoke codex-call
 
+### Step 4.1: Resolve profile (v0.2 profile-aware)
+
+在呼叫 codex-call 之前、先 resolve profile。讀 `~/.codex-pro/profile.yaml`（global layer）+ `.codex-pro/profile.yaml`（project layer、優先於 global）、missing field fall back hardcoded default（`gpt-5.5` / `xhigh` / `600`）。未設 profile 時行為與 v0.1.1 identical（100% backward compatible）。Inline `python3` regex YAML parse、不依賴 PyYAML：
+
+```bash
+PROFILE_RESOLVED=$(python3 - <<'PY'
+import os, re
+DEFAULTS = {"model": "gpt-5.5", "effort": "xhigh", "max_time": 600, "focus_default": ""}
+def parse(path):
+    if not os.path.exists(path):
+        return {}
+    try:
+        txt = open(path).read()
+    except Exception:
+        return {}
+    out = {}
+    for line in txt.splitlines():
+        m = re.match(r'^(\w+):\s*(.*)$', line)
+        if not m: continue
+        k, v = m.group(1), m.group(2).strip()
+        if (v.startswith('"') and v.endswith('"')) or (v.startswith("'") and v.endswith("'")):
+            v = v[1:-1]
+        out[k] = v
+    return out
+g = parse(os.path.expanduser("~/.codex-pro/profile.yaml"))
+p = parse(".codex-pro/profile.yaml")
+resolved, sources = {}, {}
+for f, d in DEFAULTS.items():
+    if f in p: v, s = p[f], "project"
+    elif f in g: v, s = g[f], "global"
+    else: v, s = d, "default"
+    if f == "max_time":
+        try: v = int(v)
+        except (ValueError, TypeError): v, s = d, "default"
+    resolved[f], sources[f] = v, s
+# rescue uses model / effort / max_time (focus_default ignored)
+RELEVANT = ["model", "effort", "max_time"]
+rel = {sources[f] for f in RELEVANT}
+if "project" in rel:
+    ps = "mixed" if "global" in rel else "project"
+elif "global" in rel:
+    ps = "global"
+else:
+    ps = "default"
+print(f'{resolved["model"]}|{resolved["effort"]}|{resolved["max_time"]}|{resolved.get("focus_default","")}|{ps}')
+PY
+)
+IFS='|' read -r MODEL EFFORT MAX_TIME FOCUS_DEFAULT PROFILE_SOURCE <<< "$PROFILE_RESOLVED"
+```
+
+`$MODEL` / `$EFFORT` / `$MAX_TIME` 為 resolved value（profile 或 default）；`$PROFILE_SOURCE` 為 aggregate enum（`default` / `global` / `project` / `mixed`）供 Step 5 frontmatter。rescue 不使用 `$FOCUS_DEFAULT`（focus_default 僅 adversarial-review 用）。
+
+### Step 4.2: codex-call invocation
+
 呼叫 `codex-call` 寫結果到 `.codex-pro/rescue-<ISO8601-timestamp>.md`（首次跑 skill 需 `mkdir -p .codex-pro/`）：
 
 ```
 codex-call \
   --output .codex-pro/rescue-<timestamp>.md \
-  --model gpt-5.5 \
-  --effort xhigh \
-  --max-time 600 \
+  --model "$MODEL" \
+  --effort "$EFFORT" \
+  --max-time "$MAX_TIME" \
   --instructions "<Step 3 system instructions>" \
   --prompt-file <Step 2 prompt 暫存檔>
 ```
 
 關鍵 flag：
 
-- `--max-time 600`：10 分鐘 hard timeout（與 review 同）、超過即 fail-fast 為 `timeout`
-- `--model gpt-5.5`：codex-pro v0.1 預設 model
-- `--effort xhigh`：rescue 任務需深度推理
+- `--max-time "$MAX_TIME"`：hard timeout（profile `max_time` 或 default `600`、與 review 同）、超過即 fail-fast 為 `timeout`
+- `--model "$MODEL"`：profile `model` 或 default `gpt-5.5`
+- `--effort "$EFFORT"`：profile `effort` 或 default `xhigh`（rescue 任務需深度推理）
 - `--output <path>`：codex-call 直接寫 markdown 到該路徑（不 echo stdout）
 
-**Skill 嚴禁 spawn `codex` CLI**。所有 rescue 必經 `codex-call` HTTPS direct（與 review 同 default rule）。若未來 future skill 想 spawn subprocess，須在 design.md 明列 explicit exception（如 batch skill）並於 SKILL body 明文標記。
+**Skill 嚴禁 spawn `codex` CLI**。所有 rescue 必經 `codex-call` HTTPS direct（與 review 同 default rule）。rescue v0.1.1 起 stateless only — **不傳任何 session-continuity flag**（codex-call 無 session flag upstream support、見 frontmatter v0.1.1 known limitation）。若未來 future skill 想 spawn subprocess，須在 design.md 明列 explicit exception（如 batch skill）並於 SKILL body 明文標記。
 
 ## Step 5: Handle exit code
 
@@ -109,13 +164,14 @@ codex-call \
 **Success（exit 0）**：
 
 - codex-call 已將 rescue markdown 寫入 `--output` 指定路徑
-- skill 額外於 result file 開頭 prepend YAML frontmatter（7 個 field）：
+- skill 額外於 result file 開頭 prepend YAML frontmatter：
   - `task_description`: user 提供的 task brief（截斷至 200 char）
   - `session_id`: codex-call HTTP response 若 surface 任何 session/conversation identifier 則記入；無則記 `null`。**本 field 不 promise continuation capability**（v0.1.1 known limitation：codex-call 尚無 session flag upstream support）
-  - `model`: `gpt-5.5`（與 Step 4 一致）
-  - `effort`: `xhigh`（與 Step 4 一致）
+  - `model`: `$MODEL`（Step 4.1 resolved value、profile 或 default `gpt-5.5`）
+  - `effort`: `$EFFORT`（Step 4.1 resolved value、profile 或 default `xhigh`）
   - `timestamp`: ISO8601 含時區（例 `2026-06-01T10:30:48+08:00`）
   - `outcome`: 解析 body H2 outcome 段、抽出 enum 值（`completed` / `partial` / `unclear` / `requires_external`）
+  - `profile_source`: `$PROFILE_SOURCE`（v0.2 新增 optional field、aggregate enum `default` / `global` / `project` / `mixed`）。**v0.1.1 result file 沒此 field 屬 valid frontmatter**（forward-compat、`/codex-pro:status` 與 `/codex-pro:result` 容忍 missing `profile_source`）
   - `error`: 不寫（success 不出現此 field）
 - 回報 user：result file 路徑 + outcome 分類
 
@@ -138,10 +194,11 @@ codex-call \
 ---
 task_description: <user 提供 task brief 截至 200 char>
 session_id: <codex-call response 若 surface 則記、否則 null>
-model: gpt-5.5
-effort: xhigh
+model: <$MODEL resolved>          # profile 或 default gpt-5.5
+effort: <$EFFORT resolved>        # profile 或 default xhigh
 timestamp: 2026-06-01T10:30:48+08:00
 outcome: <completed | partial | unclear | requires_external>
+profile_source: <default | global | project | mixed>  # v0.2 新增 optional; v0.1.1 file 無此 field 屬 valid
 error: <rate_limit | oauth_invalid | timeout | task_unclear>  # 僅 fail-fast 時出現
 ---
 

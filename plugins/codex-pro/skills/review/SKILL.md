@@ -3,6 +3,7 @@ name: review
 description: |
   對 code 跑 read-only Codex review — 接受三種 target：current uncommitted diff（無 argument）、specific file path、或 branch comparison（--base <ref>）。
   v0.2 — untracked-by-default：`--diff` mode 現在含 `git diff HEAD` + untracked file enumeration（v0.1 silent omission bug 已修），含 binary path-only + per-file 64KB / aggregate 512KB size cap + pre-first-commit fallback + target_invalid post-filter pre-flight。
+  v0.3 — profile-aware：`--model` / `--effort` / `--max-time` 從 `~/.codex-pro/profile.yaml`（global）+ `.codex-pro/profile.yaml`（project）resolve；未設 profile 時沿用 hardcoded default（gpt-5.5 / xhigh / 600）、100% backward compatible。見 `/codex-pro:config`。
   透過 codex-call HTTPS direct 執行（無 subprocess），結果寫入 .codex-pro/review-<timestamp>.md 結構化檔案，不直接 inline echo（避免 silent stub failure）。
   Findings 無數量上限。Rate limit / OAuth invalid / timeout / target_invalid（v0.2 第 4 類）走 circuit-breaker fail-fast、不 retry。
   Use when: 使用者輸入 /codex-pro:review、或 review uncommitted changes、code review 在 commit 前。
@@ -110,23 +111,77 @@ Output requirements:
 
 ## Step 4: Invoke codex-call
 
+### Step 4.1: Resolve profile (v0.3 profile-aware)
+
+在呼叫 codex-call 之前、先 resolve profile。讀 `~/.codex-pro/profile.yaml`（global layer）+ `.codex-pro/profile.yaml`（project layer、優先於 global）、missing field fall back hardcoded default（`gpt-5.5` / `xhigh` / `600`）。未設 profile 時行為與 v0.2 identical（100% backward compatible）。Inline `python3` regex YAML parse、不依賴 PyYAML：
+
+```bash
+PROFILE_RESOLVED=$(python3 - <<'PY'
+import os, re
+DEFAULTS = {"model": "gpt-5.5", "effort": "xhigh", "max_time": 600, "focus_default": ""}
+def parse(path):
+    if not os.path.exists(path):
+        return {}
+    try:
+        txt = open(path).read()
+    except Exception:
+        return {}
+    out = {}
+    for line in txt.splitlines():
+        m = re.match(r'^(\w+):\s*(.*)$', line)
+        if not m: continue
+        k, v = m.group(1), m.group(2).strip()
+        if (v.startswith('"') and v.endswith('"')) or (v.startswith("'") and v.endswith("'")):
+            v = v[1:-1]
+        out[k] = v
+    return out
+g = parse(os.path.expanduser("~/.codex-pro/profile.yaml"))
+p = parse(".codex-pro/profile.yaml")
+resolved, sources = {}, {}
+for f, d in DEFAULTS.items():
+    if f in p: v, s = p[f], "project"
+    elif f in g: v, s = g[f], "global"
+    else: v, s = d, "default"
+    if f == "max_time":
+        try: v = int(v)
+        except (ValueError, TypeError): v, s = d, "default"
+    resolved[f], sources[f] = v, s
+# review uses model / effort / max_time (focus_default ignored)
+RELEVANT = ["model", "effort", "max_time"]
+rel = {sources[f] for f in RELEVANT}
+if "project" in rel:
+    ps = "mixed" if "global" in rel else "project"
+elif "global" in rel:
+    ps = "global"
+else:
+    ps = "default"
+print(f'{resolved["model"]}|{resolved["effort"]}|{resolved["max_time"]}|{resolved.get("focus_default","")}|{ps}')
+PY
+)
+IFS='|' read -r MODEL EFFORT MAX_TIME FOCUS_DEFAULT PROFILE_SOURCE <<< "$PROFILE_RESOLVED"
+```
+
+`$MODEL` / `$EFFORT` / `$MAX_TIME` 為 resolved value（profile 或 default）；`$PROFILE_SOURCE` 為 aggregate enum（`default` / `global` / `project` / `mixed`）供 Step 5 frontmatter。review 不使用 `$FOCUS_DEFAULT`。
+
+### Step 4.2: codex-call invocation
+
 呼叫 `codex-call` 寫結果到 `.codex-pro/review-<ISO8601-timestamp>.md`（首次跑 skill 需 `mkdir -p .codex-pro/`）：
 
 ```
 codex-call \
   --output .codex-pro/review-<timestamp>.md \
-  --model gpt-5.5 \
-  --effort xhigh \
-  --max-time 600 \
+  --model "$MODEL" \
+  --effort "$EFFORT" \
+  --max-time "$MAX_TIME" \
   --instructions "<Step 3 system instructions>" \
   --prompt-file <Step 2 prompt 寫入的暫存檔>
 ```
 
 關鍵 flag：
 
-- `--max-time 600`：10 分鐘 hard timeout、超過即 fail-fast 為 timeout
-- `--model gpt-5.5`：codex-pro v0.1 預設 model
-- `--effort xhigh`：review 任務需深度推理
+- `--max-time "$MAX_TIME"`：hard timeout（profile `max_time` 或 default `600`）、超過即 fail-fast 為 timeout
+- `--model "$MODEL"`：profile `model` 或 default `gpt-5.5`
+- `--effort "$EFFORT"`：profile `effort` 或 default `xhigh`（review 任務需深度推理）
 - `--output <path>`：codex-call 直接寫 markdown 到該路徑（不 echo stdout）
 
 **Skill 嚴禁 spawn `codex` CLI**。所有 review 必經 `codex-call` HTTPS direct。若未來 future skill 想 spawn subprocess，須在 design.md 明列 explicit exception（如 batch skill）並於 SKILL body 明文標記。
@@ -138,12 +193,13 @@ codex-call \
 **Success（exit 0）**：
 
 - codex-call 已將 review markdown 寫入 `--output` 指定路徑
-- skill 額外於 result file 開頭 prepend YAML frontmatter（6 個 field）：
-  - `target`: `diff` 或 `file:<path>` 或 `branch:<ref>`
-  - `model`: `gpt-5.5`（與 Step 4 一致）
-  - `effort`: `xhigh`（與 Step 4 一致）
+- skill 額外於 result file 開頭 prepend YAML frontmatter：
+  - `target`: `diff` / `diff (pre-first-commit)` / `file:<path>` / `branch:<ref>`
+  - `model`: `$MODEL`（Step 4.1 resolved value、profile 或 default `gpt-5.5`）
+  - `effort`: `$EFFORT`（Step 4.1 resolved value、profile 或 default `xhigh`）
   - `timestamp`: ISO8601 含時區（例 `2026-06-01T08:30:48+08:00`）
   - `findings_count`: 解析 body 內 `### Finding N:` heading 數量
+  - `profile_source`: `$PROFILE_SOURCE`（v0.3 新增 optional field、aggregate enum `default` / `global` / `project` / `mixed`）。**v0.2 result file 沒此 field 屬 valid frontmatter**（forward-compat、`/codex-pro:status` 與 `/codex-pro:result` 容忍 missing `profile_source`）
   - `error`: 不寫（success 不出現此 field）
 - 回報 user：result file 路徑 + findings count
 
@@ -164,12 +220,13 @@ codex-call \
 
 ```
 ---
-target: <diff | file:<path> | branch:<ref>>
-model: gpt-5.5
-effort: xhigh
+target: <diff | diff (pre-first-commit) | file:<path> | branch:<ref>>
+model: <$MODEL resolved>          # profile 或 default gpt-5.5
+effort: <$EFFORT resolved>        # profile 或 default xhigh
 timestamp: 2026-06-01T08:30:48+08:00
 findings_count: <N>
-error: <rate_limit | oauth_invalid | timeout>  # 僅 fail-fast 時出現
+profile_source: <default | global | project | mixed>  # v0.3 新增 optional; v0.2 file 無此 field 屬 valid
+error: <rate_limit | oauth_invalid | timeout | target_invalid>  # 僅 fail-fast 時出現
 ---
 
 # Codex Review — <target descriptor>

@@ -116,4 +116,54 @@ else
   fail "SKILL.md missing v0.1.1 session-continuity known-limitation marker"
 fi
 
+# ══════════════════════════════════════════════════════════════════
+# v0.2 profile-aware section (config-profile-mechanism)
+# ══════════════════════════════════════════════════════════════════
+
+if grep -q 'v0.2 — profile-aware' "$RESCUE_SKILL"; then
+  pass "v0.2 profile-aware marker present in frontmatter"
+else
+  fail "v0.2 profile-aware marker missing"
+fi
+for marker in '~/.codex-pro/profile.yaml' '.codex-pro/profile.yaml' 'profile_source'; do
+  cnt=$(grep -c -- "$marker" "$RESCUE_SKILL")
+  [ "$cnt" -ge 1 ] && pass "profile marker present: $marker (n=$cnt)" \
+    || fail "profile marker missing: $marker"
+done
+if grep -q -- '--model "$MODEL"' "$RESCUE_SKILL"; then
+  pass "codex-call uses resolved --model \"\$MODEL\""
+else
+  fail "codex-call does not use resolved --model"
+fi
+# session-flag invariant must still hold (v0.1.1 regression guard)
+sess=$(grep -cE '\-\-resume|\-\-fresh|\-\-session|resume_from' "$RESCUE_SKILL")
+assert_eq "0" "$sess" "session-flag invariant intact after profile change (zero --resume/--fresh/--session/resume_from)"
+
+# ── behavioral: extract rescue resolver + run against fake profile ──
+RRES=$(mktemp)
+python3 - "$RESCUE_SKILL" "$RRES" <<'PY'
+import re, sys
+c = open(sys.argv[1]).read()
+m = re.search(r"PROFILE_RESOLVED=\$\(python3 - <<'PY'\n(.*?)\nPY\n\)", c, re.DOTALL)
+if not m:
+    sys.exit("RESOLVER_EXTRACT_FAIL")
+open(sys.argv[2], "w").write(m.group(1))
+PY
+if [ -s "$RRES" ]; then
+  pass "behavioral: extracted rescue profile resolver from SKILL.md"
+  th=$(mktemp -d); tp=$(mktemp -d)
+  mkdir -p "$tp/.codex-pro"; printf 'model: gpt-5.0\neffort: high\n' > "$tp/.codex-pro/profile.yaml"
+  out=$(cd "$tp" && HOME="$th" python3 "$RRES" 2>&1)
+  # project sets model+effort, no global -> source=project
+  if [ "$out" = "gpt-5.0|high|600||project" ]; then
+    pass "behavioral: rescue resolver yields gpt-5.0|high|600||project"
+  else
+    fail "behavioral: rescue resolver wrong output: '$out'"
+  fi
+  rm -rf "$th" "$tp"
+else
+  fail "behavioral: could not extract rescue resolver"
+fi
+rm -f "$RRES"
+
 report_summary "rescue"

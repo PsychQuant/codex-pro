@@ -51,7 +51,7 @@ code:
 ---
 ### Requirement: Rescue invocation uses codex-call HTTPS direct without subprocess for Codex
 
-The skill SHALL invoke the `codex-call` Swift wrapper (provided by the `parallel-ai-agents` runtime dependency) to delegate the task to Codex. The skill MUST NOT spawn the `codex` CLI as a subprocess. This requirement places `rescue` alongside `review` as the canonical adherence pattern for codex-pro Design constraint #1 ("No subprocess spawn for Codex"), in deliberate contrast to the `batch` capability which is the documented explicit exception. The skill MUST pass a hard timeout flag (`--max-time 600`) to bound runaway inference. When the user supplies `--resume <session-id>`, the skill MUST pass that session ID through to codex-call to continue the previous thread.
+The skill SHALL invoke the `codex-call` Swift wrapper (provided by the `parallel-ai-agents` runtime dependency) to delegate the task to Codex. The skill MUST NOT spawn the `codex` CLI as a subprocess. This requirement places `rescue` alongside `review` as the canonical adherence pattern for codex-pro Design constraint #1 ("No subprocess spawn for Codex"), in deliberate contrast to the `batch` capability which is the documented explicit exception. The skill MUST pass `--model`, `--effort`, and `--max-time` flags to `codex-call` whose values come from the resolved profile (per the `config` capability). When no profile is set or the field is absent, hardcoded defaults SHALL apply: `--model gpt-5.5` / `--effort xhigh` / `--max-time 600` (the v0.1.1 hardcoded values become v0.2 default fallbacks — 100% backward compatible for users without a profile). The frontmatter description block in SKILL.md SHALL contain the literal substring `v0.2 — profile-aware` to make the v0.1.1 → v0.2 version bump discoverable. Rescue remains stateless per-invocation (no session continuity; the `--resume` / `--fresh` flags from v0.1 remain removed per the v0.1.1 fix because `codex-call` has no `--session` flag).
 
 #### Scenario: SKILL.md contains codex-call invocation
 
@@ -59,28 +59,50 @@ The skill SHALL invoke the `codex-call` Swift wrapper (provided by the `parallel
 - **THEN** the body SHALL contain at least one occurrence of the literal string `codex-call`
 - **AND** the body MUST NOT contain the literal string `codex exec` (the subprocess form is the batch exception, not allowed here)
 
-#### Scenario: codex-call invocation includes hard timeout and resume flag
+#### Scenario: codex-call invocation includes hard timeout flag (default 600)
 
 - **WHEN** the skill body documents the codex-call invocation
-- **THEN** the documented invocation MUST include the `--max-time 600` flag
-- **AND** the documented invocation MUST reference both `--resume` and `--fresh` flag handling
+- **THEN** the documented invocation MUST include the `--max-time` flag with the literal substring `600` (the v0.2 default fallback when the resolved profile has no `max_time` override)
+- **AND** the documented invocation MUST NOT reference `--resume` / `--fresh` flag handling (those flags were removed in v0.1.1 and have not been restored)
+
+#### Scenario: SKILL.md frontmatter announces v0.2 — profile-aware
+
+- **WHEN** the static layer inspects `plugins/codex-pro/skills/rescue/SKILL.md`
+- **THEN** the frontmatter `description` MUST contain the literal substring `v0.2 — profile-aware`
+
+#### Scenario: Producer reads profile via inline python3 before codex-call
+
+- **WHEN** the SKILL.md Step 4 body documents the codex-call invocation
+- **THEN** the body MUST contain an inline `python3` block that reads `~/.codex-pro/profile.yaml` and `.codex-pro/profile.yaml`
+- **AND** the documented invocation MUST pass `--model "$MODEL"` / `--effort "$EFFORT"` / `--max-time "$MAX_TIME"` (or equivalent shell-variable expansion from the python3 output)
+- **AND** the body MUST mention the hardcoded defaults `gpt-5.5` / `xhigh` / `600` as fallbacks
 
 
 <!-- @trace
-source: rescue-minimal
-updated: 2026-06-01
+source: config-profile-mechanism
+updated: 2026-06-07
 code:
-  - README.md
-  - plugins/codex-pro/skills/rescue/SKILL.md
-  - tests/rescue.sh
+  - plugins/codex-pro/.claude-plugin/plugin.json
+  - tests/config.sh
+  - plugins/codex-pro/skills/review/SKILL.md
+  - tests/e2e-checklist.md
+  - tests/review.sh
   - CLAUDE.md
+  - plugins/codex-pro/skills/rescue/SKILL.md
+  - plugins/codex-pro/skills/adversarial-review/SKILL.md
+  - README.md
+  - tests/e2e.sh
   - tests/run.sh
+  - tests/adversarial-review.sh
+  - plugins/codex-pro/skills/config/SKILL.md
+  - tests/lib/e2e-fixtures.sh
+  - tests/rescue.sh
 -->
 
 ---
 ### Requirement: Rescue output is a structured Markdown result file
 
-The skill SHALL write the Codex rescue output to a Markdown file at `.codex-pro/rescue-<ISO8601-timestamp>.md` inside the project root. The directory `.codex-pro/` MUST be created on first run if absent. The result file MUST contain a YAML frontmatter block with the required fields `task_description`, `session_id`, `model`, `effort`, `timestamp`, and `outcome`; and an optional `error` field when a fail-fast condition fires. The `session_id` field records whatever conversation identifier codex-call surfaces from its HTTP response (or `null` when codex-call does not surface one); it does NOT imply any session-continuation capability. The `resume_from` field from v0.1 is removed because session continuity is not supported in v0.1.1. The `outcome` field MUST be one of the four enum values: `completed`, `partial`, `unclear`, `requires_external`. On success (any outcome except fail-fast), the body MUST contain three sections: `## Task Brief`, `## Outcome`, and `## Suggested Next Steps`. The skill MUST NOT return the outcome inline to Claude as the primary delivery path; the result file is the contract — this discipline prevents the silent-stub failure mode (issue #324 from upstream `openai/codex-plugin-cc`).
+The skill SHALL write the Codex rescue output to a Markdown file at `.codex-pro/rescue-<ISO8601-timestamp>.md` inside the project root. The directory `.codex-pro/` MUST be created on first run if absent. The result file MUST contain a YAML frontmatter block with the required fields `task_description`, `session_id`, `model`, `effort`, `timestamp`, and `outcome`; and an optional `error` field when a fail-fast condition fires. The `session_id` field records whatever conversation identifier codex-call surfaces from its HTTP response (or `null` when codex-call does not surface one); it does NOT imply any session-continuation capability. The `resume_from` field from v0.1 remains removed because session continuity is not supported (per the v0.1.1 fix). An optional v0.2 `profile_source` field MAY appear with one of four enum values: `default` (all 3 producer-relevant fields hardcoded), `global` (at least one field from global, none from project), `project` (at least one field from project, no global-only fields), or `mixed` (at least one global field AND at least one project field). v0.1.1 result files without `profile_source` remain valid (`/codex-pro:status` and `/codex-pro:result` MUST tolerate missing `profile_source`). The `outcome` field MUST be one of the four enum values: `completed`, `partial`, `unclear`, `requires_external`. On success (any outcome except fail-fast), the body MUST contain three sections: `## Task Brief`, `## Outcome`, and `## Suggested Next Steps`. The skill MUST NOT return the outcome inline to Claude as the primary delivery path; the result file is the contract — this discipline prevents the silent-stub failure mode (issue #324 from upstream `openai/codex-plugin-cc`).
 
 #### Scenario: Success case writes structured result file
 
@@ -93,11 +115,18 @@ The skill SHALL write the Codex rescue output to a Markdown file at `.codex-pro/
 | Field            | Example value                                  |
 | ---------------- | ---------------------------------------------- |
 | task_description | `修復 .codex/auth.json TCC 問題`               |
-| session_id       | `sess_abc123def456`                            |
+| session_id       | `null`                                         |
 | model            | `gpt-5.5`                                      |
 | effort           | `xhigh`                                        |
-| timestamp        | `2026-06-01T10:30:48+08:00`                    |
+| timestamp        | `2026-06-01T22:00:48+08:00`                    |
 | outcome          | `completed`                                    |
+
+#### Scenario: profile_source frontmatter field reflects resolution source
+
+- **WHEN** a rescue runs with no profile set
+- **THEN** the result file frontmatter MAY include `profile_source: default` (v0.2 producer SHOULD emit it; v0.1.1 compat layer for missing-field reads is intact)
+- **WHEN** a rescue runs with a project profile that only sets `model`
+- **THEN** the result file frontmatter `profile_source` MAY be `project`
 
 #### Scenario: First run creates output directory
 
@@ -107,13 +136,24 @@ The skill SHALL write the Codex rescue output to a Markdown file at `.codex-pro/
 
 
 <!-- @trace
-source: fix-rescue-session-flags
-updated: 2026-06-01
+source: config-profile-mechanism
+updated: 2026-06-07
 code:
+  - plugins/codex-pro/.claude-plugin/plugin.json
+  - tests/config.sh
+  - plugins/codex-pro/skills/review/SKILL.md
+  - tests/e2e-checklist.md
+  - tests/review.sh
   - CLAUDE.md
   - plugins/codex-pro/skills/rescue/SKILL.md
-  - tests/rescue.sh
+  - plugins/codex-pro/skills/adversarial-review/SKILL.md
   - README.md
+  - tests/e2e.sh
+  - tests/run.sh
+  - tests/adversarial-review.sh
+  - plugins/codex-pro/skills/config/SKILL.md
+  - tests/lib/e2e-fixtures.sh
+  - tests/rescue.sh
 -->
 
 ---

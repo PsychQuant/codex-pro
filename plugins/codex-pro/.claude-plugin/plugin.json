@@ -1,8 +1,8 @@
 {
   "name": "codex-pro",
-  "version": "0.4.0",
-  "description": "Advanced Codex integration for Claude Code — drop-in upgrade for openai/codex-plugin-cc with ensemble pattern, hard timeouts, circuit breaker, and structured observability. v0.4: review + adversarial-review v0.1 → v0.2 — untracked-by-default in --diff mode, with binary path-only / per-file 64KB / aggregate 512KB size cap / pre-first-commit fallback / target_invalid post-filter pre-flight. Closes silent-correctness bug where v0.1's git diff omitted untracked files.",
+  "version": "0.5.0",
+  "description": "Advanced Codex integration for Claude Code — drop-in upgrade for openai/codex-plugin-cc with ensemble pattern, hard timeouts, circuit breaker, and structured observability. v0.5: adds /codex-pro:config (read-only consumer, profile-based config mechanism); review v0.3 / rescue v0.2 / adversarial-review v0.3 become profile-aware (model / effort / max_time / focus_default resolved from ~/.codex-pro/profile.yaml global + project .codex-pro/profile.yaml; hardcoded defaults keep 100% backward compatibility). Fulfils Design constraint #5 partial landing.",
   "author": { "name": "Che Cheng" },
   "license": "MIT",
-  "keywords": ["claude-code", "codex", "openai", "ai", "ensemble", "code-review", "rescue", "adversarial-review", "hostile-review", "circuit-breaker", "read-only-consumer", "drop-in", "informational", "untracked-by-default", "v0.2"]
+  "keywords": ["claude-code", "codex", "openai", "ai", "ensemble", "code-review", "rescue", "adversarial-review", "hostile-review", "circuit-breaker", "read-only-consumer", "drop-in", "informational", "untracked-by-default", "profile-aware", "config-profile", "v0.5"]
 }

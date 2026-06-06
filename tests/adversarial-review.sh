@@ -347,4 +347,72 @@ RC=$?
 [ -f "$ERROR_FILE" ] && grep -q 'target_invalid' "$ERROR_FILE" && pass "adv behavioral all-empty: target_invalid recorded" || fail "adv behavioral all-empty: target_invalid missing"
 rm -rf "$TMP"
 
+# ══════════════════════════════════════════════════════════════════
+# v0.3 profile-aware section (config-profile-mechanism)
+# ══════════════════════════════════════════════════════════════════
+
+if grep -q 'v0.3 — profile-aware' "$ADV_REVIEW_SKILL"; then
+  pass "v0.3 profile-aware marker present in frontmatter"
+else
+  fail "v0.3 profile-aware marker missing"
+fi
+for marker in '~/.codex-pro/profile.yaml' '.codex-pro/profile.yaml' 'profile_source' 'focus_default'; do
+  cnt=$(grep -c -- "$marker" "$ADV_REVIEW_SKILL")
+  [ "$cnt" -ge 1 ] && pass "profile marker present: $marker (n=$cnt)" \
+    || fail "profile marker missing: $marker"
+done
+if grep -q -- '--model "$MODEL"' "$ADV_REVIEW_SKILL"; then
+  pass "codex-call uses resolved --model \"\$MODEL\""
+else
+  fail "codex-call does not use resolved --model"
+fi
+# focus fallback chain documented: user arg > profile focus_default > placeholder
+if grep -q 'no focus area supplied' "$ADV_REVIEW_SKILL" && grep -q '\$FOCUS_DEFAULT' "$ADV_REVIEW_SKILL"; then
+  pass "focus fallback chain documented (--focus arg > \$FOCUS_DEFAULT > placeholder)"
+else
+  fail "focus fallback chain incomplete"
+fi
+# USER_FOCUS delimiter + role-protection still intact
+if grep -q 'USER_FOCUS_START' "$ADV_REVIEW_SKILL"; then
+  pass "USER_FOCUS delimiter preserved after profile change"
+else
+  fail "USER_FOCUS delimiter lost"
+fi
+
+# ── behavioral: extract adv-review resolver + run against fake profiles ──
+RRES=$(mktemp)
+python3 - "$ADV_REVIEW_SKILL" "$RRES" <<'PY'
+import re, sys
+c = open(sys.argv[1]).read()
+m = re.search(r"PROFILE_RESOLVED=\$\(python3 - <<'PY'\n(.*?)\nPY\n\)", c, re.DOTALL)
+if not m:
+    sys.exit("RESOLVER_EXTRACT_FAIL")
+open(sys.argv[2], "w").write(m.group(1))
+PY
+if [ -s "$RRES" ]; then
+  pass "behavioral: extracted adv-review profile resolver from SKILL.md"
+  th=$(mktemp -d); tp=$(mktemp -d)
+  # project sets focus_default only -> FOCUS_DEFAULT populated + source=project
+  mkdir -p "$tp/.codex-pro"; printf 'focus_default: security\n' > "$tp/.codex-pro/profile.yaml"
+  out=$(cd "$tp" && HOME="$th" python3 "$RRES" 2>&1)
+  # model/effort/max_time default, focus_default=security from project -> RELEVANT has project -> source=project
+  if [ "$out" = "gpt-5.5|xhigh|600|security|project" ]; then
+    pass "behavioral: adv-review resolver promotes focus_default (gpt-5.5|xhigh|600|security|project)"
+  else
+    fail "behavioral: adv-review resolver wrong output: '$out'"
+  fi
+  # no profile -> all defaults, empty focus, source=default
+  th2=$(mktemp -d); tp2=$(mktemp -d)
+  out2=$(cd "$tp2" && HOME="$th2" python3 "$RRES" 2>&1)
+  if [ "$out2" = "gpt-5.5|xhigh|600||default" ]; then
+    pass "behavioral: adv-review resolver no-profile yields all defaults"
+  else
+    fail "behavioral: adv-review no-profile wrong output: '$out2'"
+  fi
+  rm -rf "$th" "$tp" "$th2" "$tp2"
+else
+  fail "behavioral: could not extract adv-review resolver"
+fi
+rm -f "$RRES"
+
 report_summary "adversarial-review"

@@ -58,6 +58,26 @@ e2e_fixture_empty_repo() {
   # NO git commit — leaves repo in pre-first-commit state for fallback test
 }
 
+# ── with-profile: reviewable content + project profile (config-profile-mechanism) ──
+# Project profile sets effort:high (a valid codex-call value distinct from the
+# xhigh default) so the producer's result frontmatter deterministically shows
+# `effort: high` + a non-default `profile_source` — proving the profile was
+# resolved and flowed into the codex-call invocation.
+e2e_fixture_with_profile() {
+  local dir="$1"
+  assert_git_fixture "$dir"
+  ( cd "$dir" && cat > review_me.swift <<'SWIFT'
+func computeTotal(items: [Int]) -> Int {
+    var total = 0
+    for i in items { total += i }   // potential overflow not guarded
+    return total
+}
+SWIFT
+  )
+  mkdir -p "$dir/.codex-pro"
+  printf 'effort: high\n' > "$dir/.codex-pro/profile.yaml"
+}
+
 # ── all-empty: empty repo + binary-only → target_invalid post-filter ──
 e2e_fixture_all_empty() {
   local dir="$1"

@@ -340,4 +340,64 @@ else
 fi
 rm -rf "$TMP"
 
+# ══════════════════════════════════════════════════════════════════
+# v0.3 profile-aware section (config-profile-mechanism)
+# ══════════════════════════════════════════════════════════════════
+
+# ── structural: v0.3 marker + profile-aware invocation grammar ──
+if grep -q 'v0.3 — profile-aware' "$REVIEW_SKILL"; then
+  pass "v0.3 profile-aware marker present in frontmatter"
+else
+  fail "v0.3 profile-aware marker missing"
+fi
+for marker in '~/.codex-pro/profile.yaml' '.codex-pro/profile.yaml' 'profile_source'; do
+  cnt=$(grep -c -- "$marker" "$REVIEW_SKILL")
+  [ "$cnt" -ge 1 ] && pass "profile marker present: $marker (n=$cnt)" \
+    || fail "profile marker missing: $marker"
+done
+if grep -q -- '--model "$MODEL"' "$REVIEW_SKILL"; then
+  pass "codex-call uses resolved --model \"\$MODEL\""
+else
+  fail "codex-call does not use resolved --model"
+fi
+if grep -q -- '--max-time "$MAX_TIME"' "$REVIEW_SKILL"; then
+  pass "codex-call uses resolved --max-time \"\$MAX_TIME\""
+else
+  fail "codex-call does not use resolved --max-time"
+fi
+# default 600 must still be documented as the fallback
+if grep -q '600' "$REVIEW_SKILL"; then
+  pass "hardcoded default 600 still documented as fallback"
+else
+  fail "hardcoded default 600 missing"
+fi
+
+# ── behavioral: extract the producer resolver, run it against a fake profile ──
+RRES=$(mktemp)
+python3 - "$REVIEW_SKILL" "$RRES" <<'PY'
+import re, sys
+c = open(sys.argv[1]).read()
+m = re.search(r"PROFILE_RESOLVED=\$\(python3 - <<'PY'\n(.*?)\nPY\n\)", c, re.DOTALL)
+if not m:
+    sys.exit("RESOLVER_EXTRACT_FAIL")
+open(sys.argv[2], "w").write(m.group(1))
+PY
+if [ -s "$RRES" ]; then
+  pass "behavioral: extracted review profile resolver from SKILL.md"
+  th=$(mktemp -d); tp=$(mktemp -d)
+  mkdir -p "$th/.codex-pro"; printf 'model: gpt-5.0\n' > "$th/.codex-pro/profile.yaml"
+  mkdir -p "$tp/.codex-pro"; printf 'max_time: 1200\n' > "$tp/.codex-pro/profile.yaml"
+  out=$(cd "$tp" && HOME="$th" python3 "$RRES" 2>&1)
+  # expected: model=gpt-5.0 (global) max_time=1200 (project) -> source=mixed
+  if [ "$out" = "gpt-5.0|xhigh|1200||mixed" ]; then
+    pass "behavioral: review resolver yields gpt-5.0|xhigh|1200||mixed"
+  else
+    fail "behavioral: review resolver wrong output: '$out'"
+  fi
+  rm -rf "$th" "$tp"
+else
+  fail "behavioral: could not extract review resolver"
+fi
+rm -f "$RRES"
+
 report_summary "review"

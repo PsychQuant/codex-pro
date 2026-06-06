@@ -13,33 +13,35 @@ bash tests/run.sh
 
 ## Automated Layer 3 — `bash tests/e2e.sh`
 
-`tests/e2e.sh` 在 fresh `claude --print --plugin-dir` session 觸發 SKILL.md、verify result file 結構 + behavioral marker。5 scenario × 2 producer skill = 10 組合。
+`tests/e2e.sh` 在 fresh `claude --print --plugin-dir` session 觸發 SKILL.md、verify result file 結構 + behavioral marker。6 scenario × 2 producer skill = 12 組合（v0.5 加 `with-profile`：project profile `effort: high` → 驗 result frontmatter `effort: high` + `profile_source: project|mixed`，證實 profile 被 resolve 並流入 codex-call invocation）。
 
 **Quota budget**：
 - 每組合 = 1 codex-call quota + ~50k Claude API tokens + 60-180s
-- 完整 10 組合 = ~10 codex-call + ~500k Claude API tokens + 10-30 min + ~$0.5-$2
+- 完整 12 組合 = ~12 codex-call + ~600k Claude API tokens + 12-36 min + ~$0.6-$2.4
 
 **Rate limit recovery**：
 - `tests/e2e.sh` 內建 retry — 觀察到 stdout 含 `Server is temporarily limiting requests` 字串時自動 sleep 30s/60s/120s exponential backoff、最多 3 次 retry
 - 若 3 次仍 throttle、script exit 4；user 手動 wait 5min 後重跑該組合
 - Codex-call 本身的 fail-fast (rate_limit / oauth_invalid / timeout / target_invalid) 是 valid e2e 結果、不 retry
 
-跑 10 組合（建議分次跑、便於 spot regression）：
+跑 12 組合（建議分次跑、便於 spot regression）：
 
 ```bash
-# Review × 5 scenarios
+# Review × 6 scenarios
 bash tests/e2e.sh --skill review --scenario mixed
 bash tests/e2e.sh --skill review --scenario binary
 bash tests/e2e.sh --skill review --scenario oversize
 bash tests/e2e.sh --skill review --scenario empty-repo
 bash tests/e2e.sh --skill review --scenario all-empty
+bash tests/e2e.sh --skill review --scenario with-profile
 
-# Adversarial-review × 5 scenarios
+# Adversarial-review × 6 scenarios
 bash tests/e2e.sh --skill adversarial-review --scenario mixed
 bash tests/e2e.sh --skill adversarial-review --scenario binary
 bash tests/e2e.sh --skill adversarial-review --scenario oversize
 bash tests/e2e.sh --skill adversarial-review --scenario empty-repo
 bash tests/e2e.sh --skill adversarial-review --scenario all-empty
+bash tests/e2e.sh --skill adversarial-review --scenario with-profile
 ```
 
 完整 matrix 通過後算 release gate clear。10/10 PASS 是目標、acceptable 1-2 個因偶發 rate limit / codex quota 個別 fail 需 retry。
@@ -51,7 +53,7 @@ bash tests/e2e.sh --skill adversarial-review --scenario all-empty
 ## Preconditions
 
 - [ ] **Layer 1+2 已綠**：跑完 `bash tests/run.sh` 顯示 0 fail / exit 0
-- [ ] **Layer 3 automated 已綠**：跑完 `bash tests/e2e.sh` 10 組合全 PASS（或 acceptable 1-2 個個別 rate-limit fail 已 retry pass）
+- [ ] **Layer 3 automated 已綠**：跑完 `bash tests/e2e.sh` 12 組合全 PASS（或 acceptable 1-2 個個別 rate-limit fail 已 retry pass）
 
 ## A. Plugin install path（正規 marketplace 路徑）
 

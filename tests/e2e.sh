@@ -88,11 +88,11 @@ case "$SKILL" in
 esac
 
 case "$SCENARIO" in
-  mixed|binary|oversize|empty-repo|all-empty) ;;
+  mixed|binary|oversize|empty-repo|all-empty|with-profile) ;;
   "")
     echo "Error: --scenario is required" >&2; usage; exit 2 ;;
   *)
-    echo "Error: --scenario must be one of: mixed, binary, oversize, empty-repo, all-empty (got '$SCENARIO')" >&2
+    echo "Error: --scenario must be one of: mixed, binary, oversize, empty-repo, all-empty, with-profile (got '$SCENARIO')" >&2
     usage; exit 2 ;;
 esac
 
@@ -108,6 +108,7 @@ case "$SCENARIO" in
   oversize)     e2e_fixture_oversize    "$FIXTURE" ;;
   empty-repo)   e2e_fixture_empty_repo  "$FIXTURE" ;;
   all-empty)    e2e_fixture_all_empty   "$FIXTURE" ;;
+  with-profile) e2e_fixture_with_profile "$FIXTURE" ;;
 esac
 echo "  fixture: $FIXTURE"
 
@@ -208,6 +209,19 @@ case "$SCENARIO" in
     verify_substring 'error: target_invalid' "$SKILL/all-empty: target_invalid fail-fast frontmatter"
     if [ "$SKILL" = "review" ]; then
       verify_substring 'findings_count: 0' "review/all-empty: findings_count: 0 frontmatter"
+    fi
+    ;;
+  with-profile)
+    # Project profile sets effort:high — the resolved value flows into both the
+    # codex-call invocation AND the result frontmatter (deterministic, written
+    # by Claude's SKILL.md execution regardless of Codex's prose output).
+    verify_substring 'effort: high' "$SKILL/with-profile: project profile effort=high reflected in frontmatter"
+    # profile_source must be non-default (project, or mixed if a real global
+    # profile also exists on the test machine).
+    if printf '%s' "$RESULT_BODY" | grep -qE 'profile_source: (project|mixed)'; then
+      pass "$SKILL/with-profile: profile_source is project|mixed (profile was resolved)"
+    else
+      fail "$SKILL/with-profile: profile_source not project|mixed (profile not resolved?)"
     fi
     ;;
 esac

@@ -76,12 +76,13 @@ codex-pro/                                ← marketplace root（自身為 catal
 │       └── skills/
 │           ├── setup/SKILL.md            ← 已落地：/codex-pro:setup（read-only 環境檢查）
 │           ├── batch/SKILL.md            ← 已落地：/codex-pro:batch（codex exec 平行批次；Design constraint #1 的 explicit exception）
-│           ├── review/SKILL.md           ← 已落地：/codex-pro:review v0.2（codex-call HTTPS direct、Design constraint #1 default rule；v0.2 untracked-by-default + binary path-only + 64KB/512KB size cap + pre-first-commit fallback + target_invalid post-filter pre-flight）
-│           ├── rescue/SKILL.md           ← 已落地：/codex-pro:rescue v0.1.1（codex-call HTTPS direct、Design constraint #1 default rule；task delegation；fail-fast 4 類含 task_unclear；session continuity 為 known limitation、待 upstream codex-call 加 session support）
-│           ├── adversarial-review/SKILL.md ← 已落地 v0.2（hostile review、4 mandatory H2 sections 各 non-empty、fail-fast 4 類含 target_invalid pre-flight；v0.2 untracked-by-default + binary path-only + 64KB/512KB size cap + pre-first-commit fallback；--focus 200-char cap + fenced delimiter 防 #333、--depth shallow|deep）
+│           ├── review/SKILL.md           ← 已落地：/codex-pro:review v0.3（codex-call HTTPS direct、Design constraint #1 default rule；v0.2 untracked-by-default + binary path-only + 64KB/512KB size cap + pre-first-commit fallback + target_invalid post-filter pre-flight；v0.3 profile-aware model/effort/max_time + profile_source）
+│           ├── rescue/SKILL.md           ← 已落地：/codex-pro:rescue v0.2（codex-call HTTPS direct、Design constraint #1 default rule；task delegation；fail-fast 4 類含 task_unclear；session continuity 為 known limitation、待 upstream codex-call 加 session support；v0.2 profile-aware model/effort/max_time + profile_source）
+│           ├── adversarial-review/SKILL.md ← 已落地 v0.3（hostile review、4 mandatory H2 sections 各 non-empty、fail-fast 4 類含 target_invalid pre-flight；v0.2 untracked-by-default + binary path-only + 64KB/512KB size cap + pre-first-commit fallback；--focus 200-char cap + fenced delimiter 防 #333、--depth shallow|deep；v0.3 profile-aware model/effort/max_time + focus_default fallback + profile_source）
 │           ├── status/SKILL.md            ← 已落地 v0.1（read-only consumer — 掃 .codex-pro/*.md + markdown table summary、--skill filter）
 │           ├── result/SKILL.md            ← 已落地 v0.1（read-only consumer — 顯示特定 result file、三 selection mode）
-│           └── cancel/SKILL.md            ← 已落地 v0.1（informational only — stateless explainer + 3 remediation、永遠 exit 0）
+│           ├── cancel/SKILL.md            ← 已落地 v0.1（informational only — stateless explainer + 3 remediation、永遠 exit 0）
+│           └── config/SKILL.md            ← 已落地 v0.1（read-only consumer — display resolved profile、global + project two-layer、4 field schema：model / effort / max_time / focus_default）
 ├── openspec/                             ← Spectra SDD 工件
 ├── README.md                             ← marketplace 對外入口（install user）
 └── CLAUDE.md                             ← AI / collaborator 設計指引
@@ -115,7 +116,7 @@ codex-pro/                                ← marketplace root（自身為 catal
 2. **Hard timeout mandatory** — 任何 Codex call 必須有 `DispatchSemaphore` 或等價 timeout，無 unbound wait
 3. **Circuit breaker on rate limit** — 一次 rate limit fail 後鎖 session、persist degraded state，禁止 same-session retry（防 #306）
 4. **Structured result file** — Codex output 一律寫進 disk 結構化檔案，禁止 silent stub return（防 #324）
-5. **Profile-based config** — `max-findings`、`sandbox` mode、`model` alias、`focus` 全部可在 profile 配置
+5. **Profile-based config** — `max-findings`、`sandbox` mode、`model` alias、`focus` 全部可在 profile 配置。**v0.5 部分落地**：`model` / `effort` / `max_time` / `focus_default` 4 fields 經 `~/.codex-pro/profile.yaml`（global）+ `.codex-pro/profile.yaml`（project）two-layer 配置、`/codex-pro:config` 顯示 resolved profile、producer skills（review / rescue / adversarial-review）read profile 決定 codex-call flags；`max_findings`（會 conflict review uncapped findings 承諾）+ `sandbox`（batch-specific）留 future cycle
 6. **Observability default ON** — token usage、cost estimate、Codex tier 對 user visible，無 opt-in
 7. **macOS only（初期）** — Windows IPC 包袱大、用戶不需，明確不支援
 
@@ -125,12 +126,13 @@ codex-pro/                                ← marketplace root（自身為 catal
 |---|---|---|
 | `/codex:setup` | `/codex-pro:setup` — 已落地 | 檢查 `~/.codex/auth.json` 與 `codex-call` 在 PATH，純 read-only |
 | （無對應）| `/codex-pro:batch` — 已落地 | `codex exec --full-auto` 平行批次處理大型 reference doc 多 chunk（textbook 解題 / 翻譯 / 摘要）；**Design constraint #1 的 explicit exception**（fan-out shell job control，非 single-shot pipe）；mutating（產生 shell script + 寫 output dir）|
-| `/codex:review` | `/codex-pro:review` — 已落地 v0.2 | 走 codex-call HTTPS direct、Design constraint #1 default rule 範例（與 batch exception 對比）；結果寫 `.codex-pro/review-<ts>.md`；fail-fast 4 類含 v0.2 `target_invalid` pre-flight；**v0.2 untracked-by-default**：`--diff` mode 含 `git diff HEAD` + untracked enumeration、binary path-only、per-file 64KB / aggregate 512KB size cap、`diff (pre-first-commit)` fallback、target_invalid post-filter pre-flight |
-| `/codex:adversarial-review` | `/codex-pro:adversarial-review` — 已落地 v0.2 | 走 codex-call HTTPS direct、Design constraint #1 default rule（與 review / rescue 同模板、與 batch exception 對比、3:1 default vs exception）；single-oracle hostile reviewer pass；結果寫 `.codex-pro/adversarial-review-<ts>.md` 含 4 mandatory H2 sections（Assumptions Challenged / Failure Modes / Alternative Approaches / Trade-off Counterarguments）各 non-empty；fail-fast 4 類含 adversarial-specific **`target_invalid`** pre-flight class（防空 prompt 浪費 quota、v0.2 延伸 condition：post binary+size filter empty）；**v0.2 untracked-by-default**：`--diff` mode 含 `git diff HEAD` + untracked enumeration、binary path-only、per-file 64KB / aggregate 512KB size cap、`diff (pre-first-commit)` fallback；`--focus <area>` 經 200-char cap + fenced delimiter（`<<<USER_FOCUS_START>>>` / `<<<USER_FOCUS_END>>>`）+ role-protection 防 prompt-injection（解上游 #333）；`--depth shallow\|deep` 控制 adversarial 強度（預設 deep） |
-| `/codex:rescue` | `/codex-pro:rescue` — 已落地 v0.1.1 | 走 codex-call HTTPS direct、Design constraint #1 default rule（與 review 同模板、與 batch exception 對比）；task delegation；fail-fast 4 類含 task_unclear；結果寫 `.codex-pro/rescue-<ts>.md`；**known limitation**：session continuity 暫已移除（codex-call 尚無 session flag upstream support、待 restore） |
+| `/codex:review` | `/codex-pro:review` — 已落地 v0.3 | 走 codex-call HTTPS direct、Design constraint #1 default rule 範例（與 batch exception 對比）；結果寫 `.codex-pro/review-<ts>.md`；fail-fast 4 類含 v0.2 `target_invalid` pre-flight；**v0.2 untracked-by-default**：`--diff` mode 含 `git diff HEAD` + untracked enumeration、binary path-only、per-file 64KB / aggregate 512KB size cap、`diff (pre-first-commit)` fallback、target_invalid post-filter pre-flight；**v0.3 profile-aware**：`--model` / `--effort` / `--max-time` 從 `~/.codex-pro/profile.yaml` + `.codex-pro/profile.yaml` resolve、frontmatter 加 `profile_source`、未設 profile 100% backward compatible（見 `/codex-pro:config`）|
+| `/codex:adversarial-review` | `/codex-pro:adversarial-review` — 已落地 v0.3 | 走 codex-call HTTPS direct、Design constraint #1 default rule（與 review / rescue 同模板、與 batch exception 對比、3:1 default vs exception）；single-oracle hostile reviewer pass；結果寫 `.codex-pro/adversarial-review-<ts>.md` 含 4 mandatory H2 sections（Assumptions Challenged / Failure Modes / Alternative Approaches / Trade-off Counterarguments）各 non-empty；fail-fast 4 類含 adversarial-specific **`target_invalid`** pre-flight class（防空 prompt 浪費 quota、v0.2 延伸 condition：post binary+size filter empty）；**v0.2 untracked-by-default**：`--diff` mode 含 `git diff HEAD` + untracked enumeration、binary path-only、per-file 64KB / aggregate 512KB size cap、`diff (pre-first-commit)` fallback；`--focus <area>` 經 200-char cap + fenced delimiter（`<<<USER_FOCUS_START>>>` / `<<<USER_FOCUS_END>>>`）+ role-protection 防 prompt-injection（解上游 #333）；`--depth shallow\|deep` 控制 adversarial 強度（預設 deep）；**v0.3 profile-aware**：`--model` / `--effort` / `--max-time` + `--focus` 未給時用 profile `focus_default`、frontmatter 加 `profile_source`（見 `/codex-pro:config`）|
+| `/codex:rescue` | `/codex-pro:rescue` — 已落地 v0.2 | 走 codex-call HTTPS direct、Design constraint #1 default rule（與 review 同模板、與 batch exception 對比）；task delegation；fail-fast 4 類含 task_unclear；結果寫 `.codex-pro/rescue-<ts>.md`；**known limitation**：session continuity 暫已移除（codex-call 尚無 session flag upstream support、待 restore）；**v0.2 profile-aware**：`--model` / `--effort` / `--max-time` 從 profile resolve、frontmatter 加 `profile_source`（見 `/codex-pro:config`）|
 | `/codex:status` | `/codex-pro:status` — 已落地 v0.1 | Read-only consumer — 掃 `.codex-pro/*.md` + markdown table summary（columns：filename / skill type / target / outcome summary / timestamp / error）、`--skill <review\|rescue\|adversarial-review>` filter、missing/empty `.codex-pro/` 為 informational case（exit 0、不建目錄） |
 | `/codex:result` | `/codex-pro:result` — 已落地 v0.1 | Read-only consumer — 顯示特定 result file（frontmatter + body verbatim）、三 selection mode 互斥：位置 `<filename>` / `--latest <skill>` / `--latest`（無 arg）；用 filename ISO8601 portion 決定 most recent（不查 mtime / frontmatter timestamp）；fail-fast with `/codex-pro:status` 或 producer skill 之 remediation、不 silent fallback |
 | `/codex:cancel` | `/codex-pro:cancel` — 已落地 v0.1 | **informational only** — codex-pro v0.2 為 stateless single-shot、無 background job、無 PID 可殺、無 upstream cancel API；輸出 deterministic explainer + 3 remediation（Ctrl-C / `--max-time 600` timeout / future v0.3+ background mode）；零 file ops、零 process signal、永遠 exit 0；displayed limitation 而非 silent stub |
+| （無對應）| `/codex-pro:config` — 已落地 v0.1 | Read-only consumer — display resolved profile（global `~/.codex-pro/profile.yaml` + project `.codex-pro/profile.yaml` two-layer、field-level merge、project override global）；4-row markdown table（field / resolved value / source）+ 2 行 file 存在性；schema v0.1（4 fields：`model` / `effort` / `max_time` / `focus_default`）；missing field → hardcoded default（gpt-5.5 / xhigh / 600 / 空）；零 file mutation、零 Codex 互動；codex-plugin-cc 無對應（codex-pro 自有 capability、補 Design constraint #5）|
 
 codex-pro 與 codex-plugin-cc 的命令名不衝突，可同時安裝做 A/B 比較。
 
@@ -149,21 +151,21 @@ codex-pro 與 codex-plugin-cc 的命令名不衝突，可同時安裝做 A/B 比
 
 兩個 skill 的 output 結構也反映 mental model 差異 — review 的 `## Findings` 是 enumerative（findings count 可變），adversarial-review 的 4 H2 sections（Assumptions Challenged / Failure Modes / Alternative Approaches / Trade-off Counterarguments）是 perspectival（固定四個視角、每段 non-empty）。
 
-## Read-only consumer skills（status / result / cancel）— v0.2 起 mental model 轉軸
+## Read-only consumer skills（status / result / cancel / config）— v0.2 起 mental model 轉軸
 
 v0.2 起 codex-pro 把 skill 分四 category：
 
 | Category | Skills | 屬性 |
 |---|---|---|
 | **Read-only environment** | setup | 環境檢查、無 disk mutation、無 Codex 互動 |
-| **Read-only consumer**（v0.2 新增）| status / result / cancel | 讀 `.codex-pro/` producer output（cancel 不讀）、無 disk mutation、無 Codex 互動 |
-| **Mutating producer** | review / rescue / adversarial-review | 寫 `.codex-pro/<skill>-<ts>.md`、走 Codex HTTP wrapper、Design constraint #1 default rule |
+| **Read-only consumer**（v0.2 新增、v0.5 加 config）| status / result / cancel / config | 讀 `.codex-pro/` producer output 或 `~/.codex-pro/` + `.codex-pro/` profile（cancel 不讀）、無 disk mutation、無 Codex 互動 |
+| **Mutating producer** | review / rescue / adversarial-review | 寫 `.codex-pro/<skill>-<ts>.md`、走 Codex HTTP wrapper、Design constraint #1 default rule；v0.5 起 profile-aware（讀 profile 決定 model/effort/max_time/focus_default、但仍不寫 profile）|
 | **Mutating exception** | batch | `codex exec --full-auto` 平行批次、Design constraint #1 explicit exception |
 
 User 一眼看出「我跑這 skill 會不會動 disk / 燒 Codex quota」— 是 mental model 必備 affordance：
 
-- Read-only category（4 skill）跑都安全、不耗 quota、不破壞既有 disk 狀態
-- Producer category（3 skill）會建 `.codex-pro/` + 寫 result file + 燒 quota（一次 codex-call）
+- Read-only category（5 skill：setup + status + result + cancel + config）跑都安全、不耗 quota、不破壞既有 disk 狀態
+- Producer category（3 skill）會建 `.codex-pro/` + 寫 result file + 燒 quota（一次 codex-call）；v0.5 起額外讀 profile（read-only）決定 codex-call flags
 - Exception（batch）會 fan-out shell jobs + 寫 output dir + 燒大量 quota
 
 Future skill design：先決定 category 再寫 SKILL.md、prevent 散亂的 skill 屬性蔓延。如 v0.3 可能加 `/codex-pro:doctor` 既檢查環境（read-only）也修配置（mutating）— 走 design 一輪歸主屬性類、配 secondary tag。
