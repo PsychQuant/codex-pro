@@ -1,8 +1,8 @@
 ---
-name: setup
+name: codex-setup
 description: |
   驗證 codex-pro 環境是否就緒 — 檢查 Codex OAuth token、codex-call wrapper、plugin manifest。
-  Use when: 使用者輸入 /codex-pro:setup、第一次使用 codex-pro、診斷其他 /codex-pro:* command 失敗時。
+  Use when: 使用者輸入 /codex-pro:codex-setup、第一次使用 codex-pro、診斷其他 /codex-pro:* command 失敗時。
   輸出 4 欄 markdown readiness report（Check / Status / Detail / Remediation）。純 read-only — 不修改任何環境或設定。
   Trigger keywords: verify codex-pro environment, check codex setup, codex-pro readiness, codex 環境檢查
 allowed-tools:
@@ -10,7 +10,7 @@ allowed-tools:
   - Read
 ---
 
-# /codex-pro:setup — 環境就緒檢查
+# /codex-pro:codex-setup — 環境就緒檢查
 
 驗證 codex-pro plugin 執行所需的環境前提是否就緒，以結構化 markdown 表格回報每項檢查的狀態與修復指引。
 

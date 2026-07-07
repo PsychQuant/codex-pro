@@ -1,17 +1,17 @@
 ---
-name: result
+name: codex-result
 description: |
   顯示 .codex-pro/ 內特定 producer result file 的完整內容（frontmatter + body）。Read-only consumer category — 純檔案讀取、無 Codex HTTP wrapper 呼叫、無 subprocess、無 file mutation。
   與 status（list 性質）區隔 — result 是 detail 性質、看完整 markdown 內容。三 selection mode：(a) 位置 <filename> / (b) --latest <skill> / (c) --latest 無 arg。
   Selection 決勝權為 filename lexical order（filename ISO8601 prefix 是 producer 寫檔時 atomic 決定的時序 source of truth、不諮詢 filesystem mtime、也不諮詢 frontmatter timestamp field）。
   Fail-fast with remediation：file 不存在 / .codex-pro/ 不存在 / --latest <skill> 零 match 皆 abort 非 0、不 silent fallback。
-  Trigger keywords: show result file, display review, 顯示結果, 看完整, detail, codex-pro result, --latest
+  Trigger keywords: show codex result file, display codex review output, 顯示 codex 結果, 看完整, detail, codex-pro result, --latest
 allowed-tools:
   - Bash
   - Read
 ---
 
-# /codex-pro:result — Display Specific Result File (v0.1 read-only consumer)
+# /codex-pro:codex-result — Display Specific Result File (v0.1 read-only consumer)
 
 顯示 `.codex-pro/` 內特定 producer result file 的完整內容（frontmatter + body 全顯）。本 skill 是 codex-pro 第 8 個 user-facing capability、屬 **read-only consumer category**（與 status / cancel / setup 同類）。
 
@@ -107,23 +107,23 @@ Display = verbatim、無過濾、無排版改變、stdout-only。
 
 | Case | Remediation message |
 |---|---|
-| `.codex-pro/` 不存在 | 「`.codex-pro/` not yet created — run /codex-pro:review, /codex-pro:rescue, or /codex-pro:adversarial-review to produce a result file first.」 |
+| `.codex-pro/` 不存在 | 「`.codex-pro/` not yet created — run /codex-pro:codex-review, /codex-pro:codex-rescue, or /codex-pro:codex-adversarial-review to produce a result file first.」 |
 | `.codex-pro/` 空（無 *.md） | 同上 |
-| 位置 `<filename>` 不存在於 `.codex-pro/` | 「File not found in .codex-pro/. Run /codex-pro:status to list available files.」 |
-| `--latest <skill>` 零 match | 「No <skill> result files in .codex-pro/. Run /codex-pro:<skill> to produce one.」 |
+| 位置 `<filename>` 不存在於 `.codex-pro/` | 「File not found in .codex-pro/. Run /codex-pro:codex-status to list available files.」 |
+| `--latest <skill>` 零 match | 「No <skill> result files in .codex-pro/. Run /codex-pro:codex-<skill> to produce one.」 |
 
 **嚴禁 silent fallback**：例如 `--latest adversarial-review` 找不到時、絕不抓最近 review 假裝是 adversarial-review。所有 unresolvable case 顯式 abort + 引導 user 走正確 producer skill。
 
 ```bash
 if [ ! -d ".codex-pro" ]; then
-  echo "Error: .codex-pro/ not yet created — run /codex-pro:review, /codex-pro:rescue, or /codex-pro:adversarial-review first." >&2
+  echo "Error: .codex-pro/ not yet created — run /codex-pro:codex-review, /codex-pro:codex-rescue, or /codex-pro:codex-adversarial-review first." >&2
   exit 2
 fi
 
 if [ -z "$TARGET" ] || [ ! -f "$TARGET" ]; then
   case "$SELECT_MODE" in
-    positional) echo "Error: File not found in .codex-pro/. Run /codex-pro:status to list available files." >&2 ;;
-    latest_skill) echo "Error: No ${LATEST_SKILL} result files in .codex-pro/. Run /codex-pro:${LATEST_SKILL} to produce one." >&2 ;;
+    positional) echo "Error: File not found in .codex-pro/. Run /codex-pro:codex-status to list available files." >&2 ;;
+    latest_skill) echo "Error: No ${LATEST_SKILL} result files in .codex-pro/. Run /codex-pro:codex-${LATEST_SKILL} to produce one." >&2 ;;
     latest_all) echo "Error: No result files in .codex-pro/. Run any producer skill to create one." >&2 ;;
   esac
   exit 2
@@ -134,15 +134,15 @@ fi
 
 | Command | Selects |
 |---|---|
-| `/codex-pro:result review-20260601T120000Z.md` | 位置 filename mode — 顯示該檔 |
-| `/codex-pro:result --latest review` | 最近一次 review run |
-| `/codex-pro:result --latest rescue` | 最近一次 rescue run |
-| `/codex-pro:result --latest adversarial-review` | 最近一次 adversarial-review run |
-| `/codex-pro:result --latest` | 全 producer 最近一次（含任一 skill type） |
+| `/codex-pro:codex-result review-20260601T120000Z.md` | 位置 filename mode — 顯示該檔 |
+| `/codex-pro:codex-result --latest review` | 最近一次 review run |
+| `/codex-pro:codex-result --latest rescue` | 最近一次 rescue run |
+| `/codex-pro:codex-result --latest adversarial-review` | 最近一次 adversarial-review run |
+| `/codex-pro:codex-result --latest` | 全 producer 最近一次（含任一 skill type） |
 
 ## 與 status / cancel 的對比
 
-| 面向 | `/codex-pro:status` | `/codex-pro:result` | `/codex-pro:cancel` |
+| 面向 | `/codex-pro:codex-status` | `/codex-pro:codex-result` | `/codex-pro:codex-cancel` |
 |---|---|---|---|
 | Mental model | list summary | detail display | informational only |
 | Argument | optional `--skill <name>` | 位置 / `--latest [<skill>]` 三 mode | 零 argument |

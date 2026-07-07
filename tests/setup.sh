@@ -15,7 +15,7 @@ source "$SCRIPT_DIR/lib/isolate.sh"
 
 # ── Check 1: OAuth token state ───────────────────────────────────
 # Re-implements the body of the SKILL Check 1 so we can drive it under
-# isolation. Stays semantically identical to plugins/codex-pro/skills/setup/SKILL.md.
+# isolation. Stays semantically identical to plugins/codex-pro/skills/codex-setup/SKILL.md.
 oauth_check() {
   if [ -r "$HOME/.codex/auth.json" ]; then
     local mode

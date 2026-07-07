@@ -14,7 +14,7 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 # shellcheck disable=SC1091
 source "$SCRIPT_DIR/lib/assert.sh"
 
-RESCUE_SKILL="$REPO_ROOT/plugins/codex-pro/skills/rescue/SKILL.md"
+RESCUE_SKILL="$REPO_ROOT/plugins/codex-pro/skills/codex-rescue/SKILL.md"
 
 assert_file "$RESCUE_SKILL" "rescue SKILL.md exists"
 
@@ -26,7 +26,7 @@ m = re.match(r"^---\n(.*?)\n---\n", content, re.DOTALL)
 if not m:
     print("no_frontmatter"); sys.exit(0)
 fm = m.group(1)
-name_ok = "name: rescue" in fm
+name_ok = "name: codex-rescue" in fm
 bash_ok = "Bash" in fm
 read_ok = "Read" in fm
 print(f"name={name_ok} bash={bash_ok} read={read_ok}")
@@ -34,7 +34,7 @@ PY
 )
 case "$fm_check" in
   *"name=True bash=True read=True"*)
-    pass "frontmatter: name=rescue, allowed-tools 含 Bash + Read" ;;
+    pass "frontmatter: name=codex-rescue, allowed-tools 含 Bash + Read" ;;
   *)
     fail "frontmatter check failed: $fm_check" ;;
 esac

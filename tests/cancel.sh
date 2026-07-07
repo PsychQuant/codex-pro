@@ -17,7 +17,7 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 # shellcheck disable=SC1091
 source "$SCRIPT_DIR/lib/assert.sh"
 
-CANCEL_SKILL="$REPO_ROOT/plugins/codex-pro/skills/cancel/SKILL.md"
+CANCEL_SKILL="$REPO_ROOT/plugins/codex-pro/skills/codex-cancel/SKILL.md"
 
 # ══════════════════════════════════════════════════════════════════
 # Structural section
@@ -33,7 +33,7 @@ m = re.match(r"^---\n(.*?)\n---\n", content, re.DOTALL)
 if not m:
     print("no_frontmatter"); sys.exit(0)
 fm = m.group(1)
-name_ok = "name: cancel" in fm
+name_ok = "name: codex-cancel" in fm
 bash_ok = "Bash" in fm
 informational_ok = "informational only" in fm
 print(f"name={name_ok} bash={bash_ok} informational={informational_ok}")
@@ -41,7 +41,7 @@ PY
 )
 case "$fm_check" in
   *"name=True bash=True informational=True"*)
-    pass "frontmatter: name=cancel, allowed-tools 含 Bash, description 含 literal 'informational only'" ;;
+    pass "frontmatter: name=codex-cancel, allowed-tools 含 Bash, description 含 literal 'informational only'" ;;
   *)
     fail "frontmatter check failed: $fm_check" ;;
 esac

@@ -1,5 +1,5 @@
 ---
-name: cancel
+name: codex-cancel
 description: |
   informational only — codex-pro v0.2 為 stateless single-shot model、無 background job 可 cancel。本 skill 輸出 explainer + 3 remediation lines、永不 error、永不 mutate disk、永不 signal any process。
   與 status / result / setup 同屬 read-only consumer category — 本 skill 屬 stdout-only informational subtype。Drop-in 對應上游 codex-plugin-cc /codex:cancel、但因 codex-pro stateless model 而為 displayed limitation 而非 silent stub。
@@ -9,9 +9,9 @@ allowed-tools:
   - Bash
 ---
 
-# /codex-pro:cancel — Informational Only (v0.2 stateless limitation)
+# /codex-pro:codex-cancel — Informational Only (v0.2 stateless limitation)
 
-**informational only** — codex-pro v0.2 為 stateless single-shot model：每個 `/codex-pro:review` / `:rescue` / `:adversarial-review` invocation 都是 synchronous HTTPS round-trip to Codex HTTP wrapper、無 background job、無 persistent PID、無 upstream chatgpt.com/backend-api cancel API。**沒有東西可以給本 skill cancel**。
+**informational only** — codex-pro v0.2 為 stateless single-shot model：每個 `/codex-pro:codex-review` / `:rescue` / `:adversarial-review` invocation 都是 synchronous HTTPS round-trip to Codex HTTP wrapper、無 background job、無 persistent PID、無 upstream chatgpt.com/backend-api cancel API。**沒有東西可以給本 skill cancel**。
 
 本 skill 為 stdout-only informational explainer + 3 條 remediation：不殺 PID、不送 HTTPS、不寫任何 file、不建立 `.codex-pro/`、不 signal 任何 process。Output deterministic（同 invocation 永遠 byte-identical），讓 user 一眼認出這是 known displayed limitation 而非 transient failure。
 
@@ -33,10 +33,10 @@ allowed-tools:
 ```
 codex-pro cancel — informational only
 
-codex-pro v0.2 is single-shot stateless: each /codex-pro:review / :rescue /
+codex-pro v0.2 is single-shot stateless: each /codex-pro:codex-review / :rescue /
 :adversarial-review invocation is a synchronous HTTPS round-trip to the Codex
 HTTP wrapper, with no background job, no persistent PID, and no upstream
-cancel API on chatgpt.com/backend-api. There is nothing for /codex-pro:cancel
+cancel API on chatgpt.com/backend-api. There is nothing for /codex-pro:codex-cancel
 to terminate.
 
 If you need to abort a running invocation, choose one:
@@ -56,7 +56,7 @@ Output deterministic — bytes 永遠相同。Claude Code 在 SKILL.md 內可用
 
 ## 與 status / result 的對比
 
-| 面向 | `/codex-pro:status` | `/codex-pro:result` | `/codex-pro:cancel` |
+| 面向 | `/codex-pro:codex-status` | `/codex-pro:codex-result` | `/codex-pro:codex-cancel` |
 |---|---|---|---|
 | Mental model | list summary | detail display | informational limitation |
 | File ops | scan `.codex-pro/*.md` | read single file | 不讀 `.codex-pro/`（解耦）|

@@ -1,17 +1,17 @@
 ---
-name: config
+name: codex-config
 description: |
-  顯示 codex-pro 已 resolve 的 profile 配置 — 列出 model / effort / max_time / focus_default 4 個 field 的當前值與來源（global / project / default）。
+  顯示 codex-pro 已 resolve 的 profile 內容 — 列出 model / effort / max_time / focus_default 4 個 field 的當前值與來源（global / project / default）。
   Profile 來源兩 layer：global `~/.codex-pro/profile.yaml` + project `<cwd>/.codex-pro/profile.yaml`、project per-field override global、missing field fall back hardcoded default。
   Read-only consumer category — 純檔案讀取、無 file mutation、不 spawn 任何 subprocess、stdout-only markdown table。
   與 setup / status / result / cancel 同 category；對 producer skills（review / rescue / adversarial-review）以及 batch exception 不互動。
-  Trigger keywords: profile, config, settings, 設定, 配置, which model, which max-time, show profile, view config, codex-pro profile
+  Trigger keywords: codex profile, codex config, codex-pro profile, show resolved profile, which model, which max-time
 allowed-tools:
   - Bash
   - Read
 ---
 
-# /codex-pro:config — Display Resolved Profile (v0.1 read-only consumer)
+# /codex-pro:codex-config — Display Resolved Profile (v0.1 read-only consumer)
 
 掃 `~/.codex-pro/profile.yaml`（global layer）+ `<cwd>/.codex-pro/profile.yaml`（project layer）兩 layer profile、field-level merge、missing field 用 hardcoded default、輸出 4-row markdown table + 2 行 profile file 存在性。本 skill 是 codex-pro 第 10 個 user-facing capability、屬 **read-only consumer category**（與 setup / status / result / cancel 同類、與 producer review / rescue / adversarial-review 對比、與 batch exception 對比）。
 
@@ -159,7 +159,7 @@ PY
 
 ## 與 setup / status / result / cancel 的對比
 
-| 面向 | `/codex-pro:setup` | `/codex-pro:status` | `/codex-pro:result` | `/codex-pro:cancel` | `/codex-pro:config` |
+| 面向 | `/codex-pro:codex-setup` | `/codex-pro:codex-status` | `/codex-pro:codex-result` | `/codex-pro:codex-cancel` | `/codex-pro:codex-config` |
 |---|---|---|---|---|---|
 | Mental model | 環境檢查 | list result files | display single file | informational only | display profile |
 | 讀什麼 | `~/.codex/auth.json` + Codex HTTP wrapper PATH | `.codex-pro/*.md` | 特定 `.codex-pro/<skill>-<ts>.md` | 無檔依賴 | `~/.codex-pro/profile.yaml` + `.codex-pro/profile.yaml` |
@@ -191,4 +191,4 @@ focus_default: security
 
 > Note: `.codex-pro/` 在 codex-pro repos 預設 gitignored。若要與 team 分享 project profile、un-gitignore 或 commit 到非 ignored path。
 
-跑 `/codex-pro:config` 即顯示 resolved value 與 per-field source。
+跑 `/codex-pro:codex-config` 即顯示 resolved value 與 per-field source。

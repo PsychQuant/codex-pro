@@ -18,7 +18,7 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 # shellcheck disable=SC1091
 source "$SCRIPT_DIR/lib/assert.sh"
 
-STATUS_SKILL="$REPO_ROOT/plugins/codex-pro/skills/status/SKILL.md"
+STATUS_SKILL="$REPO_ROOT/plugins/codex-pro/skills/codex-status/SKILL.md"
 
 # ══════════════════════════════════════════════════════════════════
 # Structural section
@@ -34,7 +34,7 @@ m = re.match(r"^---\n(.*?)\n---\n", content, re.DOTALL)
 if not m:
     print("no_frontmatter"); sys.exit(0)
 fm = m.group(1)
-name_ok = "name: status" in fm
+name_ok = "name: codex-status" in fm
 bash_ok = "Bash" in fm
 read_ok = "Read" in fm
 keyword_ok = any(k in fm for k in ("list result files", "review history", "過去結果", "observability", "list .codex-pro"))
@@ -43,7 +43,7 @@ PY
 )
 case "$fm_check" in
   *"name=True bash=True read=True keyword=True"*)
-    pass "frontmatter: name=status, allowed-tools 含 Bash + Read, description 含 mental-model keyword" ;;
+    pass "frontmatter: name=codex-status, allowed-tools 含 Bash + Read, description 含 mental-model keyword" ;;
   *)
     fail "frontmatter check failed: $fm_check" ;;
 esac
@@ -108,16 +108,16 @@ fi
 # ══════════════════════════════════════════════════════════════════
 
 # Equivalent of SKILL.md scan + parse + emit logic, isolated for test.
-# Mirrors the contract in plugins/codex-pro/skills/status/SKILL.md.
+# Mirrors the contract in plugins/codex-pro/skills/codex-status/SKILL.md.
 run_status() {
   local skill_filter="${1:-}"
   if [ ! -d ".codex-pro" ]; then
-    echo ".codex-pro/ not yet created — any producer skill (/codex-pro:review, /codex-pro:rescue, /codex-pro:adversarial-review) creates it on first run."
+    echo ".codex-pro/ not yet created — any producer skill (/codex-pro:codex-review, /codex-pro:codex-rescue, /codex-pro:codex-adversarial-review) creates it on first run."
     return 0
   fi
   if [ -z "$(find .codex-pro -maxdepth 1 -name '*.md' -type f 2>/dev/null)" ]; then
     echo "No result files found in .codex-pro/."
-    echo "Run /codex-pro:review, /codex-pro:rescue, or /codex-pro:adversarial-review to produce one."
+    echo "Run /codex-pro:codex-review, /codex-pro:codex-rescue, or /codex-pro:codex-adversarial-review to produce one."
     return 0
   fi
   if [ -n "$skill_filter" ]; then

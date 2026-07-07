@@ -8,41 +8,66 @@ TBD - created by archiving change 'status-result-cancel'. Update Purpose after a
 
 ### Requirement: Status skill registration and argument parsing
 
-The plugin SHALL expose a `/codex-pro:status` skill registered at `plugins/codex-pro/skills/status/SKILL.md` with a YAML frontmatter declaring `name: status`, a descriptive `description` block whose trigger keywords include "list result files" / "review history" / 過去結果列表 / 狀態 / observability verbiage, and an `allowed-tools` list containing at least `Bash` (for filesystem scan) and `Read` (for frontmatter parse). The skill SHALL accept an optional `--skill <name>` flag where `<name>` is one of `review`, `rescue`, `adversarial-review`. Any other flag or positional argument SHALL be rejected with a usage hint.
+The plugin SHALL expose a `/codex-pro:codex-status` skill registered at `plugins/codex-pro/skills/codex-status/SKILL.md` with a YAML frontmatter declaring `name: codex-status`, a descriptive `description` block whose trigger keywords are codex-qualified — `list codex result files` / `codex review history` / `過去 codex 結果列表` — and MUST NOT list the bare standalone term `狀態` as a trigger keyword. The `allowed-tools` list MUST contain at least `Bash` (for filesystem scan) and `Read` (for frontmatter parse). The skill SHALL accept an optional `--skill <name>` flag where `<name>` is one of the producer result-file prefixes `review`, `rescue`, `adversarial-review` (bare producer identifiers — result-file naming is intentionally decoupled from the `codex-`-prefixed invocation name and is unchanged by this rename). Any other flag or positional argument SHALL be rejected with a usage hint.
 
 #### Scenario: Skill is registered and discoverable
 
 - **WHEN** the plugin is installed
-- **THEN** `plugins/codex-pro/skills/status/SKILL.md` MUST exist with valid YAML frontmatter
-- **AND** the frontmatter `name` field MUST equal `status`
+- **THEN** `plugins/codex-pro/skills/codex-status/SKILL.md` MUST exist with valid YAML frontmatter
+- **AND** the frontmatter `name` field MUST equal `codex-status`
 - **AND** the frontmatter `allowed-tools` MUST contain both `Bash` and `Read`
 
 #### Scenario: --skill filter parses a valid producer name
 
-- **WHEN** a user invokes `/codex-pro:status --skill review`
+- **WHEN** a user invokes `/codex-pro:codex-status --skill review`
 - **THEN** the skill SHALL filter the listing to only `review-*.md` filenames
 - **AND** the skill SHALL accept `--skill rescue` and `--skill adversarial-review` identically
 
 #### Scenario: Invalid --skill value is rejected
 
-- **WHEN** a user invokes `/codex-pro:status --skill bogus`
+- **WHEN** a user invokes `/codex-pro:codex-status --skill bogus`
 - **THEN** the skill SHALL emit a usage hint listing the three accepted values
 - **AND** the skill SHALL exit non-zero
 
 
 <!-- @trace
-source: status-result-cancel
-updated: 2026-06-01
+source: rename-skills-codex-prefix
+updated: 2026-07-07
 code:
-  - README.md
-  - CLAUDE.md
-  - plugins/codex-pro/skills/result/SKILL.md
-  - plugins/codex-pro/skills/cancel/SKILL.md
-  - plugins/codex-pro/skills/status/SKILL.md
-  - tests/status.sh
-  - tests/cancel.sh
-  - tests/run.sh
+  - tests/adversarial-review.sh
+  - plugins/codex-pro/skills/adversarial-review/SKILL.md
   - tests/result.sh
+  - plugins/codex-pro/skills/codex-setup/SKILL.md
+  - tests/status.sh
+  - CLAUDE.md
+  - tests/cancel.sh
+  - tests/static.sh
+  - plugins/codex-pro/skills/result/SKILL.md
+  - tests/rescue.sh
+  - plugins/codex-pro/skills/codex-batch/SKILL.md
+  - plugins/codex-pro/skills/codex-review/SKILL.md
+  - tests/batch.sh
+  - tests/e2e-checklist.md
+  - plugins/codex-pro/skills/codex-batch/references/script-template.sh
+  - plugins/codex-pro/skills/codex-cancel/SKILL.md
+  - README.md
+  - plugins/codex-pro/skills/batch/SKILL.md
+  - plugins/codex-pro/skills/codex-rescue/SKILL.md
+  - plugins/codex-pro/skills/rescue/SKILL.md
+  - tests/config.sh
+  - tests/review.sh
+  - plugins/codex-pro/skills/codex-adversarial-review/SKILL.md
+  - plugins/codex-pro/skills/cancel/SKILL.md
+  - plugins/codex-pro/skills/codex-result/SKILL.md
+  - plugins/codex-pro/skills/codex-status/SKILL.md
+  - tests/setup.sh
+  - plugins/codex-pro/skills/config/SKILL.md
+  - plugins/codex-pro/skills/status/SKILL.md
+  - plugins/codex-pro/skills/codex-config/SKILL.md
+  - plugins/codex-pro/skills/setup/SKILL.md
+  - plugins/codex-pro/.claude-plugin/plugin.json
+  - plugins/codex-pro/skills/review/SKILL.md
+  - plugins/codex-pro/skills/batch/references/script-template.sh
 -->
 
 ---
@@ -52,7 +77,7 @@ The skill SHALL NOT invoke `codex-call` and SHALL NOT spawn the `codex` CLI. The
 
 #### Scenario: SKILL.md does not invoke codex-call or codex exec
 
-- **WHEN** the static layer inspects `plugins/codex-pro/skills/status/SKILL.md`
+- **WHEN** the static layer inspects `plugins/codex-pro/skills/codex-status/SKILL.md`
 - **THEN** the body MUST NOT contain the literal string `codex-call`
 - **AND** the body MUST NOT contain the literal string `codex exec`
 
@@ -85,7 +110,7 @@ The skill SHALL scan `.codex-pro/*.md` (when the directory exists), parse YAML f
 
 #### Scenario: Populated .codex-pro/ produces a markdown table
 
-- **WHEN** a user invokes `/codex-pro:status` with a non-empty `.codex-pro/` containing one review, one rescue, and one adversarial-review result file
+- **WHEN** a user invokes `/codex-pro:codex-status` with a non-empty `.codex-pro/` containing one review, one rescue, and one adversarial-review result file
 - **THEN** stdout MUST contain a markdown table with the six column headers in order
 - **AND** the table MUST contain exactly three rows
 - **AND** each row's `skill type` column MUST match the filename prefix
@@ -128,14 +153,14 @@ The skill SHALL distinguish between three states of `.codex-pro/` and emit infor
 
 #### Scenario: Missing .codex-pro/ directory is informational
 
-- **WHEN** a user invokes `/codex-pro:status` in a project whose `.codex-pro/` directory does not exist
+- **WHEN** a user invokes `/codex-pro:codex-status` in a project whose `.codex-pro/` directory does not exist
 - **THEN** stdout MUST contain a one-line note referencing first producer-skill creation
 - **AND** the skill MUST NOT create `.codex-pro/`
 - **AND** the skill SHALL exit 0
 
 #### Scenario: Empty .codex-pro/ directory is informational
 
-- **WHEN** a user invokes `/codex-pro:status` with an empty `.codex-pro/` directory (zero `*.md` files)
+- **WHEN** a user invokes `/codex-pro:codex-status` with an empty `.codex-pro/` directory (zero `*.md` files)
 - **THEN** stdout MUST contain the literal string `No result files found`
 - **AND** the skill SHALL exit 0
 

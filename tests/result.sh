@@ -19,7 +19,7 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 # shellcheck disable=SC1091
 source "$SCRIPT_DIR/lib/assert.sh"
 
-RESULT_SKILL="$REPO_ROOT/plugins/codex-pro/skills/result/SKILL.md"
+RESULT_SKILL="$REPO_ROOT/plugins/codex-pro/skills/codex-result/SKILL.md"
 
 # ══════════════════════════════════════════════════════════════════
 # Structural section
@@ -35,7 +35,7 @@ m = re.match(r"^---\n(.*?)\n---\n", content, re.DOTALL)
 if not m:
     print("no_frontmatter"); sys.exit(0)
 fm = m.group(1)
-name_ok = "name: result" in fm
+name_ok = "name: codex-result" in fm
 bash_ok = "Bash" in fm
 read_ok = "Read" in fm
 keyword_ok = any(k in fm for k in ("show result", "顯示結果", "看完整", "detail", "display review"))
@@ -44,7 +44,7 @@ PY
 )
 case "$fm_check" in
   *"name=True bash=True read=True keyword=True"*)
-    pass "frontmatter: name=result, allowed-tools 含 Bash + Read, description 含 mental-model keyword" ;;
+    pass "frontmatter: name=codex-result, allowed-tools 含 Bash + Read, description 含 mental-model keyword" ;;
   *)
     fail "frontmatter check failed: $fm_check" ;;
 esac
@@ -96,10 +96,10 @@ else
 fi
 
 # ── (g) Fail-fast remediation references ─────────────────────────
-if grep -q '/codex-pro:status' "$RESULT_SKILL"; then
-  pass "SKILL.md fail-fast remediation references /codex-pro:status"
+if grep -q '/codex-pro:codex-status' "$RESULT_SKILL"; then
+  pass "SKILL.md fail-fast remediation references /codex-pro:codex-status"
 else
-  fail "SKILL.md missing /codex-pro:status remediation reference"
+  fail "SKILL.md missing /codex-pro:codex-status remediation reference"
 fi
 if grep -qE 'silent|fallback|顯式' "$RESULT_SKILL"; then
   pass "SKILL.md documents no-silent-fallback discipline"
@@ -137,7 +137,7 @@ run_result() {
     return 2
   fi
   if [ ! -d ".codex-pro" ]; then
-    echo "Error: .codex-pro/ not yet created — run /codex-pro:review, /codex-pro:rescue, or /codex-pro:adversarial-review first." >&2
+    echo "Error: .codex-pro/ not yet created — run /codex-pro:codex-review, /codex-pro:codex-rescue, or /codex-pro:codex-adversarial-review first." >&2
     return 2
   fi
   local target=""
@@ -159,9 +159,9 @@ print(sorted(files, key=key)[-1] if files else '')
   fi
   if [ -z "$target" ] || [ ! -f "$target" ]; then
     if [ -n "$pos_file" ]; then
-      echo "Error: File not found in .codex-pro/. Run /codex-pro:status to list available files." >&2
+      echo "Error: File not found in .codex-pro/. Run /codex-pro:codex-status to list available files." >&2
     elif [ -n "$latest_skill" ]; then
-      echo "Error: No ${latest_skill} result files in .codex-pro/. Run /codex-pro:${latest_skill} to produce one." >&2
+      echo "Error: No ${latest_skill} result files in .codex-pro/. Run /codex-pro:codex-${latest_skill} to produce one." >&2
     else
       echo "Error: No result files in .codex-pro/. Run any producer skill to create one." >&2
     fi
@@ -262,8 +262,8 @@ fi
 # ── (l) Unknown filename fail-fast with status remediation ───────
 UNKNOWN_OUT=$(cd "$TMP_POS" && run_result bogus-20260601T120000Z.md 2>&1)
 UNKNOWN_RC=$?
-if echo "$UNKNOWN_OUT" | grep -q '/codex-pro:status' && [ "$UNKNOWN_RC" -eq 2 ]; then
-  pass "behavioral: unknown filename fails fast with /codex-pro:status remediation"
+if echo "$UNKNOWN_OUT" | grep -q '/codex-pro:codex-status' && [ "$UNKNOWN_RC" -eq 2 ]; then
+  pass "behavioral: unknown filename fails fast with /codex-pro:codex-status remediation"
 else
   fail "behavioral: unknown filename handling wrong (rc=$UNKNOWN_RC out='$UNKNOWN_OUT')"
 fi
@@ -273,7 +273,7 @@ fi
 rm -f "$TMP_POS/.codex-pro/adversarial-review-"*.md
 ZERO_OUT=$(cd "$TMP_POS" && run_result --latest adversarial-review 2>&1)
 ZERO_RC=$?
-if echo "$ZERO_OUT" | grep -q '/codex-pro:adversarial-review' && [ "$ZERO_RC" -eq 2 ]; then
+if echo "$ZERO_OUT" | grep -q '/codex-pro:codex-adversarial-review' && [ "$ZERO_RC" -eq 2 ]; then
   pass "behavioral: --latest <skill> zero-match references producer skill in remediation"
 else
   fail "behavioral: zero-match handling wrong (rc=$ZERO_RC out='$ZERO_OUT')"

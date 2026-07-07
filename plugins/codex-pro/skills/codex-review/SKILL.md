@@ -1,20 +1,20 @@
 ---
-name: review
+name: codex-review
 description: |
   對 code 跑 read-only Codex review — 接受三種 target：current uncommitted diff（無 argument）、specific file path、或 branch comparison（--base <ref>）。
   v0.2 — untracked-by-default：`--diff` mode 現在含 `git diff HEAD` + untracked file enumeration（v0.1 silent omission bug 已修），含 binary path-only + per-file 64KB / aggregate 512KB size cap + pre-first-commit fallback + target_invalid post-filter pre-flight。
-  v0.3 — profile-aware：`--model` / `--effort` / `--max-time` 從 `~/.codex-pro/profile.yaml`（global）+ `.codex-pro/profile.yaml`（project）resolve；未設 profile 時沿用 hardcoded default（gpt-5.5 / xhigh / 600）、100% backward compatible。見 `/codex-pro:config`。
+  v0.3 — profile-aware：`--model` / `--effort` / `--max-time` 從 `~/.codex-pro/profile.yaml`（global）+ `.codex-pro/profile.yaml`（project）resolve；未設 profile 時沿用 hardcoded default（gpt-5.5 / xhigh / 600）、100% backward compatible。見 `/codex-pro:codex-config`。
   v0.4 — heading-hardened：Step 3 system instructions 改為 literal-token 寫法（命名 `## Summary` / `## Findings` H2 + `### Finding N:` H3、"exactly two H2 sections, in this order" + CRITICAL 開頭條款），解 Codex 偶爾省略/改寫必要 H2 heading 的漂移（issue #1）；result-file 契約不變。
   透過 codex-call HTTPS direct 執行（無 subprocess），結果寫入 .codex-pro/review-<timestamp>.md 結構化檔案，不直接 inline echo（避免 silent stub failure）。
   Findings 無數量上限。Rate limit / OAuth invalid / timeout / target_invalid（v0.2 第 4 類）走 circuit-breaker fail-fast、不 retry。
-  Use when: 使用者輸入 /codex-pro:review、或 review uncommitted changes、code review 在 commit 前。
+  Use when: 使用者輸入 /codex-pro:codex-review、或 review uncommitted changes、code review 在 commit 前。
   Trigger keywords: codex review, review code, review changes, review branch, review uncommitted
 allowed-tools:
   - Bash
   - Read
 ---
 
-# /codex-pro:review — Read-only Codex Review (v0.1 single oracle)
+# /codex-pro:codex-review — Read-only Codex Review (v0.1 single oracle)
 
 對 code 跑 single-oracle read-only review，產出結構化 findings 寫入 disk 檔案。本 skill 是 codex-pro 的第 3 個 capability，v0.1 為 minimal — 單一 reviewer、無 ensemble（多 reviewer 角色平行留 v0.2）。
 
@@ -25,7 +25,7 @@ allowed-tools:
 **Fail-fast 四條件**（v0.2：原 3 class + target_invalid pre-flight、與 adversarial-review template 對齊）：下列四種 failure 觸發 circuit breaker、不 retry：
 
 1. **Rate limit**（HTTP 429 或 output 含 "rate limit"）→ result file frontmatter 寫 `error: rate_limit`、提示等待 Codex tier 限額重置或升級
-2. **OAuth invalid**（HTTP 401 或 output 含 "auth"）→ frontmatter 寫 `error: oauth_invalid`、提示跑 /codex-pro:setup 確認 token 狀態
+2. **OAuth invalid**（HTTP 401 或 output 含 "auth"）→ frontmatter 寫 `error: oauth_invalid`、提示跑 /codex-pro:codex-setup 確認 token 狀態
 3. **Hard timeout**（超過 --max-time 600 秒）→ frontmatter 寫 `error: timeout`、提示縮小 review target 或檢查 Codex tier
 4. **Target invalid**（v0.2 pre-flight class）→ `--diff` mode 在 binary + size filter 後仍 whitespace-only → frontmatter 寫 `error: target_invalid`、`findings_count: 0`、在 codex-call 之前 abort（防空 prompt 燒 quota）
 
@@ -204,7 +204,7 @@ codex-call \
   - `effort`: `$EFFORT`（Step 4.1 resolved value、profile 或 default `xhigh`）
   - `timestamp`: ISO8601 含時區（例 `2026-06-01T08:30:48+08:00`）
   - `findings_count`: 解析 body 內 `### Finding N:` heading 數量
-  - `profile_source`: `$PROFILE_SOURCE`（v0.3 新增 optional field、aggregate enum `default` / `global` / `project` / `mixed`）。**v0.2 result file 沒此 field 屬 valid frontmatter**（forward-compat、`/codex-pro:status` 與 `/codex-pro:result` 容忍 missing `profile_source`）
+  - `profile_source`: `$PROFILE_SOURCE`（v0.3 新增 optional field、aggregate enum `default` / `global` / `project` / `mixed`）。**v0.2 result file 沒此 field 屬 valid frontmatter**（forward-compat、`/codex-pro:codex-status` 與 `/codex-pro:codex-result` 容忍 missing `profile_source`）
   - `error`: 不寫（success 不出現此 field）
 - 回報 user：result file 路徑 + findings count
 
@@ -215,7 +215,7 @@ codex-call \
 | 來源 stderr/output / pre-flight | frontmatter `error` 值 | 回報訊息 |
 |---|---|---|
 | `rate limit` / `429` | `rate_limit` | 「Codex 限額耗盡。等待限額重置或升級 tier 後重 retry。**不會自動 retry**。」 |
-| `auth` / `401` / `unauthorized` | `oauth_invalid` | 「OAuth token 失效。跑 /codex-pro:setup 確認 ~/.codex/auth.json 狀態並重 login。」 |
+| `auth` / `401` / `unauthorized` | `oauth_invalid` | 「OAuth token 失效。跑 /codex-pro:codex-setup 確認 ~/.codex/auth.json 狀態並重 login。」 |
 | timeout / >600 秒 | `timeout` | 「Review 超過 10 分鐘 hard timeout。考慮縮小 review target（如 `--base` 指更近 ref、改 review 單檔），或檢查 Codex tier 處理速度。」 |
 | pre-flight：`--diff` mode 過 binary + size filter 後 body 仍 whitespace-only（v0.2 第 4 類）| `target_invalid` | 「Target body 為空 after binary 與 size filter — verify there are real changes to review (uncommitted tracked changes, or untracked text files within 64KB each)。**不會自動 retry**、也不會發送空 prompt 給 Codex。」 |
 

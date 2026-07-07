@@ -18,7 +18,7 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 # shellcheck disable=SC1091
 source "$SCRIPT_DIR/lib/assert.sh"
 
-CONFIG_SKILL="$REPO_ROOT/plugins/codex-pro/skills/config/SKILL.md"
+CONFIG_SKILL="$REPO_ROOT/plugins/codex-pro/skills/codex-config/SKILL.md"
 
 # ══════════════════════════════════════════════════════════════════
 # Structural section
@@ -34,7 +34,7 @@ m = re.match(r"^---\n(.*?)\n---\n", content, re.DOTALL)
 if not m:
     print("no_frontmatter"); sys.exit(0)
 fm = m.group(1)
-name_ok = "name: config" in fm
+name_ok = "name: codex-config" in fm
 bash_ok = "Bash" in fm
 read_ok = "Read" in fm
 keyword_ok = any(k in fm for k in ("profile", "config", "設定", "配置", "which model"))
@@ -43,7 +43,7 @@ PY
 )
 case "$fm_check" in
   *"name=True bash=True read=True keyword=True"*)
-    pass "frontmatter: name=config, allowed-tools has Bash + Read, profile/config keyword present" ;;
+    pass "frontmatter: name=codex-config, allowed-tools has Bash + Read, profile/config keyword present" ;;
   *)
     fail "frontmatter check failed: $fm_check" ;;
 esac

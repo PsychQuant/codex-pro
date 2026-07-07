@@ -59,25 +59,25 @@ bash tests/e2e.sh --skill adversarial-review --scenario with-profile
 
 - [ ] **Marketplace add**：在新 Claude Code session 跑 `/plugin marketplace add psychquant/codex-pro`（GitHub source；或 `/plugin marketplace add <local repo path>` 走 local dev）。預期：marketplace `codex-pro` 出現在 `/plugin` 命令清單。
 
-- [ ] **Plugin install**：跑 `/plugin install codex-pro@codex-pro`。預期：plugin `codex-pro` 顯示為 installed、`/help` 列出 `/codex-pro:setup` 與 `/codex-pro:batch` 兩個 skill。
+- [ ] **Plugin install**：跑 `/plugin install codex-pro@codex-pro`。預期：plugin `codex-pro` 顯示為 installed、`/help` 列出 `/codex-pro:codex-setup` 與 `/codex-pro:codex-batch` 兩個 skill。
 
 ## B. Setup skill（已落地）
 
-- [ ] **Setup ready 全綠**：在 OAuth token、codex-call、plugin manifest 三者就緒環境下跑 `/codex-pro:setup`。預期：輸出 3 列 markdown 表格、3 個 Status 全 ✓、摘要含字串 `ready`。
+- [ ] **Setup ready 全綠**：在 OAuth token、codex-call、plugin manifest 三者就緒環境下跑 `/codex-pro:codex-setup`。預期：輸出 3 列 markdown 表格、3 個 Status 全 ✓、摘要含字串 `ready`。
 
-- [ ] **Setup 缺 OAuth 報 codex login**：暫時 rename `~/.codex/auth.json` → `~/.codex/auth.json.bak`，再跑 `/codex-pro:setup`。預期：OAuth 列 Status ✗、Remediation 文字含 `codex login`；摘要含 `need attention`。**測完還原檔名**。
+- [ ] **Setup 缺 OAuth 報 codex login**：暫時 rename `~/.codex/auth.json` → `~/.codex/auth.json.bak`，再跑 `/codex-pro:codex-setup`。預期：OAuth 列 Status ✗、Remediation 文字含 `codex login`；摘要含 `need attention`。**測完還原檔名**。
 
 - [ ] **Setup 為 read-only**：B 段的兩次跑 setup 前後，跑 `ls -la ~/.codex/` 比對。預期：除了你自己改檔名造成的差異外，目錄內容無 setup 引入的 mutation。
 
 ## C. Batch skill（已落地、含 Design constraint #1 exception）
 
-- [ ] **Batch 觸發**：跑 `/codex-pro:batch`（不帶參數）。預期：skill 開始向你詢問 5 個 required parameters — Reference file、Chunks、Prompt template、Output directory、optional model / reasoning effort 等。
+- [ ] **Batch 觸發**：跑 `/codex-pro:codex-batch`（不帶參數）。預期：skill 開始向你詢問 5 個 required parameters — Reference file、Chunks、Prompt template、Output directory、optional model / reasoning effort 等。
 
 - [ ] **Batch 跑完不污染 codex-pro**：用一個 fake reference + 短 chunk list 跑一輪 batch（output dir 指向 `/tmp/` 內某 fake dir）。預期：plugin 內檔案無變動、output 寫到 `/tmp/` 你指定的位置。**測完清理 /tmp/ 內產物**。
 
 ## D. Dev-test path（不裝 marketplace、純 --plugin-dir）
 
-- [ ] **Sub-plugin dev-test**：開另一個 Claude Code session 用 `claude --plugin-dir <repo>/plugins/codex-pro`（從你 clone 的 codex-pro 目錄）。預期：載入後 `/codex-pro:setup` 與 `/codex-pro:batch` 都可觸發，行為與 marketplace install 路徑一致。
+- [ ] **Sub-plugin dev-test**：開另一個 Claude Code session 用 `claude --plugin-dir <repo>/plugins/codex-pro`（從你 clone 的 codex-pro 目錄）。預期：載入後 `/codex-pro:codex-setup` 與 `/codex-pro:codex-batch` 都可觸發，行為與 marketplace install 路徑一致。
 
 ## Post-test cleanup checklist
 

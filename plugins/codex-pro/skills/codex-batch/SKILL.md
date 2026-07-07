@@ -1,5 +1,5 @@
 ---
-name: batch
+name: codex-batch
 description: |
   Generate and run batch Codex CLI jobs — split a large reference document into chunks,
   parallel-execute codex exec (GPT-5.5 xhigh) with structured prompts, monitor progress.
@@ -8,7 +8,7 @@ argument-hint: "[task description]"
 allowed-tools: Bash, Read, Write, Glob, Grep, Agent(general-purpose)
 ---
 
-# /codex-pro:batch — Parallel Content Generation with Codex CLI
+# /codex-pro:codex-batch — Parallel Content Generation with Codex CLI
 
 Generate a shell script that runs `codex exec` in parallel across multiple chunks of a large document, then execute and monitor it.
 

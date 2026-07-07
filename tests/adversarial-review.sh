@@ -19,7 +19,7 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 # shellcheck disable=SC1091
 source "$SCRIPT_DIR/lib/assert.sh"
 
-ADV_REVIEW_SKILL="$REPO_ROOT/plugins/codex-pro/skills/adversarial-review/SKILL.md"
+ADV_REVIEW_SKILL="$REPO_ROOT/plugins/codex-pro/skills/codex-adversarial-review/SKILL.md"
 
 assert_file "$ADV_REVIEW_SKILL" "adversarial-review SKILL.md exists"
 
@@ -31,7 +31,7 @@ m = re.match(r"^---\n(.*?)\n---\n", content, re.DOTALL)
 if not m:
     print("no_frontmatter"); sys.exit(0)
 fm = m.group(1)
-name_ok = "name: adversarial-review" in fm
+name_ok = "name: codex-adversarial-review" in fm
 bash_ok = "Bash" in fm
 read_ok = "Read" in fm
 # mental-model trigger keyword (distinct from review's assessment verbiage)
@@ -41,7 +41,7 @@ PY
 )
 case "$fm_check" in
   *"name=True bash=True read=True keyword=True"*)
-    pass "frontmatter: name=adversarial-review, allowed-tools 含 Bash + Read, description 含 mental-model 區隔關鍵字" ;;
+    pass "frontmatter: name=codex-adversarial-review, allowed-tools 含 Bash + Read, description 含 mental-model 區隔關鍵字" ;;
   *)
     fail "frontmatter check failed: $fm_check" ;;
 esac
@@ -182,7 +182,7 @@ fi
 # ══════════════════════════════════════════════════════════════════
 
 # Equivalent of SKILL.md Step 1 collection logic for adversarial-review.
-# Mirrors the contract in plugins/codex-pro/skills/adversarial-review/SKILL.md.
+# Mirrors the contract in plugins/codex-pro/skills/codex-adversarial-review/SKILL.md.
 collect_adv_review_target() {
   local per_file_cap=$((64 * 1024))
   local agg_cap=$((512 * 1024))

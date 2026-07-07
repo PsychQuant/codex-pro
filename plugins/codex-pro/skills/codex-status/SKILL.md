@@ -1,16 +1,16 @@
 ---
-name: status
+name: codex-status
 description: |
   列出 .codex-pro/ 內所有 producer skill（review / rescue / adversarial-review）的 result file 並輸出 markdown table summary。Read-only consumer category — 純掃目錄 + parse frontmatter、無 Codex HTTP wrapper 呼叫、無 subprocess、無 file mutation。
   與 review / rescue / adversarial-review 的 mutating producer 對比、與 setup（read-only environment check）同屬 read-only category。Triple skill set 之一（status + result + cancel）對應上游 codex-plugin-cc /codex:status drop-in surface。
   支援 --skill <review|rescue|adversarial-review> filter 看單一 producer。Missing / empty .codex-pro/ 為 informational case（exit 0 不算 error）。
-  Trigger keywords: list result files, review history, 過去結果, 狀態, observability, codex-pro status, list .codex-pro
+  Trigger keywords: list codex result files, codex review history, 過去 codex 結果列表, codex-pro status, list .codex-pro
 allowed-tools:
   - Bash
   - Read
 ---
 
-# /codex-pro:status — List `.codex-pro/` Result Files (v0.1 read-only consumer)
+# /codex-pro:codex-status — List `.codex-pro/` Result Files (v0.1 read-only consumer)
 
 掃 `.codex-pro/*.md` producer output、parse YAML frontmatter、輸出 markdown table summary。本 skill 是 codex-pro 第 7 個 user-facing capability、屬 **read-only consumer category**（與 setup 同類）— 純檔案讀取、無 Codex HTTP wrapper / 無 subprocess for Codex / 無 disk mutation。
 
@@ -125,22 +125,22 @@ Columns 順序固定：filename / skill type / target / task / outcome summary /
 `STATE="missing"`：
 
 ```
-.codex-pro/ not yet created — any producer skill (/codex-pro:review, /codex-pro:rescue,
-/codex-pro:adversarial-review) creates it on first run.
+.codex-pro/ not yet created — any producer skill (/codex-pro:codex-review, /codex-pro:codex-rescue,
+/codex-pro:codex-adversarial-review) creates it on first run.
 ```
 
 `STATE="empty"`：
 
 ```
 No result files found in .codex-pro/.
-Run /codex-pro:review, /codex-pro:rescue, or /codex-pro:adversarial-review to produce one.
+Run /codex-pro:codex-review, /codex-pro:codex-rescue, or /codex-pro:codex-adversarial-review to produce one.
 ```
 
 兩 case 都 exit 0（informational、不算 error）。**Skill 不建立 `.codex-pro/` 目錄**（read-only 不可 side-effect 建目錄）— 即使目錄不存在也只是印 informational 訊息、不嘗試建。
 
 ## 與 setup 的對比 + read-only category 定位
 
-| 面向 | `/codex-pro:setup` | `/codex-pro:status` |
+| 面向 | `/codex-pro:codex-setup` | `/codex-pro:codex-status` |
 |---|---|---|
 | Category | read-only environment | read-only consumer |
 | 看什麼 | `~/.codex/auth.json` + Codex HTTP wrapper PATH | `.codex-pro/*.md` producer output |

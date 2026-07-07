@@ -8,49 +8,69 @@ TBD - created by archiving change 'config-profile-mechanism'. Update Purpose aft
 
 ### Requirement: Config skill registration with zero-argument display
 
-The plugin SHALL expose a `/codex-pro:config` skill registered at `plugins/codex-pro/skills/config/SKILL.md` with a YAML frontmatter declaring `name: config`, a descriptive `description` block whose trigger keywords include `profile` / `config` / `show settings` / 設定 / 配置 / `which model` verbiage, and an `allowed-tools` list containing at least `Bash` (for filesystem scan + python3 parse) and `Read` (for profile YAML inspection). The skill SHALL accept zero arguments. Any argument SHALL be silently ignored (the script still proceeds to display the profile — argument has no effect on output).
+The plugin SHALL expose a `/codex-pro:codex-config` skill registered at `plugins/codex-pro/skills/codex-config/SKILL.md` with a YAML frontmatter declaring `name: codex-config`, a descriptive `description` block whose trigger keywords are codex-qualified — `codex profile` / `codex config` / `show resolved profile` / `which model` — and MUST NOT list the bare standalone terms `設定`, `配置`, `settings`, or `config` as trigger keywords (these generic terms caused the collision with the system `/config` command that this change resolves). The `allowed-tools` list MUST contain at least `Bash` (for filesystem scan + python3 parse) and `Read` (for profile YAML inspection). The skill SHALL accept zero arguments. Any argument SHALL be silently ignored (the script still proceeds to display the profile — argument has no effect on output).
 
 #### Scenario: Skill is registered and discoverable
 
 - **WHEN** the plugin is installed
-- **THEN** `plugins/codex-pro/skills/config/SKILL.md` MUST exist with valid YAML frontmatter
-- **AND** the frontmatter `name` field MUST equal `config`
+- **THEN** `plugins/codex-pro/skills/codex-config/SKILL.md` MUST exist with valid YAML frontmatter
+- **AND** the frontmatter `name` field MUST equal `codex-config`
 - **AND** the frontmatter `allowed-tools` MUST contain both `Bash` and `Read`
-- **AND** the frontmatter `description` MUST contain at least one of: `profile`, `config`, `設定`, `配置`
+- **AND** the frontmatter `description` MUST contain the substring `profile`
+- **AND** the frontmatter `description` MUST NOT contain the bare standalone trigger terms `設定` or `配置`
 
 #### Scenario: Zero-argument invocation displays resolved profile
 
-- **WHEN** a user invokes `/codex-pro:config` with no arguments
+- **WHEN** a user invokes `/codex-pro:codex-config` with no arguments
 - **THEN** the skill SHALL emit a 4-row markdown table to stdout with columns `field`, `resolved value`, `source`
 - **AND** the skill SHALL emit two informational lines: `Global profile: ~/.codex-pro/profile.yaml (exists / does not exist)` and `Project profile: .codex-pro/profile.yaml (exists / does not exist)`
 - **AND** the skill SHALL exit 0
 
 #### Scenario: Argument is silently ignored
 
-- **WHEN** a user invokes `/codex-pro:config something extra` or `/codex-pro:config --flag`
+- **WHEN** a user invokes `/codex-pro:codex-config something extra` or `/codex-pro:codex-config --flag`
 - **THEN** the skill SHALL proceed to display the resolved profile as if invoked with no argument
 - **AND** the skill SHALL exit 0
 
 
 <!-- @trace
-source: config-profile-mechanism
-updated: 2026-06-07
+source: rename-skills-codex-prefix
+updated: 2026-07-07
 code:
-  - plugins/codex-pro/.claude-plugin/plugin.json
-  - tests/config.sh
-  - plugins/codex-pro/skills/review/SKILL.md
-  - tests/e2e-checklist.md
-  - tests/review.sh
-  - CLAUDE.md
-  - plugins/codex-pro/skills/rescue/SKILL.md
-  - plugins/codex-pro/skills/adversarial-review/SKILL.md
-  - README.md
-  - tests/e2e.sh
-  - tests/run.sh
   - tests/adversarial-review.sh
-  - plugins/codex-pro/skills/config/SKILL.md
-  - tests/lib/e2e-fixtures.sh
+  - plugins/codex-pro/skills/adversarial-review/SKILL.md
+  - tests/result.sh
+  - plugins/codex-pro/skills/codex-setup/SKILL.md
+  - tests/status.sh
+  - CLAUDE.md
+  - tests/cancel.sh
+  - tests/static.sh
+  - plugins/codex-pro/skills/result/SKILL.md
   - tests/rescue.sh
+  - plugins/codex-pro/skills/codex-batch/SKILL.md
+  - plugins/codex-pro/skills/codex-review/SKILL.md
+  - tests/batch.sh
+  - tests/e2e-checklist.md
+  - plugins/codex-pro/skills/codex-batch/references/script-template.sh
+  - plugins/codex-pro/skills/codex-cancel/SKILL.md
+  - README.md
+  - plugins/codex-pro/skills/batch/SKILL.md
+  - plugins/codex-pro/skills/codex-rescue/SKILL.md
+  - plugins/codex-pro/skills/rescue/SKILL.md
+  - tests/config.sh
+  - tests/review.sh
+  - plugins/codex-pro/skills/codex-adversarial-review/SKILL.md
+  - plugins/codex-pro/skills/cancel/SKILL.md
+  - plugins/codex-pro/skills/codex-result/SKILL.md
+  - plugins/codex-pro/skills/codex-status/SKILL.md
+  - tests/setup.sh
+  - plugins/codex-pro/skills/config/SKILL.md
+  - plugins/codex-pro/skills/status/SKILL.md
+  - plugins/codex-pro/skills/codex-config/SKILL.md
+  - plugins/codex-pro/skills/setup/SKILL.md
+  - plugins/codex-pro/.claude-plugin/plugin.json
+  - plugins/codex-pro/skills/review/SKILL.md
+  - plugins/codex-pro/skills/batch/references/script-template.sh
 -->
 
 ---
@@ -60,7 +80,7 @@ The skill SHALL NOT invoke `codex-call` and SHALL NOT spawn the `codex` CLI. The
 
 #### Scenario: SKILL.md does not invoke codex-call or codex exec
 
-- **WHEN** the static layer inspects `plugins/codex-pro/skills/config/SKILL.md`
+- **WHEN** the static layer inspects `plugins/codex-pro/skills/codex-config/SKILL.md`
 - **THEN** the body MUST NOT contain the literal string `codex-call`
 - **AND** the body MUST NOT contain the literal string `codex exec`
 
@@ -154,7 +174,7 @@ code:
 ---
 ### Requirement: Config v0.1 schema is exactly 4 fields
 
-The v0.1 profile schema SHALL contain exactly 4 fields with the types and defaults specified below. The `/codex-pro:config` output table SHALL contain exactly 4 rows, one per schema field, in the listed order.
+The v0.1 profile schema SHALL contain exactly 4 fields with the types and defaults specified below. The `/codex-pro:codex-config` output table SHALL contain exactly 4 rows, one per schema field, in the listed order.
 
 | Field | YAML type | Hardcoded default | Producer skills that use it |
 | --- | --- | --- | --- |
@@ -167,7 +187,7 @@ The v0.1 profile schema SHALL contain exactly 4 fields with the types and defaul
 
 #### Scenario: Output table has exactly 4 rows in canonical order
 
-- **WHEN** a user invokes `/codex-pro:config`
+- **WHEN** a user invokes `/codex-pro:codex-config`
 - **THEN** the output table body SHALL contain exactly 4 rows
 - **AND** the rows SHALL appear in this order: `model`, `effort`, `max_time`, `focus_default`
 
@@ -182,9 +202,9 @@ The v0.1 profile schema SHALL contain exactly 4 fields with the types and defaul
 
 #### Scenario: focus_default is read by adversarial-review only
 
-- **WHEN** the resolved profile sets `focus_default: security` and `/codex-pro:adversarial-review` is invoked WITHOUT a `--focus` argument
+- **WHEN** the resolved profile sets `focus_default: security` and `/codex-pro:codex-adversarial-review` is invoked WITHOUT a `--focus` argument
 - **THEN** the adversarial-review skill SHALL use `security` as the focus value
-- **WHEN** `/codex-pro:review` or `/codex-pro:rescue` is invoked under the same profile
+- **WHEN** `/codex-pro:codex-review` or `/codex-pro:codex-rescue` is invoked under the same profile
 - **THEN** the `focus_default` field SHALL NOT affect their behavior (silently unused)
 
 <!-- @trace

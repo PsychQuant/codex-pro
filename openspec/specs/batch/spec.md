@@ -2,26 +2,67 @@
 
 ## Purpose
 
-The batch capability enables parallel content generation across multiple chunks of a large reference document using the Codex CLI. It exposes the `/codex-pro:batch` skill, which collects user parameters (reference file, chunk list, prompt template, output directory, model, reasoning effort), generates a shell script derived from a bundled template, and orchestrates fan-out parallel `codex exec --full-auto` invocations. The skill is an explicit exception to the plugin's default "no subprocess spawn" constraint: batch's shell-level job control (background processes plus `wait`) is the idiomatic solution for parallel job orchestration, and other skills must not cite this exception as precedent.
+The batch capability enables parallel content generation across multiple chunks of a large reference document using the Codex CLI. It exposes the `/codex-pro:codex-batch` skill, which collects user parameters (reference file, chunk list, prompt template, output directory, model, reasoning effort), generates a shell script derived from a bundled template, and orchestrates fan-out parallel `codex exec --full-auto` invocations. The skill is an explicit exception to the plugin's default "no subprocess spawn" constraint: batch's shell-level job control (background processes plus `wait`) is the idiomatic solution for parallel job orchestration, and other skills must not cite this exception as precedent.
 
 ## Requirements
 
 ### Requirement: Batch skill registration and parameter collection
 
-The plugin SHALL expose a `/codex-pro:batch` skill triggered by Claude Code's skill invocation mechanism. The skill MUST be declared in `plugins/codex-pro/skills/batch/SKILL.md` with a YAML frontmatter containing `name: batch`, a `description` block describing its batch generation purpose, an `argument-hint`, and an `allowed-tools` list including `Bash` (required for spawning `codex exec`). Upon invocation the skill SHALL collect the following parameters from the user (skipping any already supplied through the slash argument): reference file path, chunk specification, prompt template, output directory, model identifier (default `gpt-5.5`), and reasoning effort (default `xhigh`).
+The plugin SHALL expose a `/codex-pro:codex-batch` skill triggered by Claude Code's skill invocation mechanism. The skill MUST be declared in `plugins/codex-pro/skills/codex-batch/SKILL.md` with a YAML frontmatter containing `name: codex-batch`, a `description` block describing its batch generation purpose, an `argument-hint`, and an `allowed-tools` list including `Bash` (required for spawning `codex exec`). Upon invocation the skill SHALL collect the following parameters from the user (skipping any already supplied through the slash argument): reference file path, chunk specification, prompt template, output directory, model identifier (default `gpt-5.5`), and reasoning effort (default `xhigh`).
 
 #### Scenario: Skill is discoverable after plugin install
 
 - **WHEN** a developer has installed the `codex-pro` plugin via the `codex-pro` marketplace (or loaded it via `--plugin-dir`)
-- **AND** invokes `/codex-pro:batch` in Claude Code
-- **THEN** Claude triggers the `batch` skill from `plugins/codex-pro/skills/batch/SKILL.md`
+- **AND** invokes `/codex-pro:codex-batch` in Claude Code
+- **THEN** Claude triggers the `codex-batch` skill from `plugins/codex-pro/skills/codex-batch/SKILL.md`
 - **AND** the skill is listed under the plugin namespace in `/help` output
 
 #### Scenario: Skill prompts for required parameters
 
-- **WHEN** the user invokes `/codex-pro:batch` without supplying full parameters in the slash argument
+- **WHEN** the user invokes `/codex-pro:codex-batch` without supplying full parameters in the slash argument
 - **THEN** the skill SHALL request each missing required parameter individually before proceeding (reference file, chunk specification, prompt template, output directory)
 - **AND** the skill SHALL apply default values `gpt-5.5` for model and `xhigh` for reasoning effort when the user omits them
+
+
+<!-- @trace
+source: rename-skills-codex-prefix
+updated: 2026-07-07
+code:
+  - tests/adversarial-review.sh
+  - plugins/codex-pro/skills/adversarial-review/SKILL.md
+  - tests/result.sh
+  - plugins/codex-pro/skills/codex-setup/SKILL.md
+  - tests/status.sh
+  - CLAUDE.md
+  - tests/cancel.sh
+  - tests/static.sh
+  - plugins/codex-pro/skills/result/SKILL.md
+  - tests/rescue.sh
+  - plugins/codex-pro/skills/codex-batch/SKILL.md
+  - plugins/codex-pro/skills/codex-review/SKILL.md
+  - tests/batch.sh
+  - tests/e2e-checklist.md
+  - plugins/codex-pro/skills/codex-batch/references/script-template.sh
+  - plugins/codex-pro/skills/codex-cancel/SKILL.md
+  - README.md
+  - plugins/codex-pro/skills/batch/SKILL.md
+  - plugins/codex-pro/skills/codex-rescue/SKILL.md
+  - plugins/codex-pro/skills/rescue/SKILL.md
+  - tests/config.sh
+  - tests/review.sh
+  - plugins/codex-pro/skills/codex-adversarial-review/SKILL.md
+  - plugins/codex-pro/skills/cancel/SKILL.md
+  - plugins/codex-pro/skills/codex-result/SKILL.md
+  - plugins/codex-pro/skills/codex-status/SKILL.md
+  - tests/setup.sh
+  - plugins/codex-pro/skills/config/SKILL.md
+  - plugins/codex-pro/skills/status/SKILL.md
+  - plugins/codex-pro/skills/codex-config/SKILL.md
+  - plugins/codex-pro/skills/setup/SKILL.md
+  - plugins/codex-pro/.claude-plugin/plugin.json
+  - plugins/codex-pro/skills/review/SKILL.md
+  - plugins/codex-pro/skills/batch/references/script-template.sh
+-->
 
 ---
 ### Requirement: Batch script generation uses bundled template
