@@ -400,4 +400,45 @@ else
 fi
 rm -f "$RRES"
 
+# ── (m) v0.4 heading-hardening: literal-token Step 3 instructions (issue #1) ──
+# Spec: review delta "Review system instructions name literal heading tokens" +
+# MODIFIED invocation v0.4 marker scenario.
+if grep -q 'v0.4 — heading-hardened' "$REVIEW_SKILL"; then
+  pass "v0.4 heading-hardened marker present in frontmatter"
+else
+  fail "v0.4 heading-hardened marker missing"
+fi
+
+# Extract the Step 3 instructions fenced block (the text passed to --instructions),
+# NOT the whole SKILL (## Summary / ## Findings also appear in the result-file
+# contract section — checking the whole file would be a false pass).
+S3=$(mktemp)
+python3 - "$REVIEW_SKILL" "$S3" <<'PY'
+import re, sys
+c = open(sys.argv[1]).read()
+idx = c.find('## Step 3')
+seg = c[idx:] if idx >= 0 else ''
+m = re.search(r'```[a-zA-Z]*\n(.*?)\n```', seg, re.DOTALL)
+open(sys.argv[2], "w").write(m.group(1) if m else "")
+PY
+if [ -s "$S3" ]; then
+  pass "extracted review Step 3 instructions block"
+  for tok in '## Summary' '## Findings' 'exactly two H2 sections' '### Finding N:'; do
+    if grep -qF -- "$tok" "$S3"; then
+      pass "Step 3 instructions contain literal token: $tok"
+    else
+      fail "Step 3 instructions missing literal token: $tok"
+    fi
+  done
+  # MUST NOT keep the prose-noun-only phrasing that lets Codex drift off the H2 tokens.
+  if grep -qF 'Begin with a one-paragraph Summary' "$S3"; then
+    fail "Step 3 still uses prose-noun-only 'Begin with a one-paragraph Summary'"
+  else
+    pass "Step 3 no longer uses prose-noun-only Summary phrasing"
+  fi
+else
+  fail "could not extract review Step 3 instructions block"
+fi
+rm -f "$S3"
+
 report_summary "review"
