@@ -58,6 +58,15 @@ fi
 ce_count=$(grep -c "codex exec" "$ADV_REVIEW_SKILL")
 assert_eq "0" "$ce_count" "SKILL.md does NOT contain 'codex exec' (Design constraint #1 strict adherence, mirroring review + rescue)"
 
+# ── foreground-sync clause (issue #6) ──
+fg=$(grep -c "前景同步執行" "${ADV_REVIEW_SKILL}")
+rb=$(grep -c "run_in_background" "${ADV_REVIEW_SKILL}")
+if [ "$fg" -ge 1 ] && [ "$rb" -ge 1 ]; then
+  pass "SKILL.md documents foreground-sync clause (issue #6)"
+else
+  fail "SKILL.md missing foreground-sync clause (fg=$fg rb=$rb)"
+fi
+
 # ── (d) Hard timeout flag ────────────────────────────────────────────────
 if grep -q -- '--max-time 600' "$ADV_REVIEW_SKILL"; then
   pass "SKILL.md documents --max-time 600 hard timeout"

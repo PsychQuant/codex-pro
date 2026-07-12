@@ -191,6 +191,8 @@ codex-call \
 
 **Skill 嚴禁 spawn `codex` CLI**。所有 review 必經 `codex-call` HTTPS direct。若未來 future skill 想 spawn subprocess，須在 design.md 明列 explicit exception（如 batch skill）並於 SKILL body 明文標記。
 
+**codex-call MUST 前景同步執行（foreground, synchronous）**：以 Bash 呼叫 codex-call 時**嚴禁** `run_in_background`、嚴禁任何形式的背景化（`&` / nohup / 丟背景 task 後結束回合）。result file 寫入完成前本 task 未完成 — 不得提前結束回合、不得以「已在背景執行，稍後接手」回報（result file is the contract，Design constraint #4；背景孤兒化即上游 #324 silent-stub 的變體，issue #6 實證於 `--print` 單輪）。`--max-time` 已是 hard timeout，前景等待（最長 `$MAX_TIME` 秒）是預期行為、不是要繞開的問題。
+
 ## Step 5: Handle exit code
 
 依 codex-call exit code 與 stdout/stderr 內容決定 result file 構造：
