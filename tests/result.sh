@@ -39,7 +39,9 @@ name_ok = "name: codex-result" in fm
 bash_ok = "Bash" in fm
 read_ok = "Read" in fm
 keyword_ok = any(k in fm for k in ("show codex result", "顯示 codex 結果", "codex result detail", "display codex review"))
-bare_generic = any(b in fm for b in ("顯示結果", "看完整"))  # issue #2 regression guard (issue #4)
+kw_line = next((l for l in fm.split("\n") if "Trigger keywords" in l), "")
+tokens = [x.strip() for x in kw_line.split(":", 1)[-1].split(",")] if kw_line else []
+bare_generic = any(x in ("顯示結果", "看完整", "detail", "result", "顯示") for x in tokens)  # token-level: qualified phrases pass, bare generics bite (issue #4, from #2 verify)
 print(f"name={name_ok} bash={bash_ok} read={read_ok} keyword={keyword_ok} bare={bare_generic}")
 PY
 )
@@ -77,7 +79,9 @@ fi
 # fail-fast reject branch — not just document it in prose. Guards against
 # `--latest codex-review` yielding a misleading zero-match error.
 if grep -qE 'review\|rescue\|adversarial-review' "$RESULT_SKILL" \
-   && grep -q 'must be one of' "$RESULT_SKILL"; then
+   && grep -q 'must be one of' "$RESULT_SKILL" \
+   && grep -q 'case "${LATEST_SKILL' "$RESULT_SKILL" \
+   && grep -A6 'case "${LATEST_SKILL' "$RESULT_SKILL" | grep -q 'exit 2'; then
   pass "SKILL.md enforces --latest <skill> enum with fail-fast reject"
 else
   fail "SKILL.md missing --latest <skill> enum validation (bash case + reject message)"

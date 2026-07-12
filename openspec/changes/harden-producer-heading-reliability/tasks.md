@@ -20,8 +20,8 @@ review Step 3 instructions 改為 literal-token 寫法（v0.3→v0.4）+ e2e hea
 
 ## 4. 版本與文件同步
 
-- [ ] 4.1 [P] plugins/codex-pro/.claude-plugin/plugin.json version `0.5.0` → `0.5.1`、description 提及 heading-hardened；.claude-plugin/marketplace.json 對應 entry 同步 `0.5.1`。Acceptance: 兩檔 version 欄一致為 0.5.1、`bash tests/static.sh` manifest 斷言綠。
-- [ ] 4.2 [P] CLAUDE.md Commands surface 表 review 列更新為 v0.4（heading-hardened 描述）+ Marketplace structure 註解同步；README.md Skills table review 版本同步。Acceptance: grep CLAUDE.md 與 README.md 各含 `v0.4` 於 review 條目、Layer 1 namespace-consistency 斷言綠。
+- [x] 4.1（已於先前 session 完成 — 0.5.1 ship 含 heading-hardened description；後續 #3 再 bump 0.6.0，超額滿足）[P] plugins/codex-pro/.claude-plugin/plugin.json version `0.5.0` → `0.5.1`、description 提及 heading-hardened；.claude-plugin/marketplace.json 對應 entry 同步 `0.5.1`。Acceptance: 兩檔 version 欄一致為 0.5.1、`bash tests/static.sh` manifest 斷言綠。
+- [x] 4.2（已於先前 session 完成 — CLAUDE.md/README review 條目均載 v0.4 heading-hardened，2026-07-12 驗證）[P] CLAUDE.md Commands surface 表 review 列更新為 v0.4（heading-hardened 描述）+ Marketplace structure 註解同步；README.md Skills table review 版本同步。Acceptance: grep CLAUDE.md 與 README.md 各含 `v0.4` 於 review 條目、Layer 1 namespace-consistency 斷言綠。
 
 ## 5. Pre-archive 驗證
 

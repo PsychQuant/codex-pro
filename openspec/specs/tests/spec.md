@@ -46,7 +46,7 @@ The static layer at `tests/static.sh` SHALL verify the structural correctness of
 
 - **WHEN** the static layer runs
 - **THEN** each `SKILL.md` under `plugins/codex-pro/skills/` has a valid YAML frontmatter
-- **AND** the `name` field equals the immediate parent directory basename (e.g., `skills/setup/SKILL.md` has `name: setup`)
+- **AND** the `name` field equals the immediate parent directory basename (e.g., `skills/codex-setup/SKILL.md` has `name: codex-setup`)
 - **AND** the `allowed-tools` field contains `Bash`
 
 #### Scenario: Batch template byte-identical preservation

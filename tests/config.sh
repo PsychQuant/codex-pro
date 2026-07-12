@@ -38,7 +38,9 @@ name_ok = "name: codex-config" in fm
 bash_ok = "Bash" in fm
 read_ok = "Read" in fm
 keyword_ok = any(k in fm for k in ("codex profile", "codex config", "codex-pro profile", "which model"))
-bare_generic = any(b in fm for b in ("設定", "配置"))  # issue #2 regression guard (issue #4): bare zh generic words must NOT return
+kw_line = next((l for l in fm.split("\n") if "Trigger keywords" in l), "")
+tokens = [x.strip() for x in kw_line.split(":", 1)[-1].split(",")] if kw_line else []
+bare_generic = any(x in ("設定", "配置", "config", "settings", "profile") for x in tokens)  # token-level: qualified phrases pass, bare generics bite (issue #4, from #2 verify)
 print(f"name={name_ok} bash={bash_ok} read={read_ok} keyword={keyword_ok} bare={bare_generic}")
 PY
 )

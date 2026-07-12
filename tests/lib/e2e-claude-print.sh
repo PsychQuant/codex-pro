@@ -49,7 +49,7 @@ invoke_skill_via_claude_print() {
   for attempt in 1 2 3; do
     INVOKE_OUTPUT=$(cd "$fixture_dir" && timeout 600 claude --print \
       --plugin-dir "$plugin_path" \
-      "/codex-pro:${skill_name}" 2>&1)
+      "/codex-pro:codex-${skill_name}" 2>&1)   # rename-aware (#5): skill trigger is codex-<name>; result-file prefix stays bare <name>
     INVOKE_EXIT=$?
 
     # Only retry on Anthropic API server-side throttle. Other failures

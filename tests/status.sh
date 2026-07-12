@@ -38,7 +38,9 @@ name_ok = "name: codex-status" in fm
 bash_ok = "Bash" in fm
 read_ok = "Read" in fm
 keyword_ok = any(k in fm for k in ("list result files", "review history", "過去結果", "observability", "list .codex-pro"))
-bare_generic = "狀態" in fm and "codex 狀態" not in fm  # issue #2 regression guard (issue #4): bare 狀態 must stay out
+kw_line = next((l for l in fm.split("\n") if "Trigger keywords" in l), "")
+tokens = [x.strip() for x in kw_line.split(":", 1)[-1].split(",")] if kw_line else []
+bare_generic = any(x in ("狀態", "status", "查看") for x in tokens)  # token-level: qualified phrases pass, bare generics bite (issue #4, from #2 verify)
 print(f"name={name_ok} bash={bash_ok} read={read_ok} keyword={keyword_ok} bare={bare_generic}")
 PY
 )
