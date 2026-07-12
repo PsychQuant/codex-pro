@@ -189,7 +189,8 @@ case "$SCENARIO" in
   mixed|binary|oversize|empty-repo)
     # frontmatter target marker is deterministic from Claude's SKILL.md
     # execution; H2 headings are HARD assertions since the v0.4 literal-token
-    # hardening (12-combo matrix: zero drift on gpt-5.6-sol — issue #1)
+    # hardening (10/10 observable combos in the 12-combo matrix: zero heading
+    # drift on gpt-5.6-sol; 2 combos unobservable due to sister issue #6)
     case "$SKILL" in
       review)
         verify_substring '## Summary'  "$SKILL/$SCENARIO: '## Summary' heading"
