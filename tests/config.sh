@@ -37,12 +37,13 @@ fm = m.group(1)
 name_ok = "name: codex-config" in fm
 bash_ok = "Bash" in fm
 read_ok = "Read" in fm
-keyword_ok = any(k in fm for k in ("profile", "config", "設定", "配置", "which model"))
-print(f"name={name_ok} bash={bash_ok} read={read_ok} keyword={keyword_ok}")
+keyword_ok = any(k in fm for k in ("codex profile", "codex config", "codex-pro profile", "which model"))
+bare_generic = any(b in fm for b in ("設定", "配置"))  # issue #2 regression guard (issue #4): bare zh generic words must NOT return
+print(f"name={name_ok} bash={bash_ok} read={read_ok} keyword={keyword_ok} bare={bare_generic}")
 PY
 )
 case "$fm_check" in
-  *"name=True bash=True read=True keyword=True"*)
+  *"name=True bash=True read=True keyword=True bare=False"*)
     pass "frontmatter: name=codex-config, allowed-tools has Bash + Read, profile/config keyword present" ;;
   *)
     fail "frontmatter check failed: $fm_check" ;;

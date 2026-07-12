@@ -2,7 +2,7 @@
 name: codex-result
 description: |
   顯示 .codex-pro/ 內特定 producer result file 的完整內容（frontmatter + body）。Read-only consumer category — 純檔案讀取、無 Codex HTTP wrapper 呼叫、無 subprocess、無 file mutation。
-  與 status（list 性質）區隔 — result 是 detail 性質、看完整 markdown 內容。三 selection mode：(a) 位置 <filename> / (b) --latest <skill> / (c) --latest 無 arg。
+  與 status（list 性質）區隔 — result 是 detail 性質、檢視單一 result 的完整 markdown 內容。三 selection mode：(a) 位置 <filename> / (b) --latest <skill> / (c) --latest 無 arg。
   Selection 決勝權為 filename lexical order（filename ISO8601 prefix 是 producer 寫檔時 atomic 決定的時序 source of truth、不諮詢 filesystem mtime、也不諮詢 frontmatter timestamp field）。
   Fail-fast with remediation：file 不存在 / .codex-pro/ 不存在 / --latest <skill> 零 match 皆 abort 非 0、不 silent fallback。
   Trigger keywords: show codex result file, display codex review output, 顯示 codex 結果, 看 codex 完整輸出, codex result detail, codex-pro result, --latest
@@ -46,6 +46,17 @@ if [ -n "$POSITIONAL_FILE" ] && [ -n "$LATEST_FLAG_SET" ]; then
   echo "Choose one: <filename> | --latest <skill> | --latest" >&2
   exit 2
 fi
+
+# Enum check (mode b): <skill> 必為三 producer 之一 — fail-fast reject，
+# 防止非法值（如 codex-review 帶前綴形）流進 glob 產生誤導性的零 match 訊息
+case "${LATEST_SKILL:-}" in
+  review|rescue|adversarial-review|"") ;;  # "" = mode (c) --latest 無 arg
+  *)
+    echo "Error: --latest <skill> must be one of: review | rescue | adversarial-review" >&2
+    echo "  (got: '$LATEST_SKILL' — use the bare producer name, not codex-<name>)" >&2
+    exit 2
+    ;;
+esac
 ```
 
 ## Step 2: Selection logic — filename lexical order

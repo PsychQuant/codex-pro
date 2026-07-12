@@ -160,6 +160,15 @@ if [ -s "$RRES" ]; then
   else
     fail "behavioral: rescue resolver wrong output: '$out'"
   fi
+  # no-profile: both layers missing -> all hardcoded defaults (issue #4)
+  eth=$(mktemp -d); etp=$(mktemp -d)
+  out2=$(cd "$etp" && HOME="$eth" python3 "$RRES" 2>&1)
+  if [ "$out2" = "gpt-5.6-sol|xhigh|600||default" ]; then
+    pass "behavioral: rescue resolver no-profile yields all defaults (gpt-5.6-sol|xhigh|600||default)"
+  else
+    fail "behavioral: rescue no-profile wrong output: '$out2'"
+  fi
+  rm -rf "$eth" "$etp"
   rm -rf "$th" "$tp"
 else
   fail "behavioral: could not extract rescue resolver"

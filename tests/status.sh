@@ -38,11 +38,12 @@ name_ok = "name: codex-status" in fm
 bash_ok = "Bash" in fm
 read_ok = "Read" in fm
 keyword_ok = any(k in fm for k in ("list result files", "review history", "過去結果", "observability", "list .codex-pro"))
-print(f"name={name_ok} bash={bash_ok} read={read_ok} keyword={keyword_ok}")
+bare_generic = "狀態" in fm and "codex 狀態" not in fm  # issue #2 regression guard (issue #4): bare 狀態 must stay out
+print(f"name={name_ok} bash={bash_ok} read={read_ok} keyword={keyword_ok} bare={bare_generic}")
 PY
 )
 case "$fm_check" in
-  *"name=True bash=True read=True keyword=True"*)
+  *"name=True bash=True read=True keyword=True bare=False"*)
     pass "frontmatter: name=codex-status, allowed-tools 含 Bash + Read, description 含 mental-model keyword" ;;
   *)
     fail "frontmatter check failed: $fm_check" ;;

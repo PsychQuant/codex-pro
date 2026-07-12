@@ -38,12 +38,13 @@ fm = m.group(1)
 name_ok = "name: codex-result" in fm
 bash_ok = "Bash" in fm
 read_ok = "Read" in fm
-keyword_ok = any(k in fm for k in ("show result", "顯示結果", "看完整", "detail", "display review"))
-print(f"name={name_ok} bash={bash_ok} read={read_ok} keyword={keyword_ok}")
+keyword_ok = any(k in fm for k in ("show codex result", "顯示 codex 結果", "codex result detail", "display codex review"))
+bare_generic = any(b in fm for b in ("顯示結果", "看完整"))  # issue #2 regression guard (issue #4)
+print(f"name={name_ok} bash={bash_ok} read={read_ok} keyword={keyword_ok} bare={bare_generic}")
 PY
 )
 case "$fm_check" in
-  *"name=True bash=True read=True keyword=True"*)
+  *"name=True bash=True read=True keyword=True bare=False"*)
     pass "frontmatter: name=codex-result, allowed-tools 含 Bash + Read, description 含 mental-model keyword" ;;
   *)
     fail "frontmatter check failed: $fm_check" ;;
@@ -69,6 +70,17 @@ if [ "$latest_count" -ge 3 ]; then
   pass "SKILL.md documents --latest in three selection modes (count=$latest_count)"
 else
   fail "SKILL.md --latest count $latest_count < 3"
+fi
+
+# ── (d2) --latest <skill> enum validation (issue #4, from #2 verify F10) ──
+# SKILL.md bash MUST enforce the enum (review|rescue|adversarial-review) with a
+# fail-fast reject branch — not just document it in prose. Guards against
+# `--latest codex-review` yielding a misleading zero-match error.
+if grep -qE 'review\|rescue\|adversarial-review' "$RESULT_SKILL" \
+   && grep -q 'must be one of' "$RESULT_SKILL"; then
+  pass "SKILL.md enforces --latest <skill> enum with fail-fast reject"
+else
+  fail "SKILL.md missing --latest <skill> enum validation (bash case + reject message)"
 fi
 
 # ── (e) Mutex marker ─────────────────────────────────────────────
