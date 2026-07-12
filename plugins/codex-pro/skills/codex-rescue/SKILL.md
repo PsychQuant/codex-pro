@@ -3,7 +3,7 @@ name: codex-rescue
 description: |
   把難題交給 Codex 處理（task delegation）。接收 task description + optional context files (--context) + optional completion criteria (--criteria)，包成 prompt 交 codex-call HTTPS direct 跑（無 subprocess），結果寫入 .codex-pro/rescue-<timestamp>.md 結構化檔案。
   v0.1.1 stateless only — session continuity 暫已移除（known limitation，待 upstream codex-call 加 session support 後 restore）。
-  v0.2 — profile-aware：`--model` / `--effort` / `--max-time` 從 `~/.codex-pro/profile.yaml`（global）+ `.codex-pro/profile.yaml`（project）resolve；未設 profile 時沿用 hardcoded default（gpt-5.5 / xhigh / 600）、100% backward compatible。見 `/codex-pro:codex-config`。
+  v0.2 — profile-aware：`--model` / `--effort` / `--max-time` 從 `~/.codex-pro/profile.yaml`（global）+ `.codex-pro/profile.yaml`（project）resolve；未設 profile 時沿用 hardcoded default（gpt-5.6-sol / xhigh / 600）；已設 profile 者 100% backward compatible。見 `/codex-pro:codex-config`。
   Fail-fast 4 類：rate_limit / oauth_invalid / timeout / task_unclear（Codex 無法 commit 答案時的 rescue-specific 第 4 類）。**不 retry**。
   Use when: 使用者輸入 /codex-pro:codex-rescue、需要把 hard problem 交給 Codex 解、debug / refactor / 解 bug 卡住 fallback。
   Trigger keywords: codex rescue, delegate to codex, rescue task, ask codex
@@ -84,12 +84,12 @@ is better than a silent stub answer.
 
 ### Step 4.1: Resolve profile (v0.2 profile-aware)
 
-在呼叫 codex-call 之前、先 resolve profile。讀 `~/.codex-pro/profile.yaml`（global layer）+ `.codex-pro/profile.yaml`（project layer、優先於 global）、missing field fall back hardcoded default（`gpt-5.5` / `xhigh` / `600`）。未設 profile 時行為與 v0.1.1 identical（100% backward compatible）。Inline `python3` regex YAML parse、不依賴 PyYAML：
+在呼叫 codex-call 之前、先 resolve profile。讀 `~/.codex-pro/profile.yaml`（global layer）+ `.codex-pro/profile.yaml`（project layer、優先於 global）、missing field fall back hardcoded default（`gpt-5.6-sol` / `xhigh` / `600`）。未設 profile 時採用現行 hardcoded default（自 model-default bump 起為 gpt-5.6-sol，issue #3 裁決）；已設 profile 的 override 行為與 v0.1.1 identical（100% backward compatible for profile users）。Inline `python3` regex YAML parse、不依賴 PyYAML：
 
 ```bash
 PROFILE_RESOLVED=$(python3 - <<'PY'
 import os, re
-DEFAULTS = {"model": "gpt-5.5", "effort": "xhigh", "max_time": 600, "focus_default": ""}
+DEFAULTS = {"model": "gpt-5.6-sol", "effort": "xhigh", "max_time": 600, "focus_default": ""}
 def parse(path):
     if not os.path.exists(path):
         return {}
@@ -151,7 +151,7 @@ codex-call \
 關鍵 flag：
 
 - `--max-time "$MAX_TIME"`：hard timeout（profile `max_time` 或 default `600`、與 review 同）、超過即 fail-fast 為 `timeout`
-- `--model "$MODEL"`：profile `model` 或 default `gpt-5.5`
+- `--model "$MODEL"`：profile `model` 或 default `gpt-5.6-sol`
 - `--effort "$EFFORT"`：profile `effort` 或 default `xhigh`（rescue 任務需深度推理）
 - `--output <path>`：codex-call 直接寫 markdown 到該路徑（不 echo stdout）
 
@@ -167,7 +167,7 @@ codex-call \
 - skill 額外於 result file 開頭 prepend YAML frontmatter：
   - `task_description`: user 提供的 task brief（截斷至 200 char）
   - `session_id`: codex-call HTTP response 若 surface 任何 session/conversation identifier 則記入；無則記 `null`。**本 field 不 promise continuation capability**（v0.1.1 known limitation：codex-call 尚無 session flag upstream support）
-  - `model`: `$MODEL`（Step 4.1 resolved value、profile 或 default `gpt-5.5`）
+  - `model`: `$MODEL`（Step 4.1 resolved value、profile 或 default `gpt-5.6-sol`）
   - `effort`: `$EFFORT`（Step 4.1 resolved value、profile 或 default `xhigh`）
   - `timestamp`: ISO8601 含時區（例 `2026-06-01T10:30:48+08:00`）
   - `outcome`: 解析 body H2 outcome 段、抽出 enum 值（`completed` / `partial` / `unclear` / `requires_external`）
@@ -194,7 +194,7 @@ codex-call \
 ---
 task_description: <user 提供 task brief 截至 200 char>
 session_id: <codex-call response 若 surface 則記、否則 null>
-model: <$MODEL resolved>          # profile 或 default gpt-5.5
+model: <$MODEL resolved>          # profile 或 default gpt-5.6-sol
 effort: <$EFFORT resolved>        # profile 或 default xhigh
 timestamp: 2026-06-01T10:30:48+08:00
 outcome: <completed | partial | unclear | requires_external>

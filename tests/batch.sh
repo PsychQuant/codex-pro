@@ -14,7 +14,7 @@ source "$SCRIPT_DIR/lib/assert.sh"
 
 BATCH_SKILL="$REPO_ROOT/plugins/codex-pro/skills/codex-batch/SKILL.md"
 BATCH_TEMPLATE="$REPO_ROOT/plugins/codex-pro/skills/codex-batch/references/script-template.sh"
-BATCH_TEMPLATE_SHA256="746157138caf13436711b92f82af6570843d31c964387aa0b0ccb80c9983c1b0"
+BATCH_TEMPLATE_SHA256="f545501897697c9d914d77cda2f19d83a58863904e7fc8fc4055443fb1982b78"
 
 assert_file "$BATCH_SKILL" "batch SKILL.md exists"
 assert_file "$BATCH_TEMPLATE" "batch script-template.sh exists"

@@ -182,7 +182,7 @@ write_fixture() {
 ---
 target: diff
 findings_count: 5
-model: gpt-5.5
+model: gpt-5.6-sol
 effort: xhigh
 timestamp: 2026-06-01T12:00:00+08:00
 ---
@@ -193,7 +193,7 @@ F
 ---
 task_description: 修復 .codex/auth.json TCC 問題
 session_id: null
-model: gpt-5.5
+model: gpt-5.6-sol
 effort: xhigh
 timestamp: 2026-06-01T12:30:00+08:00
 outcome: completed
@@ -206,7 +206,7 @@ F
 target: diff
 focus: ""
 depth: deep
-model: gpt-5.5
+model: gpt-5.6-sol
 effort: xhigh
 timestamp: 2026-06-01T13:00:00+08:00
 ---

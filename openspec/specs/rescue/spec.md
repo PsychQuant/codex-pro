@@ -81,7 +81,7 @@ code:
 ---
 ### Requirement: Rescue invocation uses codex-call HTTPS direct without subprocess for Codex
 
-The skill SHALL invoke the `codex-call` Swift wrapper (provided by the `parallel-ai-agents` runtime dependency) to delegate the task to Codex. The skill MUST NOT spawn the `codex` CLI as a subprocess. This requirement places `rescue` alongside `review` as the canonical adherence pattern for codex-pro Design constraint #1 ("No subprocess spawn for Codex"), in deliberate contrast to the `batch` capability which is the documented explicit exception. The skill MUST pass `--model`, `--effort`, and `--max-time` flags to `codex-call` whose values come from the resolved profile (per the `config` capability). When no profile is set or the field is absent, hardcoded defaults SHALL apply: `--model gpt-5.5` / `--effort xhigh` / `--max-time 600` (the v0.1.1 hardcoded values become v0.2 default fallbacks — 100% backward compatible for users without a profile). The frontmatter description block in SKILL.md SHALL contain the literal substring `v0.2 — profile-aware` to make the v0.1.1 → v0.2 version bump discoverable. Rescue remains stateless per-invocation (no session continuity; the `--resume` / `--fresh` flags from v0.1 remain removed per the v0.1.1 fix because `codex-call` has no `--session` flag).
+The skill SHALL invoke the `codex-call` Swift wrapper (provided by the `parallel-ai-agents` runtime dependency) to delegate the task to Codex. The skill MUST NOT spawn the `codex` CLI as a subprocess. This requirement places `rescue` alongside `review` as the canonical adherence pattern for codex-pro Design constraint #1 ("No subprocess spawn for Codex"), in deliberate contrast to the `batch` capability which is the documented explicit exception. The skill MUST pass `--model`, `--effort`, and `--max-time` flags to `codex-call` whose values come from the resolved profile (per the `config` capability). When no profile is set or the field is absent, hardcoded defaults SHALL apply: `--model gpt-5.6-sol` / `--effort xhigh` / `--max-time 600` (the 2026-07 default bump per issue #3: `gpt-5.6-sol` is the only 5.6-generation model the codex-call ChatGPT-account backend-api path accepts — verified empirically 2026-07-10; users with a profile override are unaffected, 100% backward compatible). The frontmatter description block in SKILL.md SHALL contain the literal substring `v0.2 — profile-aware` to make the v0.1.1 → v0.2 version bump discoverable. Rescue remains stateless per-invocation (no session continuity; the `--resume` / `--fresh` flags from v0.1 remain removed per the v0.1.1 fix because `codex-call` has no `--session` flag).
 
 #### Scenario: SKILL.md contains codex-call invocation
 
@@ -92,7 +92,7 @@ The skill SHALL invoke the `codex-call` Swift wrapper (provided by the `parallel
 #### Scenario: codex-call invocation includes hard timeout flag (default 600)
 
 - **WHEN** the skill body documents the codex-call invocation
-- **THEN** the documented invocation MUST include the `--max-time` flag with the literal substring `600` (the v0.2 default fallback when the resolved profile has no `max_time` override)
+- **THEN** the documented invocation MUST include the `--max-time` flag with the literal substring `600` (the default fallback when the resolved profile has no `max_time` override)
 - **AND** the documented invocation MUST NOT reference `--resume` / `--fresh` flag handling (those flags were removed in v0.1.1 and have not been restored)
 
 #### Scenario: SKILL.md frontmatter announces v0.2 — profile-aware
@@ -105,28 +105,26 @@ The skill SHALL invoke the `codex-call` Swift wrapper (provided by the `parallel
 - **WHEN** the SKILL.md Step 4 body documents the codex-call invocation
 - **THEN** the body MUST contain an inline `python3` block that reads `~/.codex-pro/profile.yaml` and `.codex-pro/profile.yaml`
 - **AND** the documented invocation MUST pass `--model "$MODEL"` / `--effort "$EFFORT"` / `--max-time "$MAX_TIME"` (or equivalent shell-variable expansion from the python3 output)
-- **AND** the body MUST mention the hardcoded defaults `gpt-5.5` / `xhigh` / `600` as fallbacks
+- **AND** the body MUST mention the hardcoded defaults `gpt-5.6-sol` / `xhigh` / `600` as fallbacks
 
 
 <!-- @trace
-source: config-profile-mechanism
-updated: 2026-06-07
+source: bump-default-model-gpt56sol
+updated: 2026-07-11
 code:
-  - plugins/codex-pro/.claude-plugin/plugin.json
-  - tests/config.sh
-  - plugins/codex-pro/skills/review/SKILL.md
-  - tests/e2e-checklist.md
-  - tests/review.sh
-  - CLAUDE.md
-  - plugins/codex-pro/skills/rescue/SKILL.md
-  - plugins/codex-pro/skills/adversarial-review/SKILL.md
-  - README.md
-  - tests/e2e.sh
-  - tests/run.sh
+  - plugins/codex-pro/skills/codex-rescue/SKILL.md
   - tests/adversarial-review.sh
-  - plugins/codex-pro/skills/config/SKILL.md
-  - tests/lib/e2e-fixtures.sh
-  - tests/rescue.sh
+  - plugins/codex-pro/skills/codex-batch/references/script-template.sh
+  - CLAUDE.md
+  - plugins/codex-pro/skills/codex-batch/SKILL.md
+  - plugins/codex-pro/skills/codex-config/SKILL.md
+  - tests/static.sh
+  - plugins/codex-pro/skills/codex-review/SKILL.md
+  - tests/status.sh
+  - tests/config.sh
+  - tests/batch.sh
+  - README.md
+  - plugins/codex-pro/skills/codex-adversarial-review/SKILL.md
 -->
 
 ---
@@ -146,7 +144,7 @@ The skill SHALL write the Codex rescue output to a Markdown file at `.codex-pro/
 | ---------------- | ---------------------------------------------- |
 | task_description | `修復 .codex/auth.json TCC 問題`               |
 | session_id       | `null`                                         |
-| model            | `gpt-5.5`                                      |
+| model            | `gpt-5.6-sol`                                  |
 | effort           | `xhigh`                                        |
 | timestamp        | `2026-06-01T22:00:48+08:00`                    |
 | outcome          | `completed`                                    |
@@ -166,24 +164,22 @@ The skill SHALL write the Codex rescue output to a Markdown file at `.codex-pro/
 
 
 <!-- @trace
-source: config-profile-mechanism
-updated: 2026-06-07
+source: bump-default-model-gpt56sol
+updated: 2026-07-11
 code:
-  - plugins/codex-pro/.claude-plugin/plugin.json
-  - tests/config.sh
-  - plugins/codex-pro/skills/review/SKILL.md
-  - tests/e2e-checklist.md
-  - tests/review.sh
-  - CLAUDE.md
-  - plugins/codex-pro/skills/rescue/SKILL.md
-  - plugins/codex-pro/skills/adversarial-review/SKILL.md
-  - README.md
-  - tests/e2e.sh
-  - tests/run.sh
+  - plugins/codex-pro/skills/codex-rescue/SKILL.md
   - tests/adversarial-review.sh
-  - plugins/codex-pro/skills/config/SKILL.md
-  - tests/lib/e2e-fixtures.sh
-  - tests/rescue.sh
+  - plugins/codex-pro/skills/codex-batch/references/script-template.sh
+  - CLAUDE.md
+  - plugins/codex-pro/skills/codex-batch/SKILL.md
+  - plugins/codex-pro/skills/codex-config/SKILL.md
+  - tests/static.sh
+  - plugins/codex-pro/skills/codex-review/SKILL.md
+  - tests/status.sh
+  - tests/config.sh
+  - tests/batch.sh
+  - README.md
+  - plugins/codex-pro/skills/codex-adversarial-review/SKILL.md
 -->
 
 ---

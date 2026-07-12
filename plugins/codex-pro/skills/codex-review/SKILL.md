@@ -3,7 +3,7 @@ name: codex-review
 description: |
   對 code 跑 read-only Codex review — 接受三種 target：current uncommitted diff（無 argument）、specific file path、或 branch comparison（--base <ref>）。
   v0.2 — untracked-by-default：`--diff` mode 現在含 `git diff HEAD` + untracked file enumeration（v0.1 silent omission bug 已修），含 binary path-only + per-file 64KB / aggregate 512KB size cap + pre-first-commit fallback + target_invalid post-filter pre-flight。
-  v0.3 — profile-aware：`--model` / `--effort` / `--max-time` 從 `~/.codex-pro/profile.yaml`（global）+ `.codex-pro/profile.yaml`（project）resolve；未設 profile 時沿用 hardcoded default（gpt-5.5 / xhigh / 600）、100% backward compatible。見 `/codex-pro:codex-config`。
+  v0.3 — profile-aware：`--model` / `--effort` / `--max-time` 從 `~/.codex-pro/profile.yaml`（global）+ `.codex-pro/profile.yaml`（project）resolve；未設 profile 時沿用 hardcoded default（gpt-5.6-sol / xhigh / 600）；已設 profile 者 100% backward compatible。見 `/codex-pro:codex-config`。
   v0.4 — heading-hardened：Step 3 system instructions 改為 literal-token 寫法（命名 `## Summary` / `## Findings` H2 + `### Finding N:` H3、"exactly two H2 sections, in this order" + CRITICAL 開頭條款），解 Codex 偶爾省略/改寫必要 H2 heading 的漂移（issue #1）；result-file 契約不變。
   透過 codex-call HTTPS direct 執行（無 subprocess），結果寫入 .codex-pro/review-<timestamp>.md 結構化檔案，不直接 inline echo（避免 silent stub failure）。
   Findings 無數量上限。Rate limit / OAuth invalid / timeout / target_invalid（v0.2 第 4 類）走 circuit-breaker fail-fast、不 retry。
@@ -118,12 +118,12 @@ Output requirements:
 
 ### Step 4.1: Resolve profile (v0.3 profile-aware)
 
-在呼叫 codex-call 之前、先 resolve profile。讀 `~/.codex-pro/profile.yaml`（global layer）+ `.codex-pro/profile.yaml`（project layer、優先於 global）、missing field fall back hardcoded default（`gpt-5.5` / `xhigh` / `600`）。未設 profile 時行為與 v0.2 identical（100% backward compatible）。Inline `python3` regex YAML parse、不依賴 PyYAML：
+在呼叫 codex-call 之前、先 resolve profile。讀 `~/.codex-pro/profile.yaml`（global layer）+ `.codex-pro/profile.yaml`（project layer、優先於 global）、missing field fall back hardcoded default（`gpt-5.6-sol` / `xhigh` / `600`）。未設 profile 時採用現行 hardcoded default（自 model-default bump 起為 gpt-5.6-sol，issue #3 裁決）；已設 profile 的 override 行為與 v0.2 identical（100% backward compatible for profile users）。Inline `python3` regex YAML parse、不依賴 PyYAML：
 
 ```bash
 PROFILE_RESOLVED=$(python3 - <<'PY'
 import os, re
-DEFAULTS = {"model": "gpt-5.5", "effort": "xhigh", "max_time": 600, "focus_default": ""}
+DEFAULTS = {"model": "gpt-5.6-sol", "effort": "xhigh", "max_time": 600, "focus_default": ""}
 def parse(path):
     if not os.path.exists(path):
         return {}
@@ -185,7 +185,7 @@ codex-call \
 關鍵 flag：
 
 - `--max-time "$MAX_TIME"`：hard timeout（profile `max_time` 或 default `600`）、超過即 fail-fast 為 timeout
-- `--model "$MODEL"`：profile `model` 或 default `gpt-5.5`
+- `--model "$MODEL"`：profile `model` 或 default `gpt-5.6-sol`
 - `--effort "$EFFORT"`：profile `effort` 或 default `xhigh`（review 任務需深度推理）
 - `--output <path>`：codex-call 直接寫 markdown 到該路徑（不 echo stdout）
 
@@ -200,7 +200,7 @@ codex-call \
 - codex-call 已將 review markdown 寫入 `--output` 指定路徑
 - skill 額外於 result file 開頭 prepend YAML frontmatter：
   - `target`: `diff` / `diff (pre-first-commit)` / `file:<path>` / `branch:<ref>`
-  - `model`: `$MODEL`（Step 4.1 resolved value、profile 或 default `gpt-5.5`）
+  - `model`: `$MODEL`（Step 4.1 resolved value、profile 或 default `gpt-5.6-sol`）
   - `effort`: `$EFFORT`（Step 4.1 resolved value、profile 或 default `xhigh`）
   - `timestamp`: ISO8601 含時區（例 `2026-06-01T08:30:48+08:00`）
   - `findings_count`: 解析 body 內 `### Finding N:` heading 數量
@@ -226,7 +226,7 @@ codex-call \
 ```
 ---
 target: <diff | diff (pre-first-commit) | file:<path> | branch:<ref>>
-model: <$MODEL resolved>          # profile 或 default gpt-5.5
+model: <$MODEL resolved>          # profile 或 default gpt-5.6-sol
 effort: <$EFFORT resolved>        # profile 或 default xhigh
 timestamp: 2026-06-01T08:30:48+08:00
 findings_count: <N>

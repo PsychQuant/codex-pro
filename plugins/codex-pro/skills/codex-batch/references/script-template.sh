@@ -18,7 +18,7 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REF_FILE="__REF_FILE__"                    # Path to reference document
 OUTPUT_DIR="$SCRIPT_DIR"
 LOG_FILE="$SCRIPT_DIR/progress.log"
-MODEL="__MODEL__"                          # e.g., gpt-5.5
+MODEL="__MODEL__"                          # e.g., gpt-5.6-sol
 REASONING="__REASONING__"                  # e.g., xhigh
 OUTPUT_PATTERN="__OUTPUT_PATTERN__"        # e.g., ch${ch}_solutions.tex
 

@@ -65,7 +65,7 @@ for field in model effort max_time focus_default; do
   [ "$cnt" -ge 1 ] && pass "schema field documented: $field (n=$cnt)" \
     || fail "schema field missing: $field"
 done
-for dflt in 'gpt-5.5' 'xhigh' '600'; do
+for dflt in 'gpt-5.6-sol' 'xhigh' '600'; do
   cnt=$(grep -c "$dflt" "$CONFIG_SKILL")
   [ "$cnt" -ge 1 ] && pass "hardcoded default documented: $dflt (n=$cnt)" \
     || fail "hardcoded default missing: $dflt"
@@ -136,8 +136,8 @@ run_resolver() {
 
 # ── Scenario 1: no profile → all defaults + both "does not exist" ──
 run_resolver "" ""
-echo "$RESOLVER_OUT" | grep -qE '^\| model +\| gpt-5.5 +\| \(default\) +\|' \
-  && pass "no-profile: model=gpt-5.5 (default)" || fail "no-profile: model row wrong: $RESOLVER_OUT"
+echo "$RESOLVER_OUT" | grep -qE '^\| model +\| gpt-5.6-sol +\| \(default\) +\|' \
+  && pass "no-profile: model=gpt-5.6-sol (default)" || fail "no-profile: model row wrong: $RESOLVER_OUT"
 echo "$RESOLVER_OUT" | grep -qE '^\| max_time +\| 600 +\| \(default\) +\|' \
   && pass "no-profile: max_time=600 (default)" || fail "no-profile: max_time row wrong"
 echo "$RESOLVER_OUT" | grep -q 'Global profile:  ~/.codex-pro/profile.yaml (does not exist)' \
@@ -156,7 +156,7 @@ echo "$RESOLVER_OUT" | grep -qE '^\| effort +\| xhigh +\| \(default\) +\|' \
 run_resolver "" $'max_time: 1200\n'
 echo "$RESOLVER_OUT" | grep -qE '^\| max_time +\| 1200 +\| project +\|' \
   && pass "project-only: max_time=1200 source=project" || fail "project-only: max_time row wrong: $RESOLVER_OUT"
-echo "$RESOLVER_OUT" | grep -qE '^\| model +\| gpt-5.5 +\| \(default\) +\|' \
+echo "$RESOLVER_OUT" | grep -qE '^\| model +\| gpt-5.6-sol +\| \(default\) +\|' \
   && pass "project-only: model still default" || fail "project-only: model row wrong"
 
 # ── Scenario 4: mixed (global model + project max_time) ──

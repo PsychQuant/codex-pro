@@ -396,15 +396,15 @@ if [ -s "$RRES" ]; then
   mkdir -p "$tp/.codex-pro"; printf 'focus_default: security\n' > "$tp/.codex-pro/profile.yaml"
   out=$(cd "$tp" && HOME="$th" python3 "$RRES" 2>&1)
   # model/effort/max_time default, focus_default=security from project -> RELEVANT has project -> source=project
-  if [ "$out" = "gpt-5.5|xhigh|600|security|project" ]; then
-    pass "behavioral: adv-review resolver promotes focus_default (gpt-5.5|xhigh|600|security|project)"
+  if [ "$out" = "gpt-5.6-sol|xhigh|600|security|project" ]; then
+    pass "behavioral: adv-review resolver promotes focus_default (gpt-5.6-sol|xhigh|600|security|project)"
   else
     fail "behavioral: adv-review resolver wrong output: '$out'"
   fi
   # no profile -> all defaults, empty focus, source=default
   th2=$(mktemp -d); tp2=$(mktemp -d)
   out2=$(cd "$tp2" && HOME="$th2" python3 "$RRES" 2>&1)
-  if [ "$out2" = "gpt-5.5|xhigh|600||default" ]; then
+  if [ "$out2" = "gpt-5.6-sol|xhigh|600||default" ]; then
     pass "behavioral: adv-review resolver no-profile yields all defaults"
   else
     fail "behavioral: adv-review no-profile wrong output: '$out2'"

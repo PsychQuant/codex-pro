@@ -34,7 +34,7 @@ Ask the user for these parameters (skip any they've already provided in the argu
 4. **Output directory** — where to save results
 
 ### Optional (with defaults)
-5. **Model** — default: `gpt-5.5`
+5. **Model** — default: `gpt-5.6-sol`
 6. **Reasoning effort** — default: `xhigh`
 7. **Output filename pattern** — default: `ch${ch}_output.tex`
 8. **Parallel execution** — default: `true` (all chunks at once)
@@ -142,5 +142,6 @@ output: ch${ch}_summary.tex
 | Network stream disconnection | Delete empty output, `FORCE=1 ./generate.sh <ch>` |
 | Output has `\documentclass` preamble | `sed -i '' '/^\\documentclass/,/^\\begin{document}/d; /^\\end{document}/d'` |
 | Undefined commands from stripped preamble | Find `\newcommand` in deleted preamble, replace usages |
-| codex hangs | Check `~/.codex/config.toml`, try with explicit `-m gpt-5.5` |
+| codex hangs | Check `~/.codex/config.toml`, try with explicit `-m gpt-5.6-sol` |
+| 400 `requires a newer version of Codex` | `gpt-5.6-sol` 需 codex CLI ≥ 0.144（實測 0.142.3 → 400、0.144.1 OK）；`npm install -g @openai/codex@latest` 後重跑 |
 | Rate limiting | Reduce parallel count or add delay between launches |

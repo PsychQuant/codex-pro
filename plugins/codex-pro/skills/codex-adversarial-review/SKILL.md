@@ -5,7 +5,7 @@ description: |
   與 /codex-pro:codex-review 的差別：review 是「assessment — 我幫你找 bug」、adversarial-review 是「challenge — 我幫你壓力測試 trade-off / assumption」。Mental model 一句話對比：review 找 bug、adversarial-review 找盲點。
   Output 為 4 mandatory H2 sections（Assumptions Challenged / Failure Modes / Alternative Approaches / Trade-off Counterarguments）、每段 non-empty。
   支援 --focus <area>（≤200 chars after strip、fenced-delimiter 注入防 prompt-injection）+ --depth shallow|deep（預設 deep）。
-  v0.3 — profile-aware：`--model` / `--effort` / `--max-time` 從 `~/.codex-pro/profile.yaml`（global）+ `.codex-pro/profile.yaml`（project）resolve；`--focus` 未給時用 profile `focus_default`；未設 profile 時沿用 hardcoded default（gpt-5.5 / xhigh / 600 / 無 focus）、100% backward compatible。見 `/codex-pro:codex-config`。
+  v0.3 — profile-aware：`--model` / `--effort` / `--max-time` 從 `~/.codex-pro/profile.yaml`（global）+ `.codex-pro/profile.yaml`（project）resolve；`--focus` 未給時用 profile `focus_default`；未設 profile 時沿用 hardcoded default（gpt-5.6-sol / xhigh / 600 / 無 focus）；已設 profile 者 100% backward compatible。見 `/codex-pro:codex-config`。
   Fail-fast 4 類：rate_limit / oauth_invalid / timeout / target_invalid（target_invalid 為 adversarial-review-specific pre-flight class、防空 prompt 浪費 quota）。**不 retry**。
   Use when: 使用者輸入 /codex-pro:codex-adversarial-review、需要 stress-test 設計 / challenge assumption / 壓力測試 trade-off / hostile reviewer 視角 / devil's advocate 評論。
   Trigger keywords: adversarial review, hostile review, challenge design, stress-test, 壓力測試, devil's advocate, attack design, pressure test
@@ -175,12 +175,12 @@ Focus 注入規則（v0.3 fallback chain：**user `--focus <area>` arg > profile
 
 ### Step 4.1: Resolve profile (v0.3 profile-aware)
 
-在呼叫 codex-call 之前、先 resolve profile。讀 `~/.codex-pro/profile.yaml`（global layer）+ `.codex-pro/profile.yaml`（project layer、優先於 global）、missing field fall back hardcoded default（`gpt-5.5` / `xhigh` / `600` / focus 空字串）。未設 profile 時行為與 v0.2 identical（100% backward compatible）。Inline `python3` regex YAML parse、不依賴 PyYAML。**adversarial-review 的 RELEVANT 含 `focus_default`**（review / rescue 不含）— `$FOCUS_DEFAULT` 供 Step 3 focus fallback chain：
+在呼叫 codex-call 之前、先 resolve profile。讀 `~/.codex-pro/profile.yaml`（global layer）+ `.codex-pro/profile.yaml`（project layer、優先於 global）、missing field fall back hardcoded default（`gpt-5.6-sol` / `xhigh` / `600` / focus 空字串）。未設 profile 時採用現行 hardcoded default（自 model-default bump 起為 gpt-5.6-sol，issue #3 裁決）；已設 profile 的 override 行為與 v0.2 identical（100% backward compatible for profile users）。Inline `python3` regex YAML parse、不依賴 PyYAML。**adversarial-review 的 RELEVANT 含 `focus_default`**（review / rescue 不含）— `$FOCUS_DEFAULT` 供 Step 3 focus fallback chain：
 
 ```bash
 PROFILE_RESOLVED=$(python3 - <<'PY'
 import os, re
-DEFAULTS = {"model": "gpt-5.5", "effort": "xhigh", "max_time": 600, "focus_default": ""}
+DEFAULTS = {"model": "gpt-5.6-sol", "effort": "xhigh", "max_time": 600, "focus_default": ""}
 def parse(path):
     if not os.path.exists(path):
         return {}
@@ -242,7 +242,7 @@ codex-call \
 關鍵 flag：
 
 - `--max-time "$MAX_TIME"`：hard timeout（profile `max_time` 或 default `600`、與 review / rescue 同）、超過即 fail-fast 為 `timeout`
-- `--model "$MODEL"`：profile `model` 或 default `gpt-5.5`
+- `--model "$MODEL"`：profile `model` 或 default `gpt-5.6-sol`
 - `--effort "$EFFORT"`：profile `effort` 或 default `xhigh`（adversarial 需深度推理）
 - `--output <path>`：codex-call 直接寫 markdown 到該路徑（不 echo stdout）
 
@@ -259,7 +259,7 @@ codex-call \
   - `target`: `diff` / `diff (pre-first-commit)` / `file:<path>` / `branch:<ref>`
   - `focus`: 注入的 focus area string（user `--focus` arg 或 profile `focus_default` 或空字串；> 200 chars 加截斷標記）
   - `depth`: `shallow` / `deep`
-  - `model`: `$MODEL`（Step 4.1 resolved value、profile 或 default `gpt-5.5`）
+  - `model`: `$MODEL`（Step 4.1 resolved value、profile 或 default `gpt-5.6-sol`）
   - `effort`: `$EFFORT`（Step 4.1 resolved value、profile 或 default `xhigh`）
   - `timestamp`: ISO8601 含時區（例 `2026-06-01T13:30:48+08:00`）
   - `profile_source`: `$PROFILE_SOURCE`（v0.3 新增 optional field、aggregate enum `default` / `global` / `project` / `mixed`、4 field 含 focus_default）。**v0.2 result file 沒此 field 屬 valid frontmatter**（forward-compat、`/codex-pro:codex-status` 與 `/codex-pro:codex-result` 容忍 missing `profile_source`）
@@ -288,7 +288,7 @@ codex-call \
 target: diff                              # 或 diff (pre-first-commit) / file:<path> / branch:<ref>
 focus: "security"                         # user --focus arg 或 profile focus_default（空字串若無；> 200 chars 加截斷標記）
 depth: deep                               # shallow 或 deep
-model: <$MODEL resolved>                  # profile 或 default gpt-5.5
+model: <$MODEL resolved>                  # profile 或 default gpt-5.6-sol
 effort: <$EFFORT resolved>                # profile 或 default xhigh
 timestamp: 2026-06-01T13:30:48+08:00
 profile_source: <default | global | project | mixed>  # v0.3 新增 optional; v0.2 file 無此 field 屬 valid
