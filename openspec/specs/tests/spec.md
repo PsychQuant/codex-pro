@@ -32,7 +32,7 @@ The plugin SHALL provide an executable Bash test runner at `tests/run.sh` that, 
 ---
 ### Requirement: Static layer enforces structural invariants
 
-The static layer at `tests/static.sh` SHALL verify the structural correctness of codex-pro artifacts without executing any skill behaviour. It MUST parse `.claude-plugin/marketplace.json` and `plugins/codex-pro/.claude-plugin/plugin.json` with `python3 -c "import json; json.load(open(...))"`, MUST parse the YAML frontmatter of every `SKILL.md` under `plugins/codex-pro/skills/`, MUST run `bash -n` on every `*.sh` file under `tests/` and under `plugins/codex-pro/skills/batch/references/`, MUST verify byte-identical preservation of `script-template.sh` against a hardcoded sha256, and MUST verify namespace consistency across CLAUDE.md, README.md, and main spec files.
+The static layer at `tests/static.sh` SHALL verify the structural correctness of codex-pro artifacts without executing any skill behaviour. It MUST parse `.claude-plugin/marketplace.json` and `plugins/codex-pro/.claude-plugin/plugin.json` with `python3 -c "import json; json.load(open(...))"`, MUST parse the YAML frontmatter of every `SKILL.md` under `plugins/codex-pro/skills/`, MUST run `bash -n` on every `*.sh` file under `tests/` and under `plugins/codex-pro/skills/codex-batch/references/`, MUST verify byte-identical preservation of `script-template.sh` against a hardcoded sha256, and MUST verify namespace consistency across CLAUDE.md, README.md, and main spec files.
 
 #### Scenario: Manifest JSON parses and name alignment holds
 
@@ -52,7 +52,7 @@ The static layer at `tests/static.sh` SHALL verify the structural correctness of
 #### Scenario: Batch template byte-identical preservation
 
 - **WHEN** the static layer runs
-- **THEN** `shasum -a 256` on `plugins/codex-pro/skills/batch/references/script-template.sh` produces the hardcoded reference hash
+- **THEN** `shasum -a 256` on `plugins/codex-pro/skills/codex-batch/references/script-template.sh` produces the hardcoded reference hash
 
 ##### Example: reference hash
 
@@ -86,7 +86,7 @@ The behavioral layer (`tests/setup.sh` and `tests/batch.sh`) SHALL reproduce the
 
 #### Scenario: Batch SKILL records Design constraint exception
 
-- **WHEN** `tests/batch.sh` inspects `plugins/codex-pro/skills/batch/SKILL.md`
+- **WHEN** `tests/batch.sh` inspects `plugins/codex-pro/skills/codex-batch/SKILL.md`
 - **THEN** the body contains at least one occurrence of `exception` and at least one occurrence of `constraint`
 - **AND** the body explicitly mentions Design constraint #1 by name
 

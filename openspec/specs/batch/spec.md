@@ -46,12 +46,12 @@ code:
 ---
 ### Requirement: Batch script generation uses bundled template
 
-The skill SHALL generate the executable shell script for parallel batch execution by deriving it from `plugins/codex-pro/skills/batch/references/script-template.sh`. That template file MUST be present alongside the skill and MUST remain byte-identical to the upstream `codex-batch` plugin template at the time of migration so that scripts previously generated under the upstream plugin produce identical output when regenerated.
+The skill SHALL generate the executable shell script for parallel batch execution by deriving it from `plugins/codex-pro/skills/codex-batch/references/script-template.sh`. That template file MUST be present alongside the skill and MUST remain byte-identical to the upstream `codex-batch` plugin template at the time of migration so that scripts previously generated under the upstream plugin produce identical output when regenerated.
 
 #### Scenario: Template file accompanies skill
 
 - **WHEN** the plugin is installed
-- **THEN** `plugins/codex-pro/skills/batch/references/script-template.sh` MUST exist and be readable
+- **THEN** `plugins/codex-pro/skills/codex-batch/references/script-template.sh` MUST exist and be readable
 
 #### Scenario: Generated script matches template structure
 

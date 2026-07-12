@@ -80,14 +80,14 @@ source: rename-skills-codex-prefix
 updated: 2026-07-07
 code:
   - tests/adversarial-review.sh
-  - plugins/codex-pro/skills/adversarial-review/SKILL.md
+  - plugins/codex-pro/skills/codex-adversarial-review/SKILL.md
   - tests/result.sh
   - plugins/codex-pro/skills/codex-setup/SKILL.md
   - tests/status.sh
   - CLAUDE.md
   - tests/cancel.sh
   - tests/static.sh
-  - plugins/codex-pro/skills/result/SKILL.md
+  - plugins/codex-pro/skills/codex-result/SKILL.md
   - tests/rescue.sh
   - plugins/codex-pro/skills/codex-batch/SKILL.md
   - plugins/codex-pro/skills/codex-review/SKILL.md
@@ -96,23 +96,23 @@ code:
   - plugins/codex-pro/skills/codex-batch/references/script-template.sh
   - plugins/codex-pro/skills/codex-cancel/SKILL.md
   - README.md
-  - plugins/codex-pro/skills/batch/SKILL.md
+  - plugins/codex-pro/skills/codex-batch/SKILL.md
   - plugins/codex-pro/skills/codex-rescue/SKILL.md
-  - plugins/codex-pro/skills/rescue/SKILL.md
+  - plugins/codex-pro/skills/codex-rescue/SKILL.md
   - tests/config.sh
   - tests/review.sh
   - plugins/codex-pro/skills/codex-adversarial-review/SKILL.md
-  - plugins/codex-pro/skills/cancel/SKILL.md
+  - plugins/codex-pro/skills/codex-cancel/SKILL.md
   - plugins/codex-pro/skills/codex-result/SKILL.md
   - plugins/codex-pro/skills/codex-status/SKILL.md
   - tests/setup.sh
-  - plugins/codex-pro/skills/config/SKILL.md
-  - plugins/codex-pro/skills/status/SKILL.md
   - plugins/codex-pro/skills/codex-config/SKILL.md
-  - plugins/codex-pro/skills/setup/SKILL.md
+  - plugins/codex-pro/skills/codex-status/SKILL.md
+  - plugins/codex-pro/skills/codex-config/SKILL.md
+  - plugins/codex-pro/skills/codex-setup/SKILL.md
   - plugins/codex-pro/.claude-plugin/plugin.json
-  - plugins/codex-pro/skills/review/SKILL.md
-  - plugins/codex-pro/skills/batch/references/script-template.sh
+  - plugins/codex-pro/skills/codex-review/SKILL.md
+  - plugins/codex-pro/skills/codex-batch/references/script-template.sh
 -->
 
 ---
@@ -274,11 +274,11 @@ source: diff-untracked-fix-all-producers
 updated: 2026-06-01
 code:
   - README.md
-  - plugins/codex-pro/skills/adversarial-review/SKILL.md
+  - plugins/codex-pro/skills/codex-adversarial-review/SKILL.md
   - tests/adversarial-review.sh
   - tests/review.sh
   - tests/lib/assert.sh
-  - plugins/codex-pro/skills/review/SKILL.md
+  - plugins/codex-pro/skills/codex-review/SKILL.md
   - CLAUDE.md
   - plugins/codex-pro/.claude-plugin/plugin.json
 -->
