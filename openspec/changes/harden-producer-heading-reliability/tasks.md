@@ -14,9 +14,17 @@ review Step 3 instructions 改為 literal-token 寫法（v0.3→v0.4）+ e2e hea
 
 ## 3. e2e 實證觀察 gate（design D3）
 
-- [ ] 3.1 跑一次完整 Layer 3 e2e matrix：`bash tests/e2e.sh` 全部 12 combos（2 producer skill × 各自 scenario），統計 heading 類 ⚠ warn 行數（review `## Summary`+`## Findings` × mixed/binary/oversize/empty-repo/with-profile、adversarial-review 4 section）。把觀察結果（warn 數、哪個 combo、哪個 heading）逐字記錄在本檔此 task 下方與 commit message。Acceptance: matrix 跑完、觀察證據已記錄（不論綠或 miss）。
-- [ ] 3.2 Conditional promotion — 依 3.1 結果二擇一執行並勾選：(a) heading warn 數 = 0 → 把 tests/e2e.sh 內 heading 檢查的 `verify_substring_warn` 呼叫（review 2 處 + adversarial-review 迴圈 1 處）改為 `verify_substring`，並更新 `verify_substring_warn` helper 上方註解（說明 heading 已 promote、warn helper 保留給未來 best-effort 用途或移除 dead code）；(b) heading warn 數 > 0 → tests/e2e.sh 不動（維持 warn），跑 /spectra-ingest 把 e2e-tests delta spec 的「Heading assertion strength」段修正為 warn 維持狀態 + 記錄觀察證據，promotion 留待後續 change。Acceptance: 兩分支擇一完成且證據可追溯。
-- [ ] 3.3 （僅 3.2 走 (a) 分支時）promotion 後重跑 2 個受影響 e2e combo（`--skill review --scenario mixed` + `--skill adversarial-review --scenario mixed`）確認 hard 斷言 PASS、exit 0。Acceptance: 兩 combo 全綠；若走 (b) 分支則此 task 標記 N/A 並在 task 下方註明。
+- [x] 3.1 跑一次完整 Layer 3 e2e matrix：`bash tests/e2e.sh` 全部 12 combos（2 producer skill × 各自 scenario），統計 heading 類 ⚠ warn 行數（review `## Summary`+`## Findings` × mixed/binary/oversize/empty-repo/with-profile、adversarial-review 4 section）。把觀察結果（warn 數、哪個 combo、哪個 heading）逐字記錄在本檔此 task 下方與 commit message。Acceptance: matrix 跑完、觀察證據已記錄（不論綠或 miss）。
+  > **觀察記錄（2026-07-12 matrix run，model gpt-5.6-sol）**：12 combos 跑完。
+  > heading 類 ⚠ warn 行數 = **0**（review `## Summary`+`## Findings` 於 mixed/binary/oversize/empty-repo 全 pass；adversarial 4 sections 於觀察到 result file 的 combos 全 pass）。
+  > 10/12 combo exit 0；adversarial-review mixed 與 oversize exit 5（result file missing）— 失敗原因為**正交問題**：`claude --print` 單輪下 agent 將 codex-call 丟背景執行後即結束、未寫 result file，與 heading 無關（sister issue 已開）。
+  > 該 2 combo 的 heading 無從觀察（無 result file），promotion 依 10/10 可觀察 combos 零 warn + user 裁決執行。
+- [x] 3.2（走 (a) 分支 — warn=0）Conditional promotion — 依 3.1 結果二擇一執行並勾選：(a) heading warn 數 = 0 → 把 tests/e2e.sh 內 heading 檢查的 `verify_substring_warn` 呼叫（review 2 處 + adversarial-review 迴圈 1 處）改為 `verify_substring`，並更新 `verify_substring_warn` helper 上方註解（說明 heading 已 promote、warn helper 保留給未來 best-effort 用途或移除 dead code）；(b) heading warn 數 > 0 → tests/e2e.sh 不動（維持 warn），跑 /spectra-ingest 把 e2e-tests delta spec 的「Heading assertion strength」段修正為 warn 維持狀態 + 記錄觀察證據，promotion 留待後續 change。Acceptance: 兩分支擇一完成且證據可追溯。
+- [~] 3.3 （3.2 已走 (a) 分支；**部分完成 + deviation**）promotion 後重跑 2 個受影響 e2e combo（`--skill review --scenario mixed` + `--skill adversarial-review --scenario mixed`）確認 hard 斷言 PASS、exit 0。Acceptance: 兩 combo 全綠；若走 (b) 分支則此 task 標記 N/A 並在 task 下方註明。
+  > **記錄（2026-07-12）**：review/mixed 重跑 **綠**（`## Summary` + `## Findings` hard 斷言 pass、exit 0）。
+  > adversarial-review 端改跑 binary（原指定 mixed 在 matrix 已因正交問題 exit 5）— binary 連續 2 次 exit 5（result file missing），同 #6 背景執行孤兒問題（matrix 時 binary 曾綠 → 非決定性）。
+  > adversarial 的 heading hard 斷言**無法在本次 live 驗證**（斷言執行前 run 已死於 #6）；其 heading 證據來自 3.1 matrix（4 sections 於 binary/empty-repo/with-profile 全 pass、0 warn）。
+  > Promotion 不回退：斷言本身正確，被 #6 阻擋的是 e2e 可執行性而非 heading 可靠性。#6 修復後應重跑 adversarial combo 補 live 證據。
 
 ## 4. 版本與文件同步
 
@@ -25,5 +33,5 @@ review Step 3 instructions 改為 literal-token 寫法（v0.3→v0.4）+ e2e hea
 
 ## 5. Pre-archive 驗證
 
-- [ ] 5.1 MANDATORY producer smoke（per feedback-codex-pro-smoke-before-archive）：從改寫後的 SKILL.md Step 3 抽出真實 instructions 文字、在 git fixture（含 tracked 修改 + untracked 檔）上組 prompt、跑一次真 codex-call（profile 解析照 Step 4.1 真實 resolver），斷言 exit 0 + result 含 `## Summary`、`## Findings`、`### Finding 1:` 三個 literal token。Acceptance: smoke 全綠；若 codex-call 401 → 提示 user `codex login` 後重跑（不得跳過、不得以 Layer 2 代替）。
-- [ ] 5.2 最終 `bash tests/run.sh` 全綠 + git status 檢查只含本 change 預期檔案（plugins/codex-pro/skills/review/SKILL.md、tests/review.sh、tests/e2e.sh（若 promote）、plugin.json、marketplace.json、CLAUDE.md、README.md、openspec/）。Acceptance: 0 fail、無 scope 外檔案異動。
+- [x] 5.1 MANDATORY producer smoke（per feedback-codex-pro-smoke-before-archive）：從改寫後的 SKILL.md Step 3 抽出真實 instructions 文字、在 git fixture（含 tracked 修改 + untracked 檔）上組 prompt、跑一次真 codex-call（profile 解析照 Step 4.1 真實 resolver），斷言 exit 0 + result 含 `## Summary`、`## Findings`、`### Finding 1:` 三個 literal token。Acceptance: smoke 全綠；若 codex-call 401 → 提示 user `codex login` 後重跑（不得跳過、不得以 Layer 2 代替）。
+- [x] 5.2 最終 `bash tests/run.sh` 全綠 + git status 檢查只含本 change 預期檔案（plugins/codex-pro/skills/review/SKILL.md、tests/review.sh、tests/e2e.sh（若 promote）、plugin.json、marketplace.json、CLAUDE.md、README.md、openspec/）。Acceptance: 0 fail、無 scope 外檔案異動。

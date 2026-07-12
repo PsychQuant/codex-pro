@@ -148,10 +148,12 @@ verify_substring() {
   fi
 }
 
-# H2 headings are driven by SKILL.md Step 3 system instructions but Codex
-# output is non-deterministic — sometimes uses different heading levels or
-# omits them entirely. Treat as warning (don't fail the run) so e2e remains
-# reliable as a smoke gate.
+# NOTE (heading promotion, issue #1): heading checks were promoted from this
+# warn helper to hard verify_substring after a full 12-combo matrix observed
+# ZERO heading warns on gpt-5.6-sol with the v0.4 literal-token Step 3
+# instructions (10/10 observable combos green; 2 combos failed for an
+# orthogonal background-launch reason — see the sister issue filed from that
+# run). Helper retained for future best-effort (non-heading) substrings.
 verify_substring_warn() {
   local needle="$1" msg="$2"
   if printf '%s' "$RESULT_BODY" | grep -q -- "$needle"; then
@@ -186,16 +188,16 @@ verify_not_substring() {
 case "$SCENARIO" in
   mixed|binary|oversize|empty-repo)
     # frontmatter target marker is deterministic from Claude's SKILL.md
-    # execution; H2 headings come from Codex's non-deterministic output
-    # (Step 3 system instructions request them but LLM may omit / restructure)
+    # execution; H2 headings are HARD assertions since the v0.4 literal-token
+    # hardening (12-combo matrix: zero drift on gpt-5.6-sol — issue #1)
     case "$SKILL" in
       review)
-        verify_substring_warn '## Summary'  "$SKILL/$SCENARIO: '## Summary' heading"
-        verify_substring_warn '## Findings' "$SKILL/$SCENARIO: '## Findings' heading"
+        verify_substring '## Summary'  "$SKILL/$SCENARIO: '## Summary' heading"
+        verify_substring '## Findings' "$SKILL/$SCENARIO: '## Findings' heading"
         ;;
       adversarial-review)
         for h in '## Assumptions Challenged' '## Failure Modes' '## Alternative Approaches' '## Trade-off Counterarguments'; do
-          verify_substring_warn "$h" "adversarial-review/$SCENARIO: '$h' heading"
+          verify_substring "$h" "adversarial-review/$SCENARIO: '$h' heading"
         done
         ;;
     esac
