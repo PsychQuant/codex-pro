@@ -4,14 +4,14 @@ description: |
   informational only — codex-pro v0.2 為 stateless single-shot model、無 background job 可 cancel。本 skill 輸出 explainer + 3 remediation lines、永不 error、永不 mutate disk、永不 signal any process。
   與 status / result / setup 同屬 read-only consumer category — 本 skill 屬 stdout-only informational subtype。Drop-in 對應上游 codex-plugin-cc /codex:cancel、但因 codex-pro stateless model 而為 displayed limitation 而非 silent stub。
   零 argument acceptance（任何 argument 都印 usage 但仍 exit 0、因為 cancel 永不為 error）。
-  Trigger keywords: cancel codex-pro, cancel run, abort review, 取消, codex-pro cancel
+  Trigger keywords: cancel codex-pro, cancel codex run, abort codex review, 取消 codex, codex-pro cancel
 allowed-tools:
   - Bash
 ---
 
 # /codex-pro:codex-cancel — Informational Only (v0.2 stateless limitation)
 
-**informational only** — codex-pro v0.2 為 stateless single-shot model：每個 `/codex-pro:codex-review` / `:rescue` / `:adversarial-review` invocation 都是 synchronous HTTPS round-trip to Codex HTTP wrapper、無 background job、無 persistent PID、無 upstream chatgpt.com/backend-api cancel API。**沒有東西可以給本 skill cancel**。
+**informational only** — codex-pro v0.2 為 stateless single-shot model：每個 `/codex-pro:codex-review` / `:codex-rescue` / `:codex-adversarial-review` invocation 都是 synchronous HTTPS round-trip to Codex HTTP wrapper、無 background job、無 persistent PID、無 upstream chatgpt.com/backend-api cancel API。**沒有東西可以給本 skill cancel**。
 
 本 skill 為 stdout-only informational explainer + 3 條 remediation：不殺 PID、不送 HTTPS、不寫任何 file、不建立 `.codex-pro/`、不 signal 任何 process。Output deterministic（同 invocation 永遠 byte-identical），讓 user 一眼認出這是 known displayed limitation 而非 transient failure。
 
@@ -33,8 +33,8 @@ allowed-tools:
 ```
 codex-pro cancel — informational only
 
-codex-pro v0.2 is single-shot stateless: each /codex-pro:codex-review / :rescue /
-:adversarial-review invocation is a synchronous HTTPS round-trip to the Codex
+codex-pro v0.2 is single-shot stateless: each /codex-pro:codex-review / :codex-rescue /
+:codex-adversarial-review invocation is a synchronous HTTPS round-trip to the Codex
 HTTP wrapper, with no background job, no persistent PID, and no upstream
 cancel API on chatgpt.com/backend-api. There is nothing for /codex-pro:codex-cancel
 to terminate.

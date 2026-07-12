@@ -5,7 +5,7 @@ description: |
   與 status（list 性質）區隔 — result 是 detail 性質、看完整 markdown 內容。三 selection mode：(a) 位置 <filename> / (b) --latest <skill> / (c) --latest 無 arg。
   Selection 決勝權為 filename lexical order（filename ISO8601 prefix 是 producer 寫檔時 atomic 決定的時序 source of truth、不諮詢 filesystem mtime、也不諮詢 frontmatter timestamp field）。
   Fail-fast with remediation：file 不存在 / .codex-pro/ 不存在 / --latest <skill> 零 match 皆 abort 非 0、不 silent fallback。
-  Trigger keywords: show codex result file, display codex review output, 顯示 codex 結果, 看完整, detail, codex-pro result, --latest
+  Trigger keywords: show codex result file, display codex review output, 顯示 codex 結果, 看 codex 完整輸出, codex result detail, codex-pro result, --latest
 allowed-tools:
   - Bash
   - Read

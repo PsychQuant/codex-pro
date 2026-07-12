@@ -13,7 +13,7 @@ allowed-tools:
 
 # /codex-pro:codex-config — Display Resolved Profile (v0.1 read-only consumer)
 
-掃 `~/.codex-pro/profile.yaml`（global layer）+ `<cwd>/.codex-pro/profile.yaml`（project layer）兩 layer profile、field-level merge、missing field 用 hardcoded default、輸出 4-row markdown table + 2 行 profile file 存在性。本 skill 是 codex-pro 第 10 個 user-facing capability、屬 **read-only consumer category**（與 setup / status / result / cancel 同類、與 producer review / rescue / adversarial-review 對比、與 batch exception 對比）。
+掃 `~/.codex-pro/profile.yaml`（global layer）+ `<cwd>/.codex-pro/profile.yaml`（project layer）兩 layer profile、field-level merge、missing field 用 hardcoded default、輸出 4-row markdown table + 2 行 profile file 存在性。本 skill 屬 **read-only consumer category**（與 setup / status / result / cancel 同類、與 producer review / rescue / adversarial-review 對比、與 batch exception 對比）。
 
 ## 行為原則
 
