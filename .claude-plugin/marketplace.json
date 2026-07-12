@@ -5,7 +5,7 @@
   "plugins": [
     {
       "name": "codex-pro",
-      "version": "0.6.0",
+      "version": "0.6.1",
       "source": "./plugins/codex-pro",
       "description": "Codex integration plugin — environment setup, ensemble review, rescue delegation, and structured background jobs. Read-only setup; mutating commands require explicit user invocation."
     }
