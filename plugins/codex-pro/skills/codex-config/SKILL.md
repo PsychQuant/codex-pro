@@ -47,6 +47,7 @@ Resolution per field:
 
 | Field | YAML type | Hardcoded default | Producer skills that use it |
 |---|---|---|---|
+<!-- 本表為鏡像；single source = references/defaults.json（#7 EXTERNAL-CONSUMER CONTRACT，profile-contract.md）-->
 | `model` | string | `gpt-5.6-sol` | review / rescue / adversarial-review |
 | `effort` | string | `xhigh` | review / rescue / adversarial-review |
 | `max_time` | int (seconds) | `600` | review / rescue / adversarial-review |

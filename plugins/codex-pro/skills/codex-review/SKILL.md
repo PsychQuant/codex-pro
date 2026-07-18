@@ -118,7 +118,7 @@ Output requirements:
 
 ### Step 4.1: Resolve profile (v0.3 profile-aware)
 
-在呼叫 codex-call 之前、先 resolve profile。讀 `~/.codex-pro/profile.yaml`（global layer）+ `.codex-pro/profile.yaml`（project layer、優先於 global）、missing field fall back hardcoded default（`gpt-5.6-sol` / `xhigh` / `600`）。未設 profile 時採用現行 hardcoded default（自 model-default bump 起為 gpt-5.6-sol，issue #3 裁決）；已設 profile 的 override 行為與 v0.2 identical（100% backward compatible for profile users）。Inline `python3` regex YAML parse、不依賴 PyYAML：
+在呼叫 codex-call 之前、先 resolve profile。讀 `~/.codex-pro/profile.yaml`（global layer）+ `.codex-pro/profile.yaml`（project layer、優先於 global）、missing field fall back hardcoded default（`gpt-5.6-sol` / `xhigh` / `600`）。未設 profile 時採用現行 hardcoded default（自 model-default bump 起為 gpt-5.6-sol，issue #3 裁決）。**Defaults 鏡像註記（#7 契約）**：本段 hardcoded 值是 [`references/defaults.json`](../../references/defaults.json) 的鏡像 — 分歧時以該檔為準（EXTERNAL-CONSUMER CONTRACT，見 [`references/profile-contract.md`](../../references/profile-contract.md)）；已設 profile 的 override 行為與 v0.2 identical（100% backward compatible for profile users）。Inline `python3` regex YAML parse、不依賴 PyYAML：
 
 ```bash
 PROFILE_RESOLVED=$(python3 - <<'PY'

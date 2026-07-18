@@ -34,7 +34,7 @@ Ask the user for these parameters (skip any they've already provided in the argu
 4. **Output directory** — where to save results
 
 ### Optional (with defaults)
-5. **Model** — default: `gpt-5.6-sol`
+5. **Model** — default: `gpt-5.6-sol`（鏡像 — single source = [`references/defaults.json`](../../references/defaults.json)，#7 契約）
 6. **Reasoning effort** — default: `xhigh`
 7. **Output filename pattern** — default: `ch${ch}_output.tex`
 8. **Parallel execution** — default: `true` (all chunks at once)
