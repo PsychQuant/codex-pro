@@ -91,7 +91,7 @@ codex_runtime_check() {
   }
   wrapper="$bundle_root/bin/codex-pro-call"
 
-  if [ -f "$wrapper" ] && [ -x "$wrapper" ]; then
+  if [ ! -L "$wrapper" ] && [ -f "$wrapper" ] && [ -x "$wrapper" ]; then
     output=$("$wrapper" --check 2>&1) || status=$?
     if [ "$status" -eq 0 ]; then
       echo "bundled path=$wrapper $output"
@@ -256,6 +256,33 @@ out=$(PATH_STUB_MARKER="$path_stub_marker" PATH="$resolver_root/path-stub:/usr/b
 assert_contains "$out" "package_corruption" "native marker makes missing wrapper fail closed"
 assert_no_file "$path_stub_marker" "native corruption does not invoke PATH codex-call"
 
+# A wrapper symlink is not an in-bundle regular executable, even when its
+# external target exits 0. Native package state must reject it before either
+# reporting READY or reopening the legacy PATH fallback.
+symlink_wrapper_target="$resolver_root/external-codex-pro-call"
+symlink_wrapper_marker="$resolver_root/symlink-wrapper-invoked"
+cat > "$symlink_wrapper_target" <<'STUB'
+#!/usr/bin/env bash
+printf invoked > "$SYMLINK_WRAPPER_MARKER"
+exit 0
+STUB
+chmod +x "$symlink_wrapper_target"
+ln -s "$symlink_wrapper_target" "$bundle_root/bin/codex-pro-call"
+out=$(SYMLINK_WRAPPER_MARKER="$symlink_wrapper_marker" \
+  PATH="$resolver_root/path-stub:/usr/bin:/bin" codex_runtime_check "$skill_dir")
+assert_contains "$out" "package_corruption" \
+  "bundled wrapper symlink is classified as package corruption"
+case "$out" in
+  *"bundled path="*|*"legacy_path_fallback"*)
+    fail "bundled wrapper symlink is never reported READY or as legacy fallback" ;;
+  *)
+    pass "bundled wrapper symlink is never reported READY or as legacy fallback" ;;
+esac
+assert_no_file "$symlink_wrapper_marker" \
+  "bundled wrapper symlink target is rejected before execution"
+rm -f "$bundle_root/bin/codex-pro-call" "$symlink_wrapper_target" \
+  "$symlink_wrapper_marker"
+
 # A broken marker symlink is still package state. It must not disappear under
 # test -e semantics and silently reopen the legacy PATH fallback.
 rm -f "$bundle_root/.codex-plugin/plugin.json"
@@ -294,7 +321,7 @@ if [ -r "$generated_setup" ]; then
     'SKILL_DIR' \
     'BUNDLE_ROOT' \
     'bin/codex-pro-call' \
-    '[ -f "$wrapper" ] && [ -x "$wrapper" ]' \
+    '[ ! -L "$wrapper" ] && [ -f "$wrapper" ] && [ -x "$wrapper" ]' \
     '[ -L "$BUNDLE_ROOT/.codex-plugin/plugin.json" ]' \
     '[ -L "$BUNDLE_ROOT/.codex-bundle-files" ]' \
     '--check' \

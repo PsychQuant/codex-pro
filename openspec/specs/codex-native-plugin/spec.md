@@ -27,7 +27,6 @@ updated: 2026-08-10
 code:
   - THIRD_PARTY_NOTICES.md
   - tests/codex-plugin.sh
-  - plugins/codex-pro/bin/codex-call
   - scripts/generate-codex-skills.sh
   - tests/rescue.sh
   - plugins/codex-pro/runtime/codex-pro-call
@@ -50,7 +49,6 @@ code:
   - plugins/codex-pro/LICENSE
   - scripts/codex-bundle-resources.manifest
   - skills/codex-setup/SKILL.md
-  - plugins/codex-pro/bin/codex-pro-call
   - skills/codex-rescue/SKILL.md
 -->
 
@@ -76,7 +74,6 @@ updated: 2026-08-10
 code:
   - THIRD_PARTY_NOTICES.md
   - tests/codex-plugin.sh
-  - plugins/codex-pro/bin/codex-call
   - scripts/generate-codex-skills.sh
   - tests/rescue.sh
   - plugins/codex-pro/runtime/codex-pro-call
@@ -99,7 +96,6 @@ code:
   - plugins/codex-pro/LICENSE
   - scripts/codex-bundle-resources.manifest
   - skills/codex-setup/SKILL.md
-  - plugins/codex-pro/bin/codex-pro-call
   - skills/codex-rescue/SKILL.md
 -->
 
@@ -149,7 +145,6 @@ updated: 2026-08-10
 code:
   - THIRD_PARTY_NOTICES.md
   - tests/codex-plugin.sh
-  - plugins/codex-pro/bin/codex-call
   - scripts/generate-codex-skills.sh
   - tests/rescue.sh
   - plugins/codex-pro/runtime/codex-pro-call
@@ -172,7 +167,6 @@ code:
   - plugins/codex-pro/LICENSE
   - scripts/codex-bundle-resources.manifest
   - skills/codex-setup/SKILL.md
-  - plugins/codex-pro/bin/codex-pro-call
   - skills/codex-rescue/SKILL.md
 -->
 
@@ -220,7 +214,6 @@ updated: 2026-08-10
 code:
   - THIRD_PARTY_NOTICES.md
   - tests/codex-plugin.sh
-  - plugins/codex-pro/bin/codex-call
   - scripts/generate-codex-skills.sh
   - tests/rescue.sh
   - plugins/codex-pro/runtime/codex-pro-call
@@ -243,7 +236,6 @@ code:
   - plugins/codex-pro/LICENSE
   - scripts/codex-bundle-resources.manifest
   - skills/codex-setup/SKILL.md
-  - plugins/codex-pro/bin/codex-pro-call
   - skills/codex-rescue/SKILL.md
 -->
 
@@ -279,7 +271,6 @@ updated: 2026-08-10
 code:
   - THIRD_PARTY_NOTICES.md
   - tests/codex-plugin.sh
-  - plugins/codex-pro/bin/codex-call
   - scripts/generate-codex-skills.sh
   - tests/rescue.sh
   - plugins/codex-pro/runtime/codex-pro-call
@@ -302,7 +293,6 @@ code:
   - plugins/codex-pro/LICENSE
   - scripts/codex-bundle-resources.manifest
   - skills/codex-setup/SKILL.md
-  - plugins/codex-pro/bin/codex-pro-call
   - skills/codex-rescue/SKILL.md
 -->
 
@@ -343,7 +333,6 @@ updated: 2026-08-10
 code:
   - THIRD_PARTY_NOTICES.md
   - tests/codex-plugin.sh
-  - plugins/codex-pro/bin/codex-call
   - scripts/generate-codex-skills.sh
   - tests/rescue.sh
   - plugins/codex-pro/runtime/codex-pro-call
@@ -366,7 +355,6 @@ code:
   - plugins/codex-pro/LICENSE
   - scripts/codex-bundle-resources.manifest
   - skills/codex-setup/SKILL.md
-  - plugins/codex-pro/bin/codex-pro-call
   - skills/codex-rescue/SKILL.md
 -->
 
@@ -416,7 +404,6 @@ updated: 2026-08-10
 code:
   - THIRD_PARTY_NOTICES.md
   - tests/codex-plugin.sh
-  - plugins/codex-pro/bin/codex-call
   - scripts/generate-codex-skills.sh
   - tests/rescue.sh
   - plugins/codex-pro/runtime/codex-pro-call
@@ -439,7 +426,6 @@ code:
   - plugins/codex-pro/LICENSE
   - scripts/codex-bundle-resources.manifest
   - skills/codex-setup/SKILL.md
-  - plugins/codex-pro/bin/codex-pro-call
   - skills/codex-rescue/SKILL.md
 -->
 
@@ -465,7 +451,6 @@ updated: 2026-08-10
 code:
   - THIRD_PARTY_NOTICES.md
   - tests/codex-plugin.sh
-  - plugins/codex-pro/bin/codex-call
   - scripts/generate-codex-skills.sh
   - tests/rescue.sh
   - plugins/codex-pro/runtime/codex-pro-call
@@ -488,7 +473,6 @@ code:
   - plugins/codex-pro/LICENSE
   - scripts/codex-bundle-resources.manifest
   - skills/codex-setup/SKILL.md
-  - plugins/codex-pro/bin/codex-pro-call
   - skills/codex-rescue/SKILL.md
 -->
 
@@ -508,7 +492,6 @@ updated: 2026-08-10
 code:
   - THIRD_PARTY_NOTICES.md
   - tests/codex-plugin.sh
-  - plugins/codex-pro/bin/codex-call
   - scripts/generate-codex-skills.sh
   - tests/rescue.sh
   - plugins/codex-pro/runtime/codex-pro-call
@@ -531,6 +514,5 @@ code:
   - plugins/codex-pro/LICENSE
   - scripts/codex-bundle-resources.manifest
   - skills/codex-setup/SKILL.md
-  - plugins/codex-pro/bin/codex-pro-call
   - skills/codex-rescue/SKILL.md
 -->

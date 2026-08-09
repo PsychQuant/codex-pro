@@ -25,6 +25,8 @@ fi
 # path normalization in one process avoids jq as a test dependency while the
 # shell remains responsible for the shared pass/fail accounting and summary.
 contract_output=$(python3 - "$REPO_ROOT" "$EXPECTED_NAME" "$EXPECTED_VERSION" <<'PY' 2>&1
+from __future__ import annotations
+
 import json
 import re
 import sys
@@ -498,6 +500,55 @@ else
       *) fail "native plugin JSON contract checker emitted an invalid record: $outcome $message" ;;
     esac
   done <<< "$contract_output"
+fi
+
+# The native package targets the macOS/Xcode toolchain, whose system Python is
+# still 3.9 on supported hosts.  Execute the exact embedded checker with that
+# interpreter so newer developer Pythons cannot hide annotation incompatibility.
+checker_source=$(python3 - "$0" <<'PY_SOURCE'
+import sys
+from pathlib import Path
+
+script = Path(sys.argv[1]).read_text(encoding="utf-8")
+start_marker = "contract_output=$(python3 - \"$REPO_ROOT\" \"$EXPECTED_NAME\" \"$EXPECTED_VERSION\" <<'PY' 2>&1\n"
+start = script.find(start_marker)
+if start < 0:
+    raise SystemExit("embedded contract checker start marker not found")
+start += len(start_marker)
+end = script.find("\nPY\n)", start)
+if end < 0:
+    raise SystemExit("embedded contract checker end marker not found")
+sys.stdout.write(script[start:end])
+PY_SOURCE
+)
+checker_source_exit=$?
+
+if [ "$checker_source_exit" -ne 0 ] || [ -z "$checker_source" ]; then
+  fail "embedded native plugin checker source is extractable"
+else
+  pass "embedded native plugin checker source is extractable"
+
+  if printf '%s\n' "$checker_source" | grep -Fq ' | None' \
+    && ! printf '%s\n' "$checker_source" | grep -Fxq 'from __future__ import annotations'; then
+    fail "embedded native plugin checker defers PEP 604 annotations for Python 3.9"
+  else
+    pass "embedded native plugin checker defers PEP 604 annotations for Python 3.9"
+  fi
+
+  system_python="${CODEX_MACOS_SYSTEM_PYTHON:-/usr/bin/python3}"
+  if [ ! -x "$system_python" ]; then
+    fail "macOS system Python is available for native checker compatibility (checked: $system_python)"
+  else
+    compatibility_output=$(printf '%s\n' "$checker_source" \
+      | "$system_python" - "$REPO_ROOT" "$EXPECTED_NAME" "$EXPECTED_VERSION" 2>&1)
+    compatibility_exit=$?
+    if [ "$compatibility_exit" -eq 0 ]; then
+      pass "macOS system Python executes the native plugin checker"
+    else
+      compatibility_reason=$(printf '%s\n' "$compatibility_output" | head -n 1)
+      fail "macOS system Python executes the native plugin checker (exit=$compatibility_exit: $compatibility_reason)"
+    fi
+  fi
 fi
 
 # Resolve the bundled plugin-creator validator without embedding a maintainer's

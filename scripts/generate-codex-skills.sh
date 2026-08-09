@@ -591,7 +591,7 @@ CODEX_RUNTIME_SOURCE="bundled"
 CODEX_RUNTIME_ERROR=""
 CODEX_RUNTIME_DETAIL=""
 
-if [ -f "$CODEX_CALL" ] && [ -x "$CODEX_CALL" ]; then
+if [ ! -L "$CODEX_CALL" ] && [ -f "$CODEX_CALL" ] && [ -x "$CODEX_CALL" ]; then
   CODEX_RUNTIME_STATUS=0
   CODEX_RUNTIME_CHECK=$("$CODEX_CALL" --check 2>&1) || CODEX_RUNTIME_STATUS=$?
   if [ "$CODEX_RUNTIME_STATUS" -ne 0 ]; then
@@ -695,7 +695,7 @@ Codex 載入本 skill 時會提供 active `SKILL.md` 的絕對路徑。先以該
 BUNDLE_ROOT="$(cd "$SKILL_DIR/../.." && pwd -P)"
 wrapper="$BUNDLE_ROOT/bin/codex-pro-call"
 
-if [ -f "$wrapper" ] && [ -x "$wrapper" ]; then
+if [ ! -L "$wrapper" ] && [ -f "$wrapper" ] && [ -x "$wrapper" ]; then
   wrapper_status=0
   wrapper_output=$("$wrapper" --check 2>&1) || wrapper_status=$?
   if [ "$wrapper_status" -eq 0 ]; then
@@ -824,6 +824,9 @@ validate_bundle_state() {
   for subtree in skills references bin; do
     if [ -L "$bundle/$subtree" ]; then
       echo "FATAL: bundle subtree must not be a symlink: $bundle/$subtree" >&2
+      return 3
+    elif [ -e "$bundle/$subtree" ] && [ ! -d "$bundle/$subtree" ]; then
+      echo "FATAL: bundle subtree must be a directory: $bundle/$subtree" >&2
       return 3
     fi
   done

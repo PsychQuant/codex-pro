@@ -93,12 +93,26 @@ detail_contract = all(
         "不得把未清理或未截斷的 detail 放進 YAML frontmatter",
     )
 )
+wrapper_success_match = re.search(
+    r'if (?P<condition>.*?)\s*;\s*then\n\s*CODEX_RUNTIME_STATUS=0',
+    resolver,
+    re.DOTALL,
+)
+wrapper_success_condition = (
+    wrapper_success_match.group("condition") if wrapper_success_match else ""
+)
 checks = {
     "resolver": "present",
     "error_var": str('CODEX_RUNTIME_ERROR=""' in resolver).lower(),
     "detail_var": str('CODEX_RUNTIME_DETAIL=""' in resolver).lower(),
     "no_direct_exit": str("exit 1" not in resolver).lower(),
-    "wrapper_regular": str('[ -f "$CODEX_CALL" ] && [ -x "$CODEX_CALL" ]' in resolver).lower(),
+    "wrapper_regular": str(
+        '[ -f "$CODEX_CALL" ]' in wrapper_success_condition
+        and '[ -x "$CODEX_CALL" ]' in wrapper_success_condition
+    ).lower(),
+    "wrapper_not_symlink": str(
+        '[ ! -L "$CODEX_CALL" ]' in wrapper_success_condition
+    ).lower(),
     "broken_markers": str(
         '[ -L "$BUNDLE_ROOT/.codex-plugin/plugin.json" ]' in resolver
         and '[ -L "$BUNDLE_ROOT/.codex-bundle-files" ]' in resolver
@@ -123,7 +137,7 @@ print(" ".join(f"{key}={value}" for key, value in checks.items()))
 PY
 )
 case "$native_preflight_check" in
-  *"resolver=present error_var=true detail_var=true no_direct_exit=true wrapper_regular=true broken_markers=true skip_invocation=true guard_scope=true guard_mutation_rejected=true runtime_unavailable=true package_corruption=true result_enum=true detail_contract=true native_no_retry=true result_path=true all_failures=true"*)
+  *"resolver=present error_var=true detail_var=true no_direct_exit=true wrapper_regular=true wrapper_not_symlink=true broken_markers=true skip_invocation=true guard_scope=true guard_mutation_rejected=true runtime_unavailable=true package_corruption=true result_enum=true detail_contract=true native_no_retry=true result_path=true all_failures=true"*)
     pass "native adversarial-review preflight maps failures and preserves structured result output" ;;
   *)
     fail "native adversarial-review preflight/result contract incomplete: $native_preflight_check" ;;

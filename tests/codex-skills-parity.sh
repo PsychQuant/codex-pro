@@ -876,6 +876,32 @@ if [ "${CODEX_PARITY_ISOLATED_RUN:-0}" != "1" ] && [ -x "$GENERATOR" ]; then
     "$(cat "$BUNDLE_SKILL_LINK_EXTERNAL" 2>/dev/null)" \
     "complete-bundle SKILL.md symlink rejection preserves the external marker"
 
+  # A managed subtree that is a regular file is invalid package state. The
+  # generator must reject it during validation, before mkdir or any other
+  # apply step can create sibling subtrees or rewrite existing content.
+  MANAGED_FILE_BUNDLE="$TEST_TMP_ROOT/bundle managed subtree file"
+  MANAGED_FILE_BEFORE="$TEST_TMP_ROOT/bundle managed subtree before"
+  mkdir -p -- "$MANAGED_FILE_BUNDLE" "$MANAGED_FILE_BEFORE"
+  printf '%s\n' 'references-file-sentinel' > "$MANAGED_FILE_BUNDLE/references"
+  printf '%s\n' 'unowned-bundle-sentinel' > "$MANAGED_FILE_BUNDLE/unowned.txt"
+  cp -R "$MANAGED_FILE_BUNDLE/." "$MANAGED_FILE_BEFORE/"
+
+  MANAGED_FILE_STATUS=0
+  MANAGED_FILE_OUTPUT=$("$GENERATOR" --bundle-root "$MANAGED_FILE_BUNDLE" \
+    2>&1) || MANAGED_FILE_STATUS=$?
+  if [ "$MANAGED_FILE_STATUS" -ne 0 ]; then
+    pass "complete bundle rejects a managed subtree that is a regular file"
+  else
+    fail "complete bundle accepted a managed subtree that is a regular file"
+  fi
+  assert_contains "$MANAGED_FILE_OUTPUT" "bundle subtree must be a directory" \
+    "managed-subtree rejection names the non-directory destination class"
+  if diff -r "$MANAGED_FILE_BEFORE" "$MANAGED_FILE_BUNDLE" >/dev/null 2>&1; then
+    pass "managed-subtree validation failure leaves the entire bundle destination unchanged"
+  else
+    fail "managed-subtree validation failure mutated the bundle destination"
+  fi
+
   # A regular file may still be a hard link to an external inode. Generation
   # may replace the in-root directory entry, but must never truncate the shared
   # external inode in place.
@@ -993,6 +1019,70 @@ if [ "${CODEX_PARITY_ISOLATED_RUN:-0}" != "1" ] && [ -x "$GENERATOR" ]; then
     fi
   else
     fail "could not create the isolated repo for default destination validation"
+  fi
+
+  # A non-directory managed subtree in the second default destination must be
+  # discovered while both destinations are still in prepare/validation. Mutate
+  # the source first so an incorrectly early apply to .codex is observable.
+  DEFAULT_SUBTREE_REPO="$TEST_TMP_ROOT/default managed subtree repo"
+  mkdir -p -- "$DEFAULT_SUBTREE_REPO"
+  if cp -R "$REPO_ROOT/." "$DEFAULT_SUBTREE_REPO/"; then
+    DEFAULT_SUBTREE_MARKER='<!-- isolated managed subtree source mutation -->'
+    printf '\n%s\n' "$DEFAULT_SUBTREE_MARKER" >> \
+      "$DEFAULT_SUBTREE_REPO/plugins/codex-pro/skills/$SYMLINK_SKILL/SKILL.md"
+    mv -- "$DEFAULT_SUBTREE_REPO/references" \
+      "$TEST_TMP_ROOT/default managed subtree original references"
+    printf '%s\n' 'root-references-file-sentinel' > \
+      "$DEFAULT_SUBTREE_REPO/references"
+
+    DEFAULT_SUBTREE_DOT_BEFORE="$TEST_TMP_ROOT/default managed dot-codex before"
+    DEFAULT_SUBTREE_ROOT_BEFORE="$TEST_TMP_ROOT/default managed root bundle before"
+    mkdir -p -- "$DEFAULT_SUBTREE_DOT_BEFORE" "$DEFAULT_SUBTREE_ROOT_BEFORE"
+    cp -R "$DEFAULT_SUBTREE_REPO/.codex/." "$DEFAULT_SUBTREE_DOT_BEFORE/"
+    cp -R "$DEFAULT_SUBTREE_REPO/skills" "$DEFAULT_SUBTREE_ROOT_BEFORE/skills"
+    cp "$DEFAULT_SUBTREE_REPO/references" "$DEFAULT_SUBTREE_ROOT_BEFORE/references"
+    cp -R "$DEFAULT_SUBTREE_REPO/bin" "$DEFAULT_SUBTREE_ROOT_BEFORE/bin"
+    cp "$DEFAULT_SUBTREE_REPO/$INVENTORY_NAME" \
+      "$DEFAULT_SUBTREE_ROOT_BEFORE/$INVENTORY_NAME"
+
+    DEFAULT_SUBTREE_STATUS=0
+    DEFAULT_SUBTREE_OUTPUT=$("$DEFAULT_SUBTREE_REPO/scripts/generate-codex-skills.sh" \
+      2>&1) || DEFAULT_SUBTREE_STATUS=$?
+    if [ "$DEFAULT_SUBTREE_STATUS" -ne 0 ]; then
+      pass "default mode rejects a regular-file managed subtree in its second destination"
+    else
+      fail "default mode accepted a regular-file managed subtree in its second destination"
+    fi
+    assert_contains "$DEFAULT_SUBTREE_OUTPUT" "bundle subtree must be a directory" \
+      "default managed-subtree rejection names the non-directory destination class"
+
+    if diff -r "$DEFAULT_SUBTREE_DOT_BEFORE" \
+        "$DEFAULT_SUBTREE_REPO/.codex" >/dev/null 2>&1; then
+      pass "invalid root managed subtree leaves the first .codex bundle unchanged"
+    else
+      fail "default mode mutated .codex before rejecting the root managed subtree"
+    fi
+
+    DEFAULT_SUBTREE_ROOT_UNCHANGED=1
+    diff -r "$DEFAULT_SUBTREE_ROOT_BEFORE/skills" \
+      "$DEFAULT_SUBTREE_REPO/skills" >/dev/null 2>&1 \
+      || DEFAULT_SUBTREE_ROOT_UNCHANGED=0
+    cmp -s "$DEFAULT_SUBTREE_ROOT_BEFORE/references" \
+      "$DEFAULT_SUBTREE_REPO/references" \
+      || DEFAULT_SUBTREE_ROOT_UNCHANGED=0
+    diff -r "$DEFAULT_SUBTREE_ROOT_BEFORE/bin" \
+      "$DEFAULT_SUBTREE_REPO/bin" >/dev/null 2>&1 \
+      || DEFAULT_SUBTREE_ROOT_UNCHANGED=0
+    cmp -s "$DEFAULT_SUBTREE_ROOT_BEFORE/$INVENTORY_NAME" \
+      "$DEFAULT_SUBTREE_REPO/$INVENTORY_NAME" \
+      || DEFAULT_SUBTREE_ROOT_UNCHANGED=0
+    if [ "$DEFAULT_SUBTREE_ROOT_UNCHANGED" -eq 1 ]; then
+      pass "invalid root managed subtree leaves the root bundle unchanged"
+    else
+      fail "default mode mutated the root bundle while rejecting its managed subtree"
+    fi
+  else
+    fail "could not create the isolated repo for default managed-subtree validation"
   fi
 fi
 
