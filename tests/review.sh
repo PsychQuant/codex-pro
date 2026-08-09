@@ -34,6 +34,33 @@ if not match:
 resolver = match.group(1)
 step5 = text[match.end():]
 
+resolver_blocks = re.findall(r"```(?:bash)?\n(.*?)\n```", resolver, re.DOTALL)
+resolver_block = resolver_blocks[0] if resolver_blocks else ""
+
+
+def resolver_has_no_exit(block: str) -> bool:
+    return re.search(
+        r"(?<![A-Za-z0-9_])exit(?![A-Za-z0-9_])", block
+    ) is None
+
+
+def wrapper_success_condition_is_safe(condition: str) -> bool:
+    normalized = " ".join(condition.replace("\\\n", " ").split())
+    if "||" in normalized:
+        return False
+    predicates = [part.strip() for part in normalized.split("&&")]
+    required = {
+        '[ ! -L "$BUNDLE_ROOT/bin" ]',
+        '[ -d "$BUNDLE_ROOT/bin" ]',
+        '[ ! -L "$CODEX_CALL" ]',
+        '[ -f "$CODEX_CALL" ]',
+        '[ -x "$CODEX_CALL" ]',
+    }
+    return required.issubset(predicates) and all(
+        re.fullmatch(r"\[ .+ \]", predicate) is not None
+        for predicate in predicates
+    )
+
 
 def invocation_block_guarded(block: str) -> bool:
     guard = re.fullmatch(
@@ -93,17 +120,25 @@ wrapper_success_match = re.search(
 wrapper_success_condition = (
     wrapper_success_match.group("condition") if wrapper_success_match else ""
 )
+mutated_wrapper_condition = re.sub(
+    r"\s*&&\s*", " || ", wrapper_success_condition, count=1
+)
+mutated_exit_block = resolver_block + "\nexit 2"
 checks = {
     "resolver": "present",
     "error_var": str('CODEX_RUNTIME_ERROR=""' in resolver).lower(),
     "detail_var": str('CODEX_RUNTIME_DETAIL=""' in resolver).lower(),
-    "no_direct_exit": str("exit 1" not in resolver).lower(),
-    "wrapper_regular": str(
-        '[ -f "$CODEX_CALL" ]' in wrapper_success_condition
-        and '[ -x "$CODEX_CALL" ]' in wrapper_success_condition
+    "no_direct_exit": str(resolver_has_no_exit(resolver_block)).lower(),
+    "exit_mutation_rejected": str(
+        resolver_has_no_exit(resolver_block)
+        and not resolver_has_no_exit(mutated_exit_block)
     ).lower(),
-    "wrapper_not_symlink": str(
-        '[ ! -L "$CODEX_CALL" ]' in wrapper_success_condition
+    "wrapper_and_condition": str(
+        wrapper_success_condition_is_safe(wrapper_success_condition)
+    ).lower(),
+    "wrapper_or_mutation_rejected": str(
+        wrapper_success_condition_is_safe(wrapper_success_condition)
+        and not wrapper_success_condition_is_safe(mutated_wrapper_condition)
     ).lower(),
     "broken_markers": str(
         '[ -L "$BUNDLE_ROOT/.codex-plugin/plugin.json" ]' in resolver
@@ -129,7 +164,7 @@ print(" ".join(f"{key}={value}" for key, value in checks.items()))
 PY
 )
 case "$native_preflight_check" in
-  *"resolver=present error_var=true detail_var=true no_direct_exit=true wrapper_regular=true wrapper_not_symlink=true broken_markers=true skip_invocation=true guard_scope=true guard_mutation_rejected=true runtime_unavailable=true package_corruption=true result_enum=true detail_contract=true native_no_retry=true result_path=true all_failures=true"*)
+  *"resolver=present error_var=true detail_var=true no_direct_exit=true exit_mutation_rejected=true wrapper_and_condition=true wrapper_or_mutation_rejected=true broken_markers=true skip_invocation=true guard_scope=true guard_mutation_rejected=true runtime_unavailable=true package_corruption=true result_enum=true detail_contract=true native_no_retry=true result_path=true all_failures=true"*)
     pass "native review preflight maps failures and preserves structured result output" ;;
   *)
     fail "native review preflight/result contract incomplete: $native_preflight_check" ;;

@@ -437,6 +437,8 @@ for skill in skills:
         continue
     if document.is_symlink():
         errors.append(f"expected SKILL.md is a symlink: {skill}/SKILL.md")
+    elif document.exists() and not document.is_file():
+        errors.append(f"expected SKILL.md is not a regular file: {skill}/SKILL.md")
     for label, path in (("skill directory", target), ("SKILL.md parent", document.parent)):
         resolved = path.resolve(strict=False)
         if os.path.commonpath((str(root), str(resolved))) != str(root):
@@ -591,7 +593,7 @@ CODEX_RUNTIME_SOURCE="bundled"
 CODEX_RUNTIME_ERROR=""
 CODEX_RUNTIME_DETAIL=""
 
-if [ ! -L "$CODEX_CALL" ] && [ -f "$CODEX_CALL" ] && [ -x "$CODEX_CALL" ]; then
+if [ ! -L "$BUNDLE_ROOT/bin" ] && [ -d "$BUNDLE_ROOT/bin" ] && [ ! -L "$CODEX_CALL" ] && [ -f "$CODEX_CALL" ] && [ -x "$CODEX_CALL" ]; then
   CODEX_RUNTIME_STATUS=0
   CODEX_RUNTIME_CHECK=$("$CODEX_CALL" --check 2>&1) || CODEX_RUNTIME_STATUS=$?
   if [ "$CODEX_RUNTIME_STATUS" -ne 0 ]; then
@@ -695,7 +697,7 @@ Codex 載入本 skill 時會提供 active `SKILL.md` 的絕對路徑。先以該
 BUNDLE_ROOT="$(cd "$SKILL_DIR/../.." && pwd -P)"
 wrapper="$BUNDLE_ROOT/bin/codex-pro-call"
 
-if [ ! -L "$wrapper" ] && [ -f "$wrapper" ] && [ -x "$wrapper" ]; then
+if [ ! -L "$BUNDLE_ROOT/bin" ] && [ -d "$BUNDLE_ROOT/bin" ] && [ ! -L "$wrapper" ] && [ -f "$wrapper" ] && [ -x "$wrapper" ]; then
   wrapper_status=0
   wrapper_output=$("$wrapper" --check 2>&1) || wrapper_status=$?
   if [ "$wrapper_status" -eq 0 ]; then
@@ -873,6 +875,11 @@ for value in paths:
         errors.append(f"inventory path is outside generated subtrees: {value}")
         continue
     target = bundle.joinpath(*parts)
+    parent = target.parent
+    resolved_parent = parent.resolve(strict=False)
+    if resolved_parent != parent:
+        errors.append(f"unsafe inventory parent contains a symbolic link: {value}")
+        continue
     resolved = target.resolve(strict=False)
     if os.path.commonpath((str(bundle), str(resolved))) != str(bundle):
         errors.append(f"inventory path escapes bundle root: {value}")

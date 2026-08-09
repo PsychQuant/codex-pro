@@ -17,17 +17,18 @@ if [ "$platform" != "Darwin" ]; then
   exit 2
 fi
 
-if ! command -v swift >/dev/null 2>&1; then
+SWIFT_PATH="/usr/bin/swift"
+if [ ! -f "$SWIFT_PATH" ] || [ ! -x "$SWIFT_PATH" ]; then
   printf 'error=swift_missing\n' >&2
   exit 2
 fi
-if ! swift_version="$(swift --version 2>/dev/null)" || [ -z "$swift_version" ]; then
+if ! swift_version="$("$SWIFT_PATH" --version 2>/dev/null)" || [ -z "$swift_version" ]; then
   printf 'error=swift_missing\n' >&2
   exit 2
 fi
 swift_version="${swift_version%%$'\n'*}"
 
-if [ ! -e "$RUNTIME_PATH" ] || [ ! -f "$RUNTIME_PATH" ]; then
+if [ -L "$RUNTIME_PATH" ] || [ ! -e "$RUNTIME_PATH" ] || [ ! -f "$RUNTIME_PATH" ]; then
   printf 'error=runtime_missing path=%s\n' "$RUNTIME_PATH" >&2
   exit 2
 fi

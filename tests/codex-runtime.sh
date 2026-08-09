@@ -35,6 +35,15 @@ assert_prefix() {
   esac
 }
 
+assert_nonzero_status() {
+  local actual="$1" msg="$2"
+  if [ "$actual" -ne 0 ]; then
+    pass "$msg"
+  else
+    fail "$msg (actual='$actual')"
+  fi
+}
+
 file_mode() {
   stat -f '%OLp' "$1" 2>/dev/null || stat -c '%a' "$1" 2>/dev/null
 }
@@ -183,9 +192,19 @@ make_wrapper_fixture() {
   printf '%s\n' "$runtime_body" > "$fixture_root/bin/codex-call"
   chmod +x "$fixture_root/bin/codex-call"
 
+  # The production snapshot uses /usr/bin/swift in its shebang. Replace that
+  # fixed interpreter in the wrapper copy with a controllable fixture path so
+  # readiness tests do not accidentally pass via the maintainer's machine.
+  local fixture_swift="$fixture_root/fixed-swift"
+  printf '#!/bin/sh\nprintf "Swift version fixture\\n"\n' > "$fixture_swift"
+  chmod +x "$fixture_swift"
+
   local fixture_sha
   fixture_sha=$(shasum -a 256 "$fixture_root/bin/codex-call" | awk '{print $1}')
-  sed "s/$PINNED_SHA256/$fixture_sha/g" "$SOURCE_WRAPPER" > "$fixture_root/bin/codex-pro-call"
+  sed \
+    -e "s/$PINNED_SHA256/$fixture_sha/g" \
+    -e "s#/usr/bin/swift#$fixture_swift#g" \
+    "$SOURCE_WRAPPER" > "$fixture_root/bin/codex-pro-call"
   chmod +x "$fixture_root/bin/codex-pro-call"
 
   ln -s "$(command -v bash)" "$fixture_root/stubs/bash"
@@ -288,28 +307,50 @@ exit "${RUNTIME_EXIT:-0}"'
 
   rm -f "$fixture/bin/codex-call"
   missing=$(run_wrapper_capture "$fixture/bin/codex-pro-call" "$fixture/stubs" --check)
-  assert_prefix "$(printf '%s\n' "$missing" | sed '1d')" "error=runtime_missing" "missing runtime is machine-readable"
+  missing_status=$(printf '%s\n' "$missing" | sed -n '1p')
+  missing_output=$(printf '%s\n' "$missing" | sed '1d')
+  assert_nonzero_status "$missing_status" "missing runtime exits non-zero"
+  assert_prefix "$missing_output" "error=runtime_missing" "missing runtime is machine-readable"
 
   printf '#!/bin/sh\nexit 0\n' > "$fixture/bin/codex-call"
   chmod 644 "$fixture/bin/codex-call"
   not_executable=$(run_wrapper_capture "$fixture/bin/codex-pro-call" "$fixture/stubs" --check)
-  assert_prefix "$(printf '%s\n' "$not_executable" | sed '1d')" "error=runtime_not_executable" "non-executable runtime is machine-readable"
+  not_executable_status=$(printf '%s\n' "$not_executable" | sed -n '1p')
+  not_executable_output=$(printf '%s\n' "$not_executable" | sed '1d')
+  assert_nonzero_status "$not_executable_status" "non-executable runtime exits non-zero"
+  assert_prefix "$not_executable_output" "error=runtime_not_executable" "non-executable runtime is machine-readable"
 
   chmod +x "$fixture/bin/codex-call"
   hash_mismatch=$(run_wrapper_capture "$fixture/bin/codex-pro-call" "$fixture/stubs" --check)
-  assert_prefix "$(printf '%s\n' "$hash_mismatch" | sed '1d')" "error=hash_mismatch" "runtime hash mismatch is machine-readable"
+  hash_mismatch_status=$(printf '%s\n' "$hash_mismatch" | sed -n '1p')
+  hash_mismatch_output=$(printf '%s\n' "$hash_mismatch" | sed '1d')
+  assert_nonzero_status "$hash_mismatch_status" "runtime hash mismatch exits non-zero"
+  assert_prefix "$hash_mismatch_output" "error=hash_mismatch" "runtime hash mismatch is machine-readable"
 
-  # Darwin with no Swift in the controlled PATH.
-  no_swift="$matrix_root/no-swift"
-  mkdir -p "$no_swift"
-  ln -s "$(command -v bash)" "$no_swift/bash"
-  if command -v dirname >/dev/null 2>&1; then
-    ln -s "$(command -v dirname)" "$no_swift/dirname"
-  fi
-  printf '#!/bin/sh\nprintf "Darwin\\n"\n' > "$no_swift/uname"
-  chmod +x "$no_swift/uname"
-  swift_missing=$(run_wrapper_capture "$SOURCE_WRAPPER" "$no_swift" --check)
-  assert_prefix "$(printf '%s\n' "$swift_missing" | sed '1d')" "error=swift_missing" "missing Swift is machine-readable"
+  # A symlink is not the packaged regular runtime, even when its target has the
+  # expected bytes and executable mode.
+  symlink_fixture="$matrix_root/runtime-symlink"
+  make_wrapper_fixture "$symlink_fixture" '#!/usr/bin/env bash
+exit 0'
+  mv "$symlink_fixture/bin/codex-call" "$symlink_fixture/runtime-target"
+  ln -s ../runtime-target "$symlink_fixture/bin/codex-call"
+  runtime_symlink=$(run_wrapper_capture "$symlink_fixture/bin/codex-pro-call" "$symlink_fixture/stubs" --check)
+  runtime_symlink_status=$(printf '%s\n' "$runtime_symlink" | sed -n '1p')
+  runtime_symlink_output=$(printf '%s\n' "$runtime_symlink" | sed '1d')
+  assert_nonzero_status "$runtime_symlink_status" "symlink runtime exits non-zero"
+  assert_prefix "$runtime_symlink_output" "error=runtime_missing" "symlink runtime reports package corruption"
+
+  # The wrapper must check the same fixed interpreter named by the runtime
+  # snapshot. A different PATH swift must not make readiness succeed.
+  swift_fixture="$matrix_root/fixed-swift-preflight"
+  make_wrapper_fixture "$swift_fixture" "#!$swift_fixture/fixed-swift
+exit 0"
+  rm -f "$swift_fixture/fixed-swift"
+  swift_missing=$(run_wrapper_capture "$swift_fixture/bin/codex-pro-call" "$swift_fixture/stubs" --check)
+  swift_missing_status=$(printf '%s\n' "$swift_missing" | sed -n '1p')
+  swift_missing_output=$(printf '%s\n' "$swift_missing" | sed '1d')
+  assert_nonzero_status "$swift_missing_status" "missing fixed Swift exits non-zero"
+  assert_prefix "$swift_missing_output" "error=swift_missing" "missing fixed Swift is machine-readable"
 
     if ! cleanup_runtime_matrix; then
       fail "wrapper controlled matrix cleans only its validated temporary root"

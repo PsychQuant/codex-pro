@@ -150,7 +150,7 @@ CODEX_RUNTIME_SOURCE="bundled"
 CODEX_RUNTIME_ERROR=""
 CODEX_RUNTIME_DETAIL=""
 
-if [ ! -L "$CODEX_CALL" ] && [ -f "$CODEX_CALL" ] && [ -x "$CODEX_CALL" ]; then
+if [ ! -L "$BUNDLE_ROOT/bin" ] && [ -d "$BUNDLE_ROOT/bin" ] && [ ! -L "$CODEX_CALL" ] && [ -f "$CODEX_CALL" ] && [ -x "$CODEX_CALL" ]; then
   CODEX_RUNTIME_STATUS=0
   CODEX_RUNTIME_CHECK=$("$CODEX_CALL" --check 2>&1) || CODEX_RUNTIME_STATUS=$?
   if [ "$CODEX_RUNTIME_STATUS" -ne 0 ]; then

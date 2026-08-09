@@ -902,6 +902,67 @@ if [ "${CODEX_PARITY_ISOLATED_RUN:-0}" != "1" ] && [ -x "$GENERATOR" ]; then
     fail "managed-subtree validation failure mutated the bundle destination"
   fi
 
+  # A stale inventory entry is still unsafe when one of its nested parents is
+  # a symlink to another location inside the same bundle. Following that link
+  # during cleanup would delete an unowned physical file even though the
+  # inventory path remains lexically below a managed subtree. Reject the whole
+  # prior inventory before applying any staged content.
+  STALE_PARENT_BUNDLE="$TEST_TMP_ROOT/stale inventory parent symlink bundle"
+  STALE_PARENT_BEFORE="$TEST_TMP_ROOT/stale inventory parent symlink before"
+  mkdir -p -- "$STALE_PARENT_BUNDLE/references" \
+    "$STALE_PARENT_BUNDLE/unowned-area" "$STALE_PARENT_BEFORE"
+  printf '%s\n' 'stale-parent-unowned-sentinel' > \
+    "$STALE_PARENT_BUNDLE/unowned-area/sentinel.txt"
+  ln -s -- ../unowned-area "$STALE_PARENT_BUNDLE/references/alias"
+  printf '%s\n' 'references/alias/sentinel.txt' > \
+    "$STALE_PARENT_BUNDLE/$INVENTORY_NAME"
+  cp -R "$STALE_PARENT_BUNDLE/." "$STALE_PARENT_BEFORE/"
+
+  STALE_PARENT_STATUS=0
+  STALE_PARENT_OUTPUT=$("$GENERATOR" --bundle-root "$STALE_PARENT_BUNDLE" \
+    2>&1) || STALE_PARENT_STATUS=$?
+  if [ "$STALE_PARENT_STATUS" -ne 0 ]; then
+    pass "complete bundle rejects a stale inventory entry with a nested parent symlink"
+  else
+    fail "complete bundle followed a nested parent symlink from stale inventory"
+  fi
+  assert_contains "$STALE_PARENT_OUTPUT" "unsafe inventory parent" \
+    "stale parent-symlink rejection names the unsafe inventory parent class"
+  assert_eq 'stale-parent-unowned-sentinel' \
+    "$(cat "$STALE_PARENT_BUNDLE/unowned-area/sentinel.txt" 2>/dev/null)" \
+    "stale inventory parent-symlink rejection preserves the unowned sentinel"
+  if diff -r "$STALE_PARENT_BEFORE" "$STALE_PARENT_BUNDLE" >/dev/null 2>&1; then
+    pass "stale inventory parent-symlink rejection leaves the entire bundle unchanged"
+  else
+    fail "stale inventory parent-symlink validation mutated the bundle destination"
+  fi
+
+  # SKILL.md is a file write target, not a container. If an expected skill has
+  # a directory at that path, mv would otherwise place its temporary output
+  # inside the directory and falsely report a successful nine-skill run. The
+  # invalid target must be rejected before any expected skill is generated.
+  SKILL_DIRECTORY_OUTPUT="$TEST_TMP_ROOT/output SKILL directory"
+  SKILL_DIRECTORY_BEFORE="$TEST_TMP_ROOT/output SKILL directory before"
+  mkdir -p -- "$SKILL_DIRECTORY_OUTPUT/$SYMLINK_SKILL/SKILL.md" \
+    "$SKILL_DIRECTORY_BEFORE"
+  printf '%s\n' 'skill-directory-sentinel' > \
+    "$SKILL_DIRECTORY_OUTPUT/$SYMLINK_SKILL/SKILL.md/sentinel.txt"
+  cp -R "$SKILL_DIRECTORY_OUTPUT/." "$SKILL_DIRECTORY_BEFORE/"
+
+  SKILL_DIRECTORY_STATUS=0
+  "$GENERATOR" --output "$SKILL_DIRECTORY_OUTPUT" \
+    >/dev/null 2>&1 || SKILL_DIRECTORY_STATUS=$?
+  if [ "$SKILL_DIRECTORY_STATUS" -ne 0 ]; then
+    pass "legacy --output rejects an expected SKILL.md directory"
+  else
+    fail "legacy --output accepted an expected SKILL.md directory"
+  fi
+  if diff -r "$SKILL_DIRECTORY_BEFORE" "$SKILL_DIRECTORY_OUTPUT" >/dev/null 2>&1; then
+    pass "expected SKILL.md directory rejection leaves the entire output unchanged"
+  else
+    fail "expected SKILL.md directory validation mutated the output"
+  fi
+
   # A regular file may still be a hard link to an external inode. Generation
   # may replace the in-root directory entry, but must never truncate the shared
   # external inode in place.
