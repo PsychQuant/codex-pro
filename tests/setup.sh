@@ -91,7 +91,7 @@ codex_runtime_check() {
   }
   wrapper="$bundle_root/bin/codex-pro-call"
 
-  if [ -x "$wrapper" ]; then
+  if [ -f "$wrapper" ] && [ -x "$wrapper" ]; then
     output=$("$wrapper" --check 2>&1) || status=$?
     if [ "$status" -eq 0 ]; then
       echo "bundled path=$wrapper $output"
@@ -109,7 +109,9 @@ codex_runtime_check() {
   fi
 
   if [ -e "$bundle_root/.codex-bundle-files" ] \
-      || [ -e "$bundle_root/.codex-plugin/plugin.json" ]; then
+      || [ -L "$bundle_root/.codex-bundle-files" ] \
+      || [ -e "$bundle_root/.codex-plugin/plugin.json" ] \
+      || [ -L "$bundle_root/.codex-plugin/plugin.json" ]; then
     echo "package_corruption path=$wrapper error=wrapper_missing_or_not_executable"
     return
   fi
@@ -254,11 +256,26 @@ out=$(PATH_STUB_MARKER="$path_stub_marker" PATH="$resolver_root/path-stub:/usr/b
 assert_contains "$out" "package_corruption" "native marker makes missing wrapper fail closed"
 assert_no_file "$path_stub_marker" "native corruption does not invoke PATH codex-call"
 
-# Inventory is also a native/generated marker and must fail closed.
+# A broken marker symlink is still package state. It must not disappear under
+# test -e semantics and silently reopen the legacy PATH fallback.
+rm -f "$bundle_root/.codex-plugin/plugin.json"
+ln -s "$resolver_root/missing-native-marker" "$bundle_root/.codex-plugin/plugin.json"
+out=$(PATH="$resolver_root/path-stub:/usr/bin:/bin" codex_runtime_check "$skill_dir")
+assert_contains "$out" "package_corruption" "broken native marker symlink still fails closed"
 rm -rf "$bundle_root/.codex-plugin"
+
+# Inventory is also a native/generated marker and must fail closed.
 printf 'bin/codex-pro-call\n' > "$bundle_root/.codex-bundle-files"
 out=$(PATH="$resolver_root/path-stub:/usr/bin:/bin" codex_runtime_check "$skill_dir")
 assert_contains "$out" "package_corruption" "bundle inventory makes missing wrapper fail closed"
+
+# Search permission makes test -x true for a directory on POSIX. The wrapper
+# must be a regular executable file, not merely an executable path.
+mkdir "$bundle_root/bin/codex-pro-call"
+out=$(PATH="$resolver_root/path-stub:/usr/bin:/bin" codex_runtime_check "$skill_dir")
+assert_contains "$out" "error=wrapper_missing_or_not_executable" \
+  "wrapper directory is classified before execution as package corruption"
+rm -rf "$bundle_root/bin/codex-pro-call"
 
 # Only an unmarked legacy mirror may use PATH compatibility.
 rm -f "$bundle_root/.codex-bundle-files"
@@ -277,6 +294,9 @@ if [ -r "$generated_setup" ]; then
     'SKILL_DIR' \
     'BUNDLE_ROOT' \
     'bin/codex-pro-call' \
+    '[ -f "$wrapper" ] && [ -x "$wrapper" ]' \
+    '[ -L "$BUNDLE_ROOT/.codex-plugin/plugin.json" ]' \
+    '[ -L "$BUNDLE_ROOT/.codex-bundle-files" ]' \
     '--check' \
     'bundled' \
     'legacy PATH fallback' \

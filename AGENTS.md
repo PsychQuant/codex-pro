@@ -43,7 +43,7 @@ Changes can be parked（暫存）— temporarily moved out of `openspec/changes/
 `scripts/generate-codex-skills.sh` 會從 `plugins/codex-pro/` **單向生成** `.codex/`
 與 repo 根層的完整 bundle。兩份都包含 `skills/`、`references/`、`bin/` 與
 `.codex-bundle-files`；不要手改這些受管產物。修改 `plugins/codex-pro/skills/`、
-`plugins/codex-pro/references/` 或 `plugins/codex-pro/bin/` 後，執行：
+`plugins/codex-pro/references/` 或 `plugins/codex-pro/runtime/` 後，執行：
 
 ```bash
 scripts/generate-codex-skills.sh
@@ -73,10 +73,11 @@ bash tests/codex-skills-parity.sh
 | 診斷 | `$codex-setup` | 任何平台都可執行；唯讀檢查 OAuth 與 producer readiness，不連網 |
 | Batch 例外 | `$codex-batch` | 使用 `codex exec --full-auto` subprocess 並寫 output dir，不使用 bundle 內 Swift runtime |
 
-釘選 runtime 的手工來源位於 `plugins/codex-pro/bin/`，生成後在原生 plugin 內是
-`bin/codex-call` 與 `bin/codex-pro-call`；不需要安裝 Claude Code 或
-`parallel-ai-agents`。Claude Code 版維持舊契約：producer 從 PATH 解析 `codex-call`，
-不會改用 Codex bundle。
+釘選 runtime 的手工來源位於 `plugins/codex-pro/runtime/`，resource manifest 只在生成
+Codex 原生 bundle 時將它映射成 `bin/codex-call` 與 `bin/codex-pro-call`；不需要安裝
+Claude Code 或 `parallel-ai-agents`。手工來源刻意不放在 Claude plugin 自動加入 PATH 的
+根層 `bin/`。Claude Code 版維持舊契約：producer 從外部 PATH 解析 `codex-call`，不會
+改用 Codex bundle。
 
 原生 CLI 安裝：
 

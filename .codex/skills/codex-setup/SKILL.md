@@ -60,7 +60,7 @@ Codex 載入本 skill 時會提供 active `SKILL.md` 的絕對路徑。先以該
 BUNDLE_ROOT="$(cd "$SKILL_DIR/../.." && pwd -P)"
 wrapper="$BUNDLE_ROOT/bin/codex-pro-call"
 
-if [ -x "$wrapper" ]; then
+if [ -f "$wrapper" ] && [ -x "$wrapper" ]; then
   wrapper_status=0
   wrapper_output=$("$wrapper" --check 2>&1) || wrapper_status=$?
   if [ "$wrapper_status" -eq 0 ]; then
@@ -76,7 +76,9 @@ if [ -x "$wrapper" ]; then
     esac
   fi
 elif [ -e "$BUNDLE_ROOT/.codex-plugin/plugin.json" ] \
-    || [ -e "$BUNDLE_ROOT/.codex-bundle-files" ]; then
+    || [ -L "$BUNDLE_ROOT/.codex-plugin/plugin.json" ] \
+    || [ -e "$BUNDLE_ROOT/.codex-bundle-files" ] \
+    || [ -L "$BUNDLE_ROOT/.codex-bundle-files" ]; then
   echo "package corruption path=$wrapper error=wrapper_missing_or_not_executable"
 elif legacy_codex_call=$(command -v codex-call 2>/dev/null); then
   echo "legacy PATH fallback path=$legacy_codex_call"

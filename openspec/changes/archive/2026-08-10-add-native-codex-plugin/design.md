@@ -31,9 +31,15 @@ OpenAI 的現行 plugin 契約要求 `.codex-plugin/plugin.json`，skills-only p
 
 `plugins/codex-pro/` 保持唯一來源。generator 的預設執行同時更新 `.codex/` 與 repo 根層兩個 bundle；新增 `--bundle-root <path>` 產生單一完整 bundle供測試，既有 `--output <skills-dir>` 保留為向後相容的 skill-only harness。
 
-每個完整 bundle 包含 `skills/`、`references/`、`bin/` 與 `.codex-bundle-files` ownership inventory。SKILL.md 繼續套用 namespace／setup／runtime 轉換；skill-local resources、shared references 與 bin payload 逐位元複製。`scripts/codex-bundle-resources.manifest` 明列所有非 SKILL.md 資源，避免來源與測試同時漏檔仍全綠。
+每個完整 bundle 包含 `skills/`、`references/`、`bin/` 與 `.codex-bundle-files` ownership inventory。SKILL.md 繼續套用 namespace／setup／runtime 轉換；skill-local resources、shared references 與 bin payload 逐位元複製。`scripts/codex-bundle-resources.manifest` 明列每個非 SKILL.md 資源的 source path 與 publish path，使不位於 Claude plugin 根層 `bin/` 的 runtime 來源仍能發佈成 native `bin/*`，也避免來源與測試同時漏檔仍全綠。
+
+resource mapping 兩端都必須落在允許 subtree 的明確檔案路徑；skill-local resource 僅接受 `skills/<expected-skill>/<child-file>`。staging 完成後，generator 會獨立列舉 `skills/`、`references/`、`bin/` 下的 regular files，要求其集合與預期 ownership inventory 完全相等，才寫 inventory 並進入 apply。這避免把 skill 目錄本身登記成 inventory entry、實際卻夾帶未宣告子檔案。
+
+SKILL source 在任何 destination mutation 前另做 lstat／resolve containment：expected skill directory 與 `SKILL.md` 都必須是 `plugins/codex-pro/` 內的實體 directory／regular file，不接受 symlink。這避免生成器追隨套件外的指令來源，卻把內容當成可信發布物。
 
 每個 generated skill 目錄以 SKILL.md marker 判定 ownership，重生時以完整 staging directory 取代，從而清掉陳舊 nested resources。shared resources 只依上一版 `.codex-bundle-files` 與新 manifest 做 bounded cleanup；generator 不掃描或刪除 bundle root 的其他檔案。
+
+`--output` 相容介面在任何 mutation 前驗證 manifest 名稱唯一、符合單一 path component 白名單，並拒絕 expected skill directory、`SKILL.md` 或其既有 parent chain 中的 symlink／bundle containment escape。orphan cleanup 先以 direct-child、NUL-framed 清單驗證全部 ownership，再開始刪除；含換行的目錄名 fail-closed，不能被 line-based parser 拆成 caller-relative target。完整 bundle 讀 generated marker 前也拒絕 expected `SKILL.md` symlink。預設無參數模式則先為兩個 committed bundle 各自 stage、解析 prior inventory 並完成 state validation；只有兩份都通過後才依序 apply，避免第二份驗證失敗時第一份已被更新。這裡保證的是 apply 前全體驗證，不宣稱跨兩個 filesystem trees 的 crash-safe transaction。
 
 Rejected alternative：手動維護根層 `skills/`，會建立第三份可漂移來源；只複製 SKILL.md，會保留目前 broken links 與 batch template 缺口。
 
@@ -47,23 +53,27 @@ Rejected alternative：把根層 manifest 指向 `.codex/skills/`，會偏離官
 
 ### D3. 來源釘選 runtime 與 provenance
 
-將上游 `codex-call` byte-for-byte snapshot 存於 `plugins/codex-pro/bin/codex-call`，不修改檔頭，讓 SHA-256 可直接對上游。`plugins/codex-pro/references/codex-call-provenance.json` 記錄 repository、path、commit、blob、raw URL、bytes、mode、sha256、license 與已知上游 issues；`THIRD_PARTY_NOTICES.md` 說明來源與 MIT 授權。
+將上游 `codex-call` byte-for-byte snapshot 存於 `plugins/codex-pro/runtime/codex-call`，不修改檔頭，讓 SHA-256 可直接對上游。`plugins/codex-pro/references/codex-call-provenance.json` 記錄 repository、path、commit、blob、raw URL、bytes、mode、sha256、license 與已知上游 issues；repo 根層 `THIRD_PARTY_NOTICES.md` 說明來源與 MIT 授權。Claude marketplace 實際只複製 `plugins/codex-pro/`，因此該子套件也自帶完整 `LICENSE` 與 package-local `THIRD_PARTY_NOTICES.md`，避免分發 substantial upstream source 時遺失授權聲明。wrapper 的手改來源同樣位於 `plugins/codex-pro/runtime/codex-pro-call`，resource manifest 將兩者映射成 native bundle 的 `bin/codex-call` 與 `bin/codex-pro-call`。
 
-`plugins/codex-pro/bin/codex-pro-call` 是本 repo 維護的薄 wrapper。它從 `$0` 解析自身目錄，對正常執行與 `--check` 都驗證 Darwin、`swift --version`、runtime executable mode 與 SHA-256；通過後以原參數 exec snapshot。`--check` 不讀 auth、不連網、不執行 snapshot。任何檢查失敗皆輸出單行 machine-readable error 並以非零結束。
+`codex-pro-call` 是本 repo 維護的薄 wrapper。它從 `$0` 解析自身目錄，對正常執行與 `--check` 都驗證 Darwin、`swift --version`、runtime executable mode 與 SHA-256；通過後以原參數 exec snapshot。`--check` 不讀 auth、不連網、不執行 snapshot。任何檢查失敗皆輸出單行 machine-readable error 並以非零結束。Claude Code 會自動把 plugin 根層 `bin/` 加入 Bash PATH，因此 source plugin 根層不得存在 `bin/codex-call` 或 `bin/codex-pro-call`；這是保持既有外部 PATH runtime resolution 的 packaging invariant。
 
 Rejected alternative：在每個 skill 內複製 runtime 會產生四份 25 KB snapshot；symlink 的 marketplace 封裝語意未受保證；只依賴外部 PATH 則重現原問題。
 
 ### D4. Skill-relative resolver 與 fail-closed
 
-Codex generated setup 與三個 producer skills 先把 `SKILL_DIR` 設為 active SKILL.md 所在的絕對目錄，再令 `BUNDLE_ROOT` 為 `SKILL_DIR/../..`。若 `BUNDLE_ROOT/bin/codex-pro-call` 可執行就使用它；若 bundle inventory 或 native manifest 存在但 wrapper 缺失／不可執行，視為 package corruption 並停止，不得退回 PATH。
+Codex generated setup 與三個 producer skills 先把 `SKILL_DIR` 設為 active SKILL.md 所在的絕對目錄，再令 `BUNDLE_ROOT` 為 `SKILL_DIR/../..`。若 `BUNDLE_ROOT/bin/codex-pro-call` 是 regular executable file 就使用它；若 bundle inventory 或 native manifest marker path 存在（包含 broken symlink）但 wrapper 缺失／非 regular／不可執行，視為 package corruption 並停止，不得退回 PATH。
 
-只有沒有 inventory、沒有 native manifest 的 legacy project mirror，才可最後使用 `command -v codex-call`，並在 setup report 或 producer error context 標示 legacy PATH fallback。resolver 不掃描 `~/.codex/plugins/cache`、不讀 `CODEX_HOME`、不假設 `PLUGIN_ROOT` 或 `CLAUDE_PLUGIN_ROOT`。
+只有 inventory 與 native manifest 兩個 marker path 都不存在的 legacy project mirror，才可最後使用 `command -v codex-call`，並在 setup report 或 producer error context 標示 legacy PATH fallback。resolver 不掃描 `~/.codex/plugins/cache`、不讀 `CODEX_HOME`、不假設 `PLUGIN_ROOT` 或 `CLAUDE_PLUGIN_ROOT`。
+
+Producer resolver 不以 shell `exit` 中斷整個 skill。它改為設定 `CODEX_RUNTIME_ERROR` 與 `CODEX_RUNTIME_DETAIL`：native marker 下的 missing／non-regular／non-executable wrapper、missing／non-executable runtime 或 hash mismatch 映射為 `package_corruption`；unsupported platform、missing Swift、無 marker 且 PATH runtime 不存在，以及其他 preflight unavailable 狀態映射為 `runtime_unavailable`。若變數非空，skill 不得呼叫 runtime、OAuth 或網路，必須直接進入 Step 5，以各自既有 frontmatter/body 形狀寫 result file，並加入該 native-only error class。result body 另寫清理控制字元且有長度上限的 detail，避免把 wrapper 原始輸出塞進 frontmatter。這延伸 failure enum，但保留所有 failure 可觀察、零 retry 與各 result schema 的其他欄位。
 
 Rejected alternative：掃 cache 能在目前機器碰巧找到檔案，但 source namespace、版本目錄與 cache shape 都不是公開契約；hook-only 的 `PLUGIN_ROOT` 也不能外推到 skill shell。
 
 ### D5. 版本與 release gate
 
-版本 0.8.0 必須同時出現在 Codex manifest、Claude plugin manifest 與 Claude marketplace entry。`tests/codex-plugin.sh` 驗證原生 manifest、self-hosted marketplace、版本一致、runtime/provenance、wrapper matrix 與 package resources；升級後的 `tests/codex-skills-parity.sh` 對兩個 committed bundles 與暫存重生 bundle 做 recursive parity、相對連結解析、冪等性與 ownership safety。
+版本 0.8.0 必須同時出現在 Codex manifest、Claude plugin manifest 與 Claude marketplace entry。`tests/codex-plugin.sh` 驗證原生 manifest、self-hosted marketplace、版本一致、runtime/provenance、wrapper matrix、Claude source package 不含 auto-PATH runtime 與 package resources；升級後的 `tests/codex-skills-parity.sh` 對兩個 committed bundles與暫存重生 bundle 做 recursive parity、相對連結解析、冪等性與 ownership safety。所謂 recursive parity 包含列舉每個 generator-owned expected skill directory 的所有實際檔案，因此額外／殘留檔也會使 gate 失敗；bundle 其他未 owned 路徑仍依 bounded-cleanup 契約保留。
+
+`tests/run.sh` 必須同時使用 layer process exit status 與 parse 到的 assertion summary 判定 layer；即使 summary 宣稱零 fail，只要 process 非零仍是 layer failure。獨立 dispatcher regression 以「無 summary 非零」及「零 fail summary 後非零」fixture 防止 aggregate gate false-green。producer contract gate 另結構化抽取 Step 4.3 code block，要求唯一 `$CODEX_CALL` invocation 位於 runtime-error guard，並用把 invocation 移到 `fi` 後的 in-memory mutation 驗證 gate 真會拒絕；Step 5 同時釘住 detail sanitization／500 字元上限與 native no-retry。
 
 release gate 另執行內建 `plugin-creator` validator、完整 `tests/run.sh`、macOS `swift --version`、wrapper `--check`，並以固定 JSON payload 呼叫 snapshot 的 `--selftest-error-extract` 離線測試 hook；該 hook 必須帶一個 JSON 引數，不能以空引數呼叫。Codex CLI／App 的真正安裝、啟用與新 task invocation 放在 e2e checklist，且 producer smoke 必須在未注入 Claude plugin PATH 的情境產出 `.codex-pro/review-*.md`。
 
@@ -78,7 +88,7 @@ release gate 另執行內建 `plugin-creator` validator、完整 `tests/run.sh`�
 - Codex CLI 可加入本 repo marketplace、看到 `codex-pro` entry 並安裝根層 plugin；新 task 可探索 9 個 `$codex-*` skills。
 - `.codex/` 與 repo 根層 bundles 的 9 個 skill directories、nested resources、shared references 與 runtime bytes 相同；兩者只因 bundle root 不同而有不同絕對位置。
 - `$codex-setup` 回報 OAuth 與 bundled runtime readiness。非 macOS 或缺 Swift 時，producer readiness 明確為不可用，但 consumer skills 不被描述為不可用。
-- `$codex-review`、`$codex-adversarial-review` 與 `$codex-rescue` 以 bundle wrapper 前景同步呼叫 snapshot；結果檔與失敗分類維持既有契約。
+- `$codex-review`、`$codex-adversarial-review` 與 `$codex-rescue` 以 bundle wrapper 前景同步呼叫 snapshot；既有結果檔形狀與錯誤分類維持相容，並為 native preflight 新增 `runtime_unavailable`／`package_corruption`，兩者同樣必須寫 result file且不 retry。
 - Claude Code 版仍以 PATH 找 `codex-call` 並驗 `.claude-plugin/plugin.json`，不改用 bundled runtime。
 
 ### Generator interface and bundle shape
@@ -86,7 +96,8 @@ release gate 另執行內建 `plugin-creator` validator、完整 `tests/run.sh`�
 - `scripts/generate-codex-skills.sh` 無參數：更新 `.codex/` 與 repo 根層兩個 committed bundles。
 - `scripts/generate-codex-skills.sh --bundle-root <path>`：更新一個含 `skills/`、`references/`、`bin/`、`.codex-bundle-files` 的完整 bundle。
 - `scripts/generate-codex-skills.sh --output <skills-dir>`：保留既有 skill-only 測試介面；不得被 release parity 當成完整 bundle。
-- 空路徑、`/`、使用者 home 與未解析的危險 destination 必須在任何 cleanup 前拒絕。
+- 空路徑、`/`、使用者 home、未解析的危險 destination、manifest 非安全／重複 skill 名稱，以及 expected skill child symlink／containment escape 必須在任何 cleanup 或寫入前拒絕。
+- 無參數模式必須先 stage 並驗證 `.codex/` 與 repo 根層兩份目的地，再開始任一份 mutation；驗證失敗時兩份 committed bundle 皆不得改變。
 - `.codex-bundle-files` 為換行分隔、repo-relative-to-bundle 的 generated path inventory；只列 generator 擁有的檔案，排序固定且重生冪等。
 
 ### Manifest and marketplace data
@@ -97,15 +108,16 @@ release gate 另執行內建 `plugin-creator` validator、完整 `tests/run.sh`�
 
 ### Runtime and resolver interface
 
-- provenance JSON 的 commit、blob、bytes、mode、sha256 必須與 vendored runtime 一致。
+- provenance JSON 的 commit、blob、bytes、mode、sha256 必須與 source runtime及兩份 native bundle snapshot 一致；source runtime 位於不會由 Claude plugin 自動加入 PATH 的目錄。
 - `bin/codex-pro-call --check` 成功時輸出 `ok runtime=<absolute-path> sha256=<hash> swift=<version>` 並結束 0；錯誤輸出以 `error=<class>` 開頭，class 至少涵蓋 `unsupported_platform`、`swift_missing`、`runtime_missing`、`runtime_not_executable`、`hash_mismatch`。
 - 其他參數在檢查成功後逐字傳給 snapshot；wrapper 不 retry、不改寫 auth、不吞掉 snapshot exit status。
 - generated skills 使用 active skill path 設定 `SKILL_DIR`，不得從 cwd 推測。含 manifest／inventory 的 bundle 發現 runtime 損壞時必須 fail-closed；只有明確認定的 legacy mirror可用 PATH fallback。
+- producer preflight failure 必須設定穩定 error class並直接走既有 Step 5 result writer；不得以 `exit` 跳過 result file。
 
 ### Acceptance criteria
 
 - 新測試先在缺 manifest／resources／runtime 時呈現 RED，再由實作轉為 GREEN。
-- `python3 <plugin-creator-skill>/scripts/validate_plugin.py <repo-root>`、`bash tests/run.sh`、`bash tests/codex-plugin.sh`、`bash tests/codex-skills-parity.sh` 全部通過。
+- `python3 <plugin-creator-skill>/scripts/validate_plugin.py <repo-root>`、`bash tests/run.sh`、`bash tests/run-dispatcher.sh`、`bash tests/codex-plugin.sh`、`bash tests/codex-skills-parity.sh` 全部通過。
 - 在 macOS 上，`bin/codex-pro-call --check` 與 `bin/codex-call --selftest-error-extract '{"error":{"message":"offline self-test"}}'` 通過，後者輸出 `offline self-test`；測試不得把「全部 skip」算成功。
 - e2e checklist 記錄 Codex CLI marketplace add／plugin add、新 task 的 setup、consumer、producer smoke，以及 Codex App 視覺安裝檢查。
 
@@ -121,6 +133,7 @@ In scope：root native plugin、self-hosted repo marketplace、兩個 generated 
 - [macOS-only runtime 與通用 plugin 安裝面不一致] → setup 與 wrapper在執行前 fail-fast，consumer skills 仍可用，官方 listing 文案不宣稱跨平台 producer。
 - [root marketplace source `./` 與 ingestion 實作漂移] → static schema test加 CLI install smoke；若 host 不接受，rollback 為 staging subdirectory marketplace，不改 plugin payload契約。
 - [雙 bundle 增加 committed generated files] → source ownership inventory、fresh regeneration parity 與禁止手改說明把 drift 變成測試失敗。
+- [兩份 bundle 無法形成跨目錄 crash-safe transaction] → apply 前先 stage＋validate 兩份，正常驗證失敗不產生部分更新；若 process 在 apply 中被外力終止，parity gate 可偵測並由冪等重生修復。
 
 ## Migration Plan
 

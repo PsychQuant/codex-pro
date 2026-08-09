@@ -109,24 +109,96 @@ trap 'rm -rf -- "$WORK_ROOT"' EXIT
 # 不從來源目錄枚舉就好 —— 那樣的話來源少一個 skill 時，generator 與 test 會
 # 一起少一個然後全綠。manifest 是外部固定點，讓「集合變了」必須被明講。
 declare -a EXPECTED=()
+EXPECTED_SKILLS_FILE="$WORK_ROOT/expected-skills"
+python3 - "$MANIFEST" > "$EXPECTED_SKILLS_FILE" <<'PY'
+from pathlib import Path
+import re
+import sys
+
+manifest = Path(sys.argv[1])
+skills = []
+errors = []
+safe_name = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
+for number, raw in enumerate(manifest.read_text(encoding="utf-8").splitlines(), 1):
+    value = raw.split("#", 1)[0].strip()
+    if not value:
+        continue
+    if not safe_name.fullmatch(value):
+        errors.append(f"line {number}: unsafe skill name: {value!r}")
+    skills.append(value)
+if not skills:
+    errors.append("manifest lists no skills")
+if len(skills) != len(set(skills)):
+    errors.append("manifest contains duplicate skill names")
+if skills != sorted(skills):
+    errors.append("skill names are not bytewise sorted")
+if errors:
+    sys.stderr.write("FATAL: invalid expected-skill manifest: " + "; ".join(errors) + "\n")
+    raise SystemExit(3)
+print(*skills, sep="\n")
+PY
 while IFS= read -r line; do
-  line="${line%%#*}"
-  line="$(printf '%s' "$line" | tr -d '[:space:]')"
   [ -n "$line" ] && EXPECTED+=("$line")
-done < "$MANIFEST"
+done < "$EXPECTED_SKILLS_FILE"
 
-if [ "${#EXPECTED[@]}" -eq 0 ]; then
-  echo "FATAL: manifest lists no skills: $MANIFEST" >&2
-  exit 2
+if ! output="$(python3 - "$SOURCE_BUNDLE" "$EXPECTED_SKILLS_FILE" 2>&1 <<'PY'
+from pathlib import Path
+import os
+import sys
+
+source_bundle_path = Path(sys.argv[1])
+expected = Path(sys.argv[2]).read_text(encoding="utf-8").splitlines()
+errors = []
+
+if source_bundle_path.is_symlink():
+    errors.append("source bundle root is a symlink")
+
+try:
+    source_bundle = source_bundle_path.resolve(strict=True)
+except OSError as exc:
+    errors.append(f"source bundle cannot be resolved: {exc}")
+    source_bundle = source_bundle_path.resolve(strict=False)
+
+skills_root = source_bundle_path / "skills"
+if skills_root.is_symlink():
+    errors.append("source skills root is a symlink")
+if not skills_root.is_dir():
+    errors.append("source skills root is not a directory")
+
+for skill in expected:
+    skill_dir = skills_root / skill
+    document = skill_dir / "SKILL.md"
+    if skill_dir.is_symlink():
+        errors.append(f"source skill directory is a symlink: {skill}")
+        continue
+    if not skill_dir.is_dir():
+        errors.append(f"source skill directory is missing or not a directory: {skill}")
+        continue
+    if document.is_symlink():
+        errors.append(f"source SKILL.md is a symlink: {skill}/SKILL.md")
+        continue
+    if not document.is_file():
+        errors.append(f"source SKILL.md is missing or not a regular file: {skill}/SKILL.md")
+        continue
+    try:
+        resolved = document.resolve(strict=True)
+        with document.open("rb") as handle:
+            handle.read(1)
+    except OSError as exc:
+        errors.append(f"source SKILL.md is unreadable: {skill}/SKILL.md: {exc}")
+        continue
+    if os.path.commonpath((str(source_bundle), str(resolved))) != str(source_bundle):
+        errors.append(f"source SKILL.md escapes source bundle: {skill}/SKILL.md")
+
+if errors:
+    sys.stderr.write("; ".join(errors))
+    raise SystemExit(1)
+PY
+)"; then
+  echo "FATAL: unsafe source skill: $output" >&2
+  echo "       Restore regular in-bundle skill directories and SKILL.md files." >&2
+  exit 3
 fi
-
-for skill in "${EXPECTED[@]}"; do
-  if [ ! -r "$SOURCE_DIR/$skill/SKILL.md" ]; then
-    echo "FATAL: manifest expects '$skill' but $SOURCE_DIR/$skill/SKILL.md is missing or unreadable." >&2
-    echo "       Either restore the source skill, or update $MANIFEST deliberately." >&2
-    exit 3
-  fi
-done
 
 # 來源有、manifest 沒有 → 同樣是錯的（新增 skill 忘了登記，Codex 使用者就叫不出來）。
 while IFS= read -r d; do
@@ -141,65 +213,113 @@ while IFS= read -r d; do
 done < <(find "$SOURCE_DIR" -mindepth 1 -maxdepth 1 -type d | sort)
 
 # ── resource manifest 與來源樹必須精確雙向相等 ──────────────────
-RESOURCE_PATHS="$WORK_ROOT/resources"
+RESOURCE_MAPPINGS="$WORK_ROOT/resource-mappings"
+RESOURCE_SOURCES="$WORK_ROOT/resource-sources"
+RESOURCE_PATHS="$WORK_ROOT/resource-publish-paths"
 ACTUAL_RESOURCES="$WORK_ROOT/actual-resources"
 
-python3 - "$RESOURCE_MANIFEST" "$SOURCE_BUNDLE" > "$RESOURCE_PATHS" <<'PY'
+python3 - "$RESOURCE_MANIFEST" "$SOURCE_BUNDLE" "$RESOURCE_SOURCES" "$RESOURCE_PATHS" \
+  "$EXPECTED_SKILLS_FILE" \
+  > "$RESOURCE_MAPPINGS" <<'PY'
 from pathlib import Path, PurePosixPath
 import os
 import sys
 
 manifest = Path(sys.argv[1])
 source = Path(sys.argv[2]).resolve()
-paths = []
+expected_skills = set(Path(sys.argv[5]).read_text(encoding="utf-8").splitlines())
+mappings = []
 errors = []
 
 for number, raw in enumerate(manifest.read_text(encoding="utf-8").splitlines(), 1):
     value = raw.split("#", 1)[0].strip()
     if not value:
         continue
-    pure = PurePosixPath(value)
-    parts = value.split("/")
-    if pure.is_absolute() or value.startswith("~"):
-        errors.append(f"line {number}: absolute/home-relative path is forbidden: {value}")
-    elif any(part in ("", ".", "..") for part in parts):
-        errors.append(f"line {number}: path is not normalized: {value}")
-    elif parts[0] not in ("skills", "references", "bin"):
-        errors.append(f"line {number}: path must be under skills/, references/, or bin/: {value}")
-    elif value.endswith("/SKILL.md"):
-        errors.append(f"line {number}: SKILL.md belongs to codex-skills.manifest: {value}")
+    fields = value.split()
+    if len(fields) == 1:
+        source_path = publish_path = fields[0]
+    elif len(fields) == 2:
+        source_path, publish_path = fields
     else:
-        target = source.joinpath(*parts)
-        try:
-            resolved = target.resolve(strict=True)
-        except FileNotFoundError:
-            errors.append(f"line {number}: source resource is missing: {value}")
-        else:
-            if os.path.commonpath((str(source), str(resolved))) != str(source):
-                errors.append(f"line {number}: source resource escapes source bundle: {value}")
-            elif not resolved.is_file():
-                errors.append(f"line {number}: source resource is not a file: {value}")
-    paths.append(value)
+        errors.append(
+            f"line {number}: expected '<source-path> [publish-path]': {value}"
+        )
+        continue
 
-if paths != sorted(paths):
-    errors.append("resource paths are not bytewise sorted")
-if len(paths) != len(set(paths)):
-    errors.append("resource paths contain duplicates")
+    for label, path, allowed_roots in (
+        ("source", source_path, ("skills", "references", "runtime")),
+        ("publish", publish_path, ("skills", "references", "bin")),
+    ):
+        pure = PurePosixPath(path)
+        parts = path.split("/")
+        if pure.is_absolute() or path.startswith("~"):
+            errors.append(
+                f"line {number}: absolute/home-relative {label} path is forbidden: {path}"
+            )
+        elif any(part in ("", ".", "..") for part in parts):
+            errors.append(f"line {number}: {label} path is not normalized: {path}")
+        elif parts[0] not in allowed_roots:
+            roots = ", ".join(f"{root}/" for root in allowed_roots)
+            errors.append(
+                f"line {number}: {label} path must be under {roots}: {path}"
+            )
+        elif parts[0] == "skills" and (
+            len(parts) < 3 or parts[1] not in expected_skills
+        ):
+            errors.append(
+                f"line {number}: {label} skill resource must name a child file "
+                f"under an expected skill: {path}"
+            )
+        elif parts[0] != "skills" and len(parts) < 2:
+            errors.append(
+                f"line {number}: {label} resource must name a child file: {path}"
+            )
+        elif path.endswith("/SKILL.md"):
+            errors.append(
+                f"line {number}: SKILL.md belongs to codex-skills.manifest: {path}"
+            )
+
+    target = source.joinpath(*source_path.split("/"))
+    try:
+        resolved = target.resolve(strict=True)
+    except FileNotFoundError:
+        errors.append(f"line {number}: source resource is missing: {source_path}")
+    else:
+        if os.path.commonpath((str(source), str(resolved))) != str(source):
+            errors.append(
+                f"line {number}: source resource escapes source bundle: {source_path}"
+            )
+        elif not resolved.is_file():
+            errors.append(
+                f"line {number}: source resource is not a file: {source_path}"
+            )
+    mappings.append((source_path, publish_path))
+
+source_paths = [item[0] for item in mappings]
+publish_paths = [item[1] for item in mappings]
+if publish_paths != sorted(publish_paths):
+    errors.append("resource publish paths are not bytewise sorted")
+if len(source_paths) != len(set(source_paths)):
+    errors.append("resource source paths contain duplicates")
+if len(publish_paths) != len(set(publish_paths)):
+    errors.append("resource publish paths contain duplicates")
 if errors:
     sys.stderr.write("FATAL: invalid bundle resource manifest: " + "; ".join(errors) + "\n")
     raise SystemExit(3)
-print(*paths, sep="\n")
+Path(sys.argv[3]).write_text("".join(f"{path}\n" for path in sorted(source_paths)))
+Path(sys.argv[4]).write_text("".join(f"{path}\n" for path in publish_paths))
+print(*(f"{source_path}\t{publish_path}" for source_path, publish_path in mappings), sep="\n")
 PY
 
 {
   find "$SOURCE_DIR" -type f ! -name SKILL.md -print
   [ ! -d "$SOURCE_BUNDLE/references" ] || find "$SOURCE_BUNDLE/references" -type f -print
-  [ ! -d "$SOURCE_BUNDLE/bin" ] || find "$SOURCE_BUNDLE/bin" -type f -print
+  [ ! -d "$SOURCE_BUNDLE/runtime" ] || find "$SOURCE_BUNDLE/runtime" -type f -print
 } | sed "s#^$SOURCE_BUNDLE/##" | LC_ALL=C sort > "$ACTUAL_RESOURCES"
 
-if ! cmp -s "$RESOURCE_PATHS" "$ACTUAL_RESOURCES"; then
+if ! cmp -s "$RESOURCE_SOURCES" "$ACTUAL_RESOURCES"; then
   echo "FATAL: $RESOURCE_MANIFEST does not exactly match publishable non-SKILL source files:" >&2
-  diff -u "$RESOURCE_PATHS" "$ACTUAL_RESOURCES" >&2 || true
+  diff -u "$RESOURCE_SOURCES" "$ACTUAL_RESOURCES" >&2 || true
   exit 3
 fi
 
@@ -292,26 +412,107 @@ PY
 # 只刪「帶 generated marker」的目錄 —— 那些才是本腳本擁有的產物。目的地若還有
 # 別人手寫的 skill，本腳本無權處置：既不刪、也不假裝沒看到，直接失敗。
 # 全刪 = 壟斷整個 .codex/skills/；靜默略過 = 之後 parity 比對莫名其妙紅。
+validate_skill_output_state() {
+  # validate_skill_output_state <skills-output-root>
+  # Expected skill children are generator write targets even in legacy
+  # skill-only mode. Validate the full set before orphan cleanup or writing so
+  # one malicious symlink cannot redirect a later SKILL.md write outside root.
+  local mirror_dir="$1" output
+  if ! output="$(python3 - "$mirror_dir" "$EXPECTED_SKILLS_FILE" 2>&1 <<'PY'
+from pathlib import Path
+import os
+import sys
+
+root = Path(sys.argv[1]).resolve(strict=False)
+skills = Path(sys.argv[2]).read_text(encoding="utf-8").splitlines()
+errors = []
+for skill in skills:
+    target = root / skill
+    document = target / "SKILL.md"
+    if target.is_symlink():
+        errors.append(f"expected skill directory is a symlink: {skill}")
+        continue
+    if target.exists() and not target.is_dir():
+        errors.append(f"expected skill target is not a directory: {skill}")
+        continue
+    if document.is_symlink():
+        errors.append(f"expected SKILL.md is a symlink: {skill}/SKILL.md")
+    for label, path in (("skill directory", target), ("SKILL.md parent", document.parent)):
+        resolved = path.resolve(strict=False)
+        if os.path.commonpath((str(root), str(resolved))) != str(root):
+            errors.append(f"{label} escapes output root: {skill}")
+if errors:
+    sys.stderr.write("; ".join(errors))
+    raise SystemExit(1)
+PY
+)"; then
+    echo "FATAL: unsafe skill-only output state: $output" >&2
+    return 3
+  fi
+}
+
 generate_skill_only() {
-  local MIRROR_DIR="$1"
+  local MIRROR_DIR="$1" out_tmp orphan_list orphan_error d name
+
+validate_skill_output_state "$MIRROR_DIR"
 
 if [ -d "$MIRROR_DIR" ]; then
-  while IFS= read -r d; do
-    name="$(basename "$d")"
-    expected=0
-    for skill in "${EXPECTED[@]}"; do [ "$skill" = "$name" ] && expected=1 && break; done
-    [ "$expected" -eq 1 ] && continue
+  orphan_list="$(mktemp "$WORK_ROOT/orphan-list.XXXXXX")"
+  orphan_error="$(mktemp "$WORK_ROOT/orphan-error.XXXXXX")"
+  if ! python3 - "$MIRROR_DIR" "$EXPECTED_SKILLS_FILE" "$GENERATED_MARKER" \
+      > "$orphan_list" 2> "$orphan_error" <<'PY'
+from pathlib import Path
+import os
+import sys
 
-    if [ -f "$d/SKILL.md" ] && grep -qF "$GENERATED_MARKER" "$d/SKILL.md"; then
-      echo "→ removing orphan mirror: $name"
-      rm -rf -- "$d"
-    else
-      echo "FATAL: '$MIRROR_DIR/$name' is not in the manifest and was not generated by" >&2
-      echo "       this script (no generated marker). Refusing to delete someone else's" >&2
-      echo "       skill. Move it aside, or add it to $MANIFEST." >&2
-      exit 3
-    fi
-  done < <(find "$MIRROR_DIR" -mindepth 1 -maxdepth 1 -type d | sort)
+root = Path(sys.argv[1]).resolve(strict=True)
+expected = set(Path(sys.argv[2]).read_text(encoding="utf-8").splitlines())
+marker = sys.argv[3]
+errors = []
+orphans = []
+
+with os.scandir(root) as entries:
+    for entry in entries:
+        if entry.name in expected or not entry.is_dir(follow_symlinks=False):
+            continue
+        if "\n" in entry.name or "\r" in entry.name:
+            errors.append(f"orphan skill name contains a line break: {entry.name!r}")
+            continue
+        target = Path(entry.path)
+        if target.parent.resolve(strict=True) != root:
+            errors.append(f"orphan skill is not a direct child: {entry.name!r}")
+            continue
+        document = target / "SKILL.md"
+        if document.is_symlink() or not document.is_file():
+            errors.append(f"orphan skill has no regular generated marker file: {entry.name!r}")
+            continue
+        try:
+            with document.open("r", encoding="utf-8", errors="replace") as handle:
+                prefix = handle.read(4096)
+        except OSError as exc:
+            errors.append(f"orphan skill marker is unreadable: {entry.name!r}: {exc}")
+            continue
+        if marker not in prefix:
+            errors.append(f"orphan skill has no generated marker: {entry.name!r}")
+            continue
+        orphans.append(os.fsencode(entry.path))
+
+if errors:
+    sys.stderr.write("; ".join(errors))
+    raise SystemExit(1)
+for path in sorted(orphans):
+    sys.stdout.buffer.write(path + b"\0")
+PY
+  then
+    echo "FATAL: unsafe orphan skill state: $(cat "$orphan_error")" >&2
+    return 3
+  fi
+
+  while IFS= read -r -d '' d; do
+    name="$(basename "$d")"
+    echo "→ removing orphan mirror: $name"
+    rm -rf -- "$d"
+  done < "$orphan_list"
 fi
 
 # ── 生成 ─────────────────────────────────────────────────────────
@@ -320,8 +521,12 @@ for skill in "${EXPECTED[@]}"; do
   src="$SOURCE_DIR/$skill/SKILL.md"
   out_dir="$MIRROR_DIR/$skill"
   mkdir -p -- "$out_dir"
+  out_tmp="$(mktemp "$out_dir/.SKILL.md.tmp.XXXXXX")" || {
+    echo "FATAL: could not create atomic SKILL.md staging file in $out_dir" >&2
+    return 3
+  }
 
-  SKILL_NAME="$skill" python3 - "$src" "$out_dir/SKILL.md" <<'PY'
+  if ! SKILL_NAME="$skill" python3 - "$src" "$out_tmp" <<'PY'
 import os, re, sys
 
 src_path, out_path = sys.argv[1], sys.argv[2]
@@ -383,31 +588,43 @@ Codex 載入本 skill 時會提供 active `SKILL.md` 的絕對路徑。先以該
 BUNDLE_ROOT="$(cd "$SKILL_DIR/../.." && pwd -P)"
 CODEX_CALL="$BUNDLE_ROOT/bin/codex-pro-call"
 CODEX_RUNTIME_SOURCE="bundled"
+CODEX_RUNTIME_ERROR=""
+CODEX_RUNTIME_DETAIL=""
 
-if [ -x "$CODEX_CALL" ]; then
-  if ! CODEX_RUNTIME_CHECK=$("$CODEX_CALL" --check 2>&1); then
+if [ -f "$CODEX_CALL" ] && [ -x "$CODEX_CALL" ]; then
+  CODEX_RUNTIME_STATUS=0
+  CODEX_RUNTIME_CHECK=$("$CODEX_CALL" --check 2>&1) || CODEX_RUNTIME_STATUS=$?
+  if [ "$CODEX_RUNTIME_STATUS" -ne 0 ]; then
+    CODEX_RUNTIME_DETAIL="$CODEX_RUNTIME_CHECK"
     case "$CODEX_RUNTIME_CHECK" in
       error=unsupported_platform*|error=swift_missing*)
-        printf 'codex-pro runtime unavailable: %s\n' "$CODEX_RUNTIME_CHECK" >&2
+        CODEX_RUNTIME_ERROR="runtime_unavailable"
+        ;;
+      error=runtime_missing*|error=runtime_not_executable*|error=hash_mismatch*)
+        CODEX_RUNTIME_ERROR="package_corruption"
         ;;
       *)
-        printf 'error=package_corruption detail=%s remediation=reinstall_codex_pro\n' \
-          "$CODEX_RUNTIME_CHECK" >&2
+        CODEX_RUNTIME_ERROR="runtime_unavailable"
         ;;
     esac
-    exit 1
   fi
 elif [ -e "$BUNDLE_ROOT/.codex-plugin/plugin.json" ] \
-    || [ -e "$BUNDLE_ROOT/.codex-bundle-files" ]; then
-  printf 'error=package_corruption wrapper=%s remediation=reinstall_codex_pro\n' "$CODEX_CALL" >&2
-  exit 1
+    || [ -L "$BUNDLE_ROOT/.codex-plugin/plugin.json" ] \
+    || [ -e "$BUNDLE_ROOT/.codex-bundle-files" ] \
+    || [ -L "$BUNDLE_ROOT/.codex-bundle-files" ]; then
+  CODEX_RUNTIME_ERROR="package_corruption"
+  CODEX_RUNTIME_DETAIL="wrapper_missing_or_not_executable path=$CODEX_CALL"
 elif legacy_codex_call=$(command -v codex-call 2>/dev/null); then
   CODEX_CALL="$legacy_codex_call"
   CODEX_RUNTIME_SOURCE="legacy PATH fallback"
   printf 'warning=legacy_path_fallback runtime=%s\n' "$CODEX_CALL" >&2
 else
-  printf 'error=runtime_unavailable remediation=run_codex_setup\n' >&2
-  exit 1
+  CODEX_RUNTIME_ERROR="runtime_unavailable"
+  CODEX_RUNTIME_DETAIL="no_bundled_or_legacy_runtime remediation=run_codex_setup"
+fi
+
+if [ -n "$CODEX_RUNTIME_ERROR" ]; then
+  printf 'error=%s detail=%s\n' "$CODEX_RUNTIME_ERROR" "$CODEX_RUNTIME_DETAIL" >&2
 fi
 ```
 
@@ -416,15 +633,54 @@ OAuth 或連網前停止；`$codex-status`、`$codex-result`、`$codex-config` �
 `$codex-cancel` 仍可使用。含 native manifest 或 ownership inventory 的 bundle
 若缺 wrapper，必須回報 `error=package_corruption`，不得改走 PATH。
 
+若 `CODEX_RUNTIME_ERROR` 非空，不得執行 `$CODEX_CALL`、讀取 OAuth 或存取網路；
+直接進入 Step 5，照該 skill 的既有 result schema 寫入結構化 failure result。
+`package_corruption` 與 `runtime_unavailable` 都不 retry。
+
 ### Step 4.3: codex-call invocation"""
 
     sub_exact(r"### Step 4\.2: codex-call invocation", PRODUCER_RUNTIME_SECTION, 1,
               "producer invocation heading")
     old_invocation = "codex-call \\\n"
-    new_invocation = '"$CODEX_CALL" \\\n'
+    new_invocation = 'if [ -z "$CODEX_RUNTIME_ERROR" ]; then\n  "$CODEX_CALL" \\\n'
     if text.count(old_invocation) != 1:
         fatal("producer command: expected exactly one bare codex-call invocation")
     text = text.replace(old_invocation, new_invocation)
+    invocation_start = text.index(new_invocation)
+    invocation_end = text.find("\n```", invocation_start)
+    if invocation_end < 0:
+        fatal("producer command: closing code fence not found")
+    text = text[:invocation_end] + "\nfi" + text[invocation_end:]
+
+    if skill == "codex-rescue":
+        runtime_failure_rows = """| native preflight：套件缺檔、不可執行或 hash mismatch | `package_corruption` | unclear | 「codex-pro 套件損壞。重新安裝 plugin。**不會自動 retry**。」 |
+| native preflight：unsupported platform、缺 Swift 或 runtime unavailable | `runtime_unavailable` | unclear | 「Producer runtime 不可用。跑 $codex-setup 查看 remediation；consumer skills 仍可使用。**不會自動 retry**。」 |"""
+    elif skill == "codex-adversarial-review":
+        runtime_failure_rows = """| native preflight：套件缺檔、不可執行或 hash mismatch | `package_corruption` | 「codex-pro 套件損壞。重新安裝 plugin。**不會自動 retry**。」 |
+| native preflight：unsupported platform、缺 Swift 或 runtime unavailable | `runtime_unavailable` | 「Producer runtime 不可用。跑 $codex-setup 查看 remediation；consumer skills 仍可使用。**不會自動 retry**。」 |"""
+    else:
+        runtime_failure_rows = """| native preflight：套件缺檔、不可執行或 hash mismatch | `package_corruption` | 「codex-pro 套件損壞。重新安裝 plugin。**不會自動 retry**。」 |
+| native preflight：unsupported platform、缺 Swift 或 runtime unavailable | `runtime_unavailable` | 「Producer runtime 不可用。跑 $codex-setup 查看 remediation；consumer skills 仍可使用。**不會自動 retry**。」 |"""
+
+    runtime_failure_contract = """
+
+native preflight failure 的 result body 必須另寫一行
+`Runtime preflight detail: <sanitized detail>`，其值來自 `$CODEX_RUNTIME_DETAIL`。
+寫入前把 CR／LF／TAB 改為空白、移除其他 control characters，並截到 500 個字元；
+不得把未清理或未截斷的 detail 放進 YAML frontmatter。
+"""
+    sub_exact(r"(?=\n\n\*\*所有 failure 仍寫 result file\*\*)",
+              "\n" + runtime_failure_rows + runtime_failure_contract, 1,
+              "producer native preflight failure rows")
+    text, error_enum_count = re.subn(
+        r"error: <([^>\n]+)>",
+        lambda match: (
+            f"error: <{match.group(1)} | runtime_unavailable | package_corruption>"
+        ),
+        text,
+    )
+    if error_enum_count != 1:
+        fatal("producer result error enum: expected exactly one frontmatter example")
 
 # codex-setup 需要完整替換 Claude Code 的 PATH／manifest 檢查與報表，來源檔則
 # 完全維持原契約。生成版的 wrapper --check 只做平台、Swift、mode 與 hash 驗證，
@@ -439,7 +695,7 @@ Codex 載入本 skill 時會提供 active `SKILL.md` 的絕對路徑。先以該
 BUNDLE_ROOT="$(cd "$SKILL_DIR/../.." && pwd -P)"
 wrapper="$BUNDLE_ROOT/bin/codex-pro-call"
 
-if [ -x "$wrapper" ]; then
+if [ -f "$wrapper" ] && [ -x "$wrapper" ]; then
   wrapper_status=0
   wrapper_output=$("$wrapper" --check 2>&1) || wrapper_status=$?
   if [ "$wrapper_status" -eq 0 ]; then
@@ -455,7 +711,9 @@ if [ -x "$wrapper" ]; then
     esac
   fi
 elif [ -e "$BUNDLE_ROOT/.codex-plugin/plugin.json" ] \
-    || [ -e "$BUNDLE_ROOT/.codex-bundle-files" ]; then
+    || [ -L "$BUNDLE_ROOT/.codex-plugin/plugin.json" ] \
+    || [ -e "$BUNDLE_ROOT/.codex-bundle-files" ] \
+    || [ -L "$BUNDLE_ROOT/.codex-bundle-files" ]; then
   echo "package corruption path=$wrapper error=wrapper_missing_or_not_executable"
 elif legacy_codex_call=$(command -v codex-call 2>/dev/null); then
   echo "legacy PATH fallback path=$legacy_codex_call"
@@ -545,6 +803,12 @@ text = "---\n" + m.group(1) + "---\n" + marker + text[m.end():]
 
 open(out_path, "w", encoding="utf-8").write(text)
 PY
+  then
+    rm -f -- "$out_tmp"
+    return 3
+  fi
+  chmod 0644 "$out_tmp"
+  mv -f -- "$out_tmp" "$out_dir/SKILL.md"
 
   generated=$((generated + 1))
 done
@@ -567,6 +831,7 @@ validate_bundle_state() {
   for skill in "${EXPECTED[@]}"; do
     if [ -e "$bundle/skills/$skill" ] || [ -L "$bundle/skills/$skill" ]; then
       if [ -L "$bundle/skills/$skill" ] || [ ! -d "$bundle/skills/$skill" ] || \
+         [ -L "$bundle/skills/$skill/SKILL.md" ] || \
          [ ! -f "$bundle/skills/$skill/SKILL.md" ] || \
          ! grep -qF "$GENERATED_MARKER" "$bundle/skills/$skill/SKILL.md"; then
         echo "FATAL: refusing to replace non-generated skill directory: $bundle/skills/$skill" >&2
@@ -649,24 +914,79 @@ PY
 }
 
 stage_complete_bundle() {
-  local stage="$1" resource
+  local stage="$1" source_resource publish_resource
   mkdir -p -- "$stage/skills" "$stage/references" "$stage/bin"
   generate_skill_only "$stage/skills" >/dev/null
 
-  while IFS= read -r resource; do
-    [ -n "$resource" ] || continue
-    mkdir -p -- "$(dirname "$stage/$resource")"
-    cp -p -- "$SOURCE_BUNDLE/$resource" "$stage/$resource"
-  done < "$RESOURCE_PATHS"
+  while IFS=$'\t' read -r source_resource publish_resource; do
+    [ -n "$source_resource" ] && [ -n "$publish_resource" ] || continue
+    mkdir -p -- "$(dirname "$stage/$publish_resource")"
+    cp -p -- "$SOURCE_BUNDLE/$source_resource" "$stage/$publish_resource"
+  done < "$RESOURCE_MAPPINGS"
+  validate_staged_bundle "$stage"
   cp -- "$EXPECTED_INVENTORY" "$stage/$INVENTORY_NAME"
 }
 
-apply_complete_bundle() {
-  local bundle="$1" index="$2" stage prior resource old target skill inventory_tmp
+validate_staged_bundle() {
+  # The ownership inventory is a claim about regular files, not merely a list
+  # supplied by the same manifest that drove staging. Enumerate the staged tree
+  # independently so a malformed publish path cannot turn a directory into an
+  # inventory entry or smuggle an undeclared descendant into the bundle.
+  local stage="$1" output
+  if ! output="$(python3 - "$stage" "$EXPECTED_INVENTORY" 2>&1 <<'PY'
+from pathlib import Path
+import sys
+
+stage = Path(sys.argv[1])
+expected = set(Path(sys.argv[2]).read_text(encoding="utf-8").splitlines())
+actual = set()
+errors = []
+
+for root_name in ("skills", "references", "bin"):
+    root = stage / root_name
+    for path in root.rglob("*"):
+        relative = path.relative_to(stage).as_posix()
+        if path.is_symlink():
+            errors.append(f"staged generated path is a symlink: {relative}")
+        elif path.is_file():
+            actual.add(relative)
+        elif not path.is_dir():
+            errors.append(f"staged generated path is not a regular file: {relative}")
+
+missing = sorted(expected - actual)
+extra = sorted(actual - expected)
+if missing:
+    errors.append("missing staged generated files: " + ", ".join(missing))
+if extra:
+    errors.append("unexpected staged generated files: " + ", ".join(extra))
+
+for value in sorted(expected):
+    target = stage.joinpath(*value.split("/"))
+    if target.exists() and (target.is_symlink() or not target.is_file()):
+        errors.append(f"staged inventory path is not a regular file: {value}")
+
+if errors:
+    sys.stderr.write("; ".join(errors))
+    raise SystemExit(1)
+PY
+)"; then
+    echo "FATAL: staged bundle does not exactly match ownership inventory: $output" >&2
+    return 3
+  fi
+}
+
+prepare_complete_bundle() {
+  local bundle="$1" index="$2" stage prior
   stage="$WORK_ROOT/stage-$index"
   prior="$WORK_ROOT/prior-$index"
   stage_complete_bundle "$stage"
   validate_bundle_state "$bundle" "$prior"
+}
+
+apply_prepared_bundle() {
+  local bundle="$1" index="$2" stage prior resource old target skill inventory_tmp
+  stage="$WORK_ROOT/stage-$index"
+  prior="$WORK_ROOT/prior-$index"
 
   # 從這裡才開始 mutation。每一個刪除目標都來自「舊 inventory - 新
   # inventory」，或是已以 generated marker 驗證的 expected skill。
@@ -714,19 +1034,21 @@ apply_complete_bundle() {
 case "$MODE" in
   output)
     OUTPUT_DIR="$(validate_destination "$DESTINATION" output)"
+    validate_skill_output_state "$OUTPUT_DIR"
     mkdir -p -- "$OUTPUT_DIR"
     generate_skill_only "$OUTPUT_DIR"
     ;;
   bundle)
     BUNDLE_DIR="$(validate_destination "$DESTINATION" bundle)"
-    mkdir -p -- "$BUNDLE_DIR"
-    apply_complete_bundle "$BUNDLE_DIR" 1
+    prepare_complete_bundle "$BUNDLE_DIR" 1
+    apply_prepared_bundle "$BUNDLE_DIR" 1
     ;;
   default)
     CODEX_BUNDLE_DIR="$(validate_destination "$DEFAULT_CODEX_BUNDLE" bundle)"
     ROOT_BUNDLE_DIR="$(validate_destination "$REPO_ROOT" bundle)"
-    mkdir -p -- "$CODEX_BUNDLE_DIR"
-    apply_complete_bundle "$CODEX_BUNDLE_DIR" 1
-    apply_complete_bundle "$ROOT_BUNDLE_DIR" 2
+    prepare_complete_bundle "$CODEX_BUNDLE_DIR" 1
+    prepare_complete_bundle "$ROOT_BUNDLE_DIR" 2
+    apply_prepared_bundle "$CODEX_BUNDLE_DIR" 1
+    apply_prepared_bundle "$ROOT_BUNDLE_DIR" 2
     ;;
 esac

@@ -14,6 +14,55 @@ set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
+# Test-only dispatcher seam. Production runs leave both variables unset and
+# continue to execute the canonical layer list from this directory. Regression
+# tests may provide an isolated fixture directory + a space-delimited list so
+# they can exercise aggregation without recursively launching the full suite.
+FIXTURE_LAYER_DIR="${CODEX_PRO_RUN_FIXTURE_DIR:-}"
+FIXTURE_LAYER_LIST="${CODEX_PRO_RUN_FIXTURE_LAYERS:-}"
+if [ -n "$FIXTURE_LAYER_DIR" ] || [ -n "$FIXTURE_LAYER_LIST" ]; then
+  if [ -z "$FIXTURE_LAYER_DIR" ] || [ -z "$FIXTURE_LAYER_LIST" ]; then
+    echo "FATAL: CODEX_PRO_RUN_FIXTURE_DIR and CODEX_PRO_RUN_FIXTURE_LAYERS must be set together" >&2
+    exit 2
+  fi
+  if ! FIXTURE_LAYER_DIR="$(cd "$FIXTURE_LAYER_DIR" 2>/dev/null && pwd -P)" \
+      || [ -z "$FIXTURE_LAYER_DIR" ] || [ "$FIXTURE_LAYER_DIR" = "/" ]; then
+    echo "FATAL: fixture layer directory must resolve to a non-root directory" >&2
+    exit 2
+  fi
+  read -r -a RUN_LAYERS <<< "$FIXTURE_LAYER_LIST"
+  if [ "${#RUN_LAYERS[@]}" -eq 0 ]; then
+    echo "FATAL: CODEX_PRO_RUN_FIXTURE_LAYERS must name at least one fixture layer" >&2
+    exit 2
+  fi
+  for fixture_layer in "${RUN_LAYERS[@]}"; do
+    case "$fixture_layer" in
+      ''|*[!A-Za-z0-9_-]*)
+        echo "FATAL: unsafe fixture layer name: $fixture_layer" >&2
+        exit 2 ;;
+    esac
+  done
+  LAYER_DIR="$FIXTURE_LAYER_DIR"
+else
+  LAYER_DIR="$SCRIPT_DIR"
+  RUN_LAYERS=(
+    static
+    run-dispatcher
+    codex-plugin
+    codex-skills-parity
+    codex-runtime
+    setup
+    batch
+    review
+    rescue
+    adversarial-review
+    status
+    result
+    cancel
+    config
+  )
+fi
+
 # ── Prerequisites ─────────────────────────────────────────────────
 if ! command -v python3 >/dev/null 2>&1; then
   echo "FATAL: python3 not on PATH (install Xcode Command Line Tools)" >&2
@@ -36,7 +85,7 @@ declare -a FAILED_LAYERS=()
 
 run_layer() {
   local layer="$1"
-  local layer_path="$SCRIPT_DIR/${layer}.sh"
+  local layer_path="$LAYER_DIR/${layer}.sh"
   if [ ! -r "$layer_path" ]; then
     printf '%bFATAL%b: layer script not found: %s\n' "$C_BAD" "$C_RESET" "$layer_path" >&2
     LAYERS_FAIL+=1
@@ -44,9 +93,8 @@ run_layer() {
     return
   fi
   printf '\n%b════ Layer: %s%b\n' "$C_HEAD" "$layer" "$C_RESET"
-  local out
-  out=$(bash "$layer_path" 2>&1) || true
-  local exit_code=$?
+  local out exit_code=0
+  out=$(bash "$layer_path" 2>&1) || exit_code=$?
   printf '%s\n' "$out"
   # Parse "summary: N pass / N fail / N total" (strip ANSI colour codes first)
   local summary_line
@@ -57,11 +105,15 @@ run_layer() {
     f=$(printf '%s\n' "$summary_line" | sed -E 's/.*pass \/ ([0-9]+) fail.*/\1/')
     TOTAL_PASS=$((TOTAL_PASS + p))
     TOTAL_FAIL=$((TOTAL_FAIL + f))
-    if [ "$f" -eq 0 ]; then
+    if [ "$f" -eq 0 ] && [ "$exit_code" -eq 0 ]; then
       LAYERS_PASS+=1
     else
       LAYERS_FAIL+=1
-      FAILED_LAYERS+=("$layer")
+      if [ "$exit_code" -ne 0 ]; then
+        FAILED_LAYERS+=("$layer (exit=$exit_code)")
+      else
+        FAILED_LAYERS+=("$layer")
+      fi
     fi
   else
     # No summary parsed — fall back to exit code (defensive)
@@ -75,19 +127,9 @@ run_layer() {
 }
 
 # ── Execute layers ────────────────────────────────────────────────
-run_layer static
-run_layer codex-plugin
-run_layer codex-skills-parity
-run_layer codex-runtime
-run_layer setup
-run_layer batch
-run_layer review
-run_layer rescue
-run_layer adversarial-review
-run_layer status
-run_layer result
-run_layer cancel
-run_layer config
+for layer in "${RUN_LAYERS[@]}"; do
+  run_layer "$layer"
+done
 
 # ── Aggregate summary ─────────────────────────────────────────────
 printf '\n%b════ run.sh aggregate summary%b\n' "$C_HEAD" "$C_RESET"

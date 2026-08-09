@@ -1,8 +1,9 @@
 # Complete Codex bundle resources other than generated SKILL.md files.
-# Paths are relative to plugins/codex-pro/ and must remain sorted.
+# Format: <source-path> [publish-path]. A missing publish path means the source
+# path is preserved. Publish paths must remain bytewise sorted.
 
-bin/codex-call
-bin/codex-pro-call
+runtime/codex-call bin/codex-call
+runtime/codex-pro-call bin/codex-pro-call
 references/codex-call-provenance.json
 references/defaults.json
 references/profile-contract.md

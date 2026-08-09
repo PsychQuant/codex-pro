@@ -100,9 +100,11 @@ done < <(find "$SOURCE_DIR" -mindepth 1 -maxdepth 1 -type d | sort)
 
 # ── 非 SKILL.md 資源集合：外部固定點 ⇄ 來源樹 ────────────────────────
 # generator 與 test 若都從相同目錄枚舉，兩邊一起漏檔還是會全綠。
-# resource manifest 因此必須是一行一個 bundle-relative 路徑，並與三個
-# 可發布來源區（skill-local resources、shared references、bin）雙向相等。
+# resource manifest 因此必須明列 source 與 publish path，並與三個可發布來源區
+#（skill-local resources、shared references、runtime）雙向相等。
 EXPECTED_SKILLS_FILE="$TEST_TMP_ROOT/expected-skills"
+DECLARED_RESOURCE_MAPPINGS_FILE="$TEST_TMP_ROOT/declared-resource-mappings"
+DECLARED_RESOURCE_SOURCES_FILE="$TEST_TMP_ROOT/declared-resource-sources"
 DECLARED_RESOURCES_FILE="$TEST_TMP_ROOT/declared-resources"
 ACTUAL_SOURCE_RESOURCES_FILE="$TEST_TMP_ROOT/actual-source-resources"
 EXPECTED_INVENTORY_FILE="$TEST_TMP_ROOT/expected-inventory"
@@ -110,43 +112,79 @@ RESOURCE_MANIFEST_ERROR="$TEST_TMP_ROOT/resource-manifest-error"
 
 printf '%s\n' "${EXPECTED[@]}" | LC_ALL=C sort > "$EXPECTED_SKILLS_FILE"
 : > "$DECLARED_RESOURCES_FILE"
+: > "$DECLARED_RESOURCE_MAPPINGS_FILE"
+: > "$DECLARED_RESOURCE_SOURCES_FILE"
 
 if [ -r "$RESOURCE_MANIFEST" ]; then
-  if python3 - "$RESOURCE_MANIFEST" > "$DECLARED_RESOURCES_FILE" 2> "$RESOURCE_MANIFEST_ERROR" <<'PY'
+  if python3 - "$RESOURCE_MANIFEST" "$DECLARED_RESOURCE_SOURCES_FILE" \
+      "$DECLARED_RESOURCES_FILE" "$EXPECTED_SKILLS_FILE" \
+      > "$DECLARED_RESOURCE_MAPPINGS_FILE" \
+      2> "$RESOURCE_MANIFEST_ERROR" <<'PY'
+from pathlib import Path
 from pathlib import PurePosixPath
 import sys
 
 manifest = sys.argv[1]
-paths = []
+expected_skills = set(Path(sys.argv[4]).read_text(encoding="utf-8").splitlines())
+mappings = []
 errors = []
 
 for number, raw in enumerate(open(manifest, encoding="utf-8"), 1):
     value = raw.split("#", 1)[0].strip()
     if not value:
         continue
-    path = PurePosixPath(value)
-    parts = value.split("/")
-    if path.is_absolute() or value.startswith("~"):
-        errors.append(f"line {number}: absolute/home-relative path is forbidden: {value}")
-    elif any(part in ("", ".", "..") for part in parts):
-        errors.append(f"line {number}: path is not normalized: {value}")
-    elif parts[0] not in ("skills", "references", "bin"):
-        errors.append(f"line {number}: resource must live under skills/, references/, or bin/: {value}")
-    elif value.endswith("/SKILL.md"):
-        errors.append(f"line {number}: SKILL.md belongs to the skill manifest, not the resource manifest: {value}")
-    paths.append(value)
+    fields = value.split()
+    if len(fields) == 1:
+        source = publish = fields[0]
+    elif len(fields) == 2:
+        source, publish = fields
+    else:
+        errors.append(f"line {number}: expected '<source-path> [publish-path]': {value}")
+        continue
+    for label, path, roots in (
+        ("source", source, ("skills", "references", "runtime")),
+        ("publish", publish, ("skills", "references", "bin")),
+    ):
+        pure = PurePosixPath(path)
+        parts = path.split("/")
+        if pure.is_absolute() or path.startswith("~"):
+            errors.append(f"line {number}: absolute/home-relative {label} path is forbidden: {path}")
+        elif any(part in ("", ".", "..") for part in parts):
+            errors.append(f"line {number}: {label} path is not normalized: {path}")
+        elif parts[0] not in roots:
+            errors.append(f"line {number}: invalid {label} resource root: {path}")
+        elif parts[0] == "skills" and (
+            len(parts) < 3 or parts[1] not in expected_skills
+        ):
+            errors.append(
+                f"line {number}: {label} skill resource must name a child file "
+                f"under an expected skill: {path}"
+            )
+        elif parts[0] != "skills" and len(parts) < 2:
+            errors.append(
+                f"line {number}: {label} resource must name a child file: {path}"
+            )
+        elif path.endswith("/SKILL.md"):
+            errors.append(f"line {number}: SKILL.md belongs to the skill manifest: {path}")
+    mappings.append((source, publish))
 
-if paths != sorted(paths):
-    errors.append("resource paths are not bytewise sorted")
-if len(paths) != len(set(paths)):
-    errors.append("resource paths contain duplicates")
+sources = [item[0] for item in mappings]
+publishes = [item[1] for item in mappings]
+if publishes != sorted(publishes):
+    errors.append("resource publish paths are not bytewise sorted")
+if len(sources) != len(set(sources)):
+    errors.append("resource source paths contain duplicates")
+if len(publishes) != len(set(publishes)):
+    errors.append("resource publish paths contain duplicates")
 if errors:
     sys.stderr.write("; ".join(errors) + "\n")
     raise SystemExit(1)
-print(*paths, sep="\n")
+Path(sys.argv[2]).write_text("".join(f"{path}\n" for path in sorted(sources)))
+Path(sys.argv[3]).write_text("".join(f"{path}\n" for path in publishes))
+print(*(f"{source}\t{publish}" for source, publish in mappings), sep="\n")
 PY
   then
-    pass "resource manifest paths are normalized, unique, and sorted"
+    pass "resource manifest source/publish mappings are normalized, unique, and sorted"
   else
     fail "resource manifest is invalid: $(tr '\n' ';' < "$RESOURCE_MANIFEST_ERROR")"
     : > "$DECLARED_RESOURCES_FILE"
@@ -156,16 +194,19 @@ fi
 {
   find "$SOURCE_DIR" -type f ! -name SKILL.md -print
   [ ! -d "$SOURCE_BUNDLE/references" ] || find "$SOURCE_BUNDLE/references" -type f -print
-  [ ! -d "$SOURCE_BUNDLE/bin" ] || find "$SOURCE_BUNDLE/bin" -type f -print
+  [ ! -d "$SOURCE_BUNDLE/runtime" ] || find "$SOURCE_BUNDLE/runtime" -type f -print
 } | sed "s#^$SOURCE_BUNDLE/##" | LC_ALL=C sort > "$ACTUAL_SOURCE_RESOURCES_FILE"
 
-assert_eq "$(cat "$ACTUAL_SOURCE_RESOURCES_FILE")" "$(cat "$DECLARED_RESOURCES_FILE")" \
+assert_eq "$(cat "$ACTUAL_SOURCE_RESOURCES_FILE")" "$(cat "$DECLARED_RESOURCE_SOURCES_FILE")" \
   "resource manifest exactly matches all publishable non-SKILL source files"
 
 for resource in "${REQUIRED_RESOURCES[@]}"; do
-  assert_file "$SOURCE_BUNDLE/$resource" "required source resource '$resource' exists"
   if grep -Fqx "$resource" "$DECLARED_RESOURCES_FILE"; then
     pass "resource manifest declares '$resource'"
+    source_resource=$(awk -F '\t' -v publish="$resource" '$2 == publish { print $1; exit }' \
+      "$DECLARED_RESOURCE_MAPPINGS_FILE")
+    assert_file "$SOURCE_BUNDLE/$source_resource" \
+      "required source resource '$source_resource' publishes as '$resource'"
   else
     fail "resource manifest omits required path '$resource'"
   fi
@@ -248,6 +289,48 @@ PY
   fi
 }
 
+validate_owned_skill_files() {
+  # validate_owned_skill_files <bundle-root> <label>
+  local bundle="$1" label="$2" output
+  if output="$(python3 - "$bundle" "$EXPECTED_SKILLS_FILE" \
+      "$EXPECTED_INVENTORY_FILE" 2>&1 <<'PY'
+from pathlib import Path
+import sys
+
+bundle = Path(sys.argv[1])
+skills = Path(sys.argv[2]).read_text(encoding="utf-8").splitlines()
+expected = {
+    path
+    for path in Path(sys.argv[3]).read_text(encoding="utf-8").splitlines()
+    if path.startswith("skills/")
+}
+actual = set()
+for skill in skills:
+    root = bundle / "skills" / skill
+    if not root.is_dir():
+        continue
+    for path in root.rglob("*"):
+        if path.is_file() or path.is_symlink():
+            actual.add(path.relative_to(bundle).as_posix())
+
+missing = sorted(expected - actual)
+extra = sorted(actual - expected)
+errors = []
+if missing:
+    errors.append("missing owned skill files: " + ", ".join(missing))
+if extra:
+    errors.append("extra owned skill files: " + ", ".join(extra))
+if errors:
+    sys.stderr.write("; ".join(errors))
+    raise SystemExit(1)
+PY
+)"; then
+    pass "$label expected skill directories contain exactly the manifest-owned files"
+  else
+    fail "$label expected skill directory recursive parity failed: $output"
+  fi
+}
+
 validate_markdown_links() {
   # validate_markdown_links <bundle-root> <label>
   local bundle="$1" label="$2" output
@@ -294,7 +377,7 @@ PY
 
 assert_bundle_contract() {
   # assert_bundle_contract <bundle-root> <label>
-  local bundle="$1" label="$2" actual_skills resource
+  local bundle="$1" label="$2" actual_skills source_resource publish_resource
 
   assert_directory "$bundle/skills" "$label contains skills/"
   assert_directory "$bundle/references" "$label contains references/"
@@ -308,17 +391,17 @@ assert_bundle_contract() {
   fi
   assert_eq "$(cat "$EXPECTED_SKILLS_FILE")" "$actual_skills" "$label contains exactly the explicit nine skill directories"
 
-  while IFS= read -r resource; do
-    [ -n "$resource" ] || continue
-    assert_file "$bundle/$resource" "$label contains manifest resource '$resource'"
-    if [ -r "$SOURCE_BUNDLE/$resource" ] && [ -r "$bundle/$resource" ]; then
-      if cmp -s "$SOURCE_BUNDLE/$resource" "$bundle/$resource"; then
-        pass "$label resource '$resource' is byte-identical to source"
+  while IFS=$'\t' read -r source_resource publish_resource; do
+    [ -n "$source_resource" ] && [ -n "$publish_resource" ] || continue
+    assert_file "$bundle/$publish_resource" "$label contains manifest resource '$publish_resource'"
+    if [ -r "$SOURCE_BUNDLE/$source_resource" ] && [ -r "$bundle/$publish_resource" ]; then
+      if cmp -s "$SOURCE_BUNDLE/$source_resource" "$bundle/$publish_resource"; then
+        pass "$label resource '$publish_resource' is byte-identical to source '$source_resource'"
       else
-        fail "$label resource '$resource' differs from its hand-maintained source"
+        fail "$label resource '$publish_resource' differs from its hand-maintained source '$source_resource'"
       fi
     fi
-  done < "$DECLARED_RESOURCES_FILE"
+  done < "$DECLARED_RESOURCE_MAPPINGS_FILE"
 
   # manifest 尚未存在時仍要精確指出已知缺口，不能因 declared set 為空而跳過。
   for resource in "${REQUIRED_RESOURCES[@]}"; do
@@ -326,6 +409,7 @@ assert_bundle_contract() {
   done
 
   validate_inventory "$bundle" "$label"
+  validate_owned_skill_files "$bundle" "$label"
   validate_markdown_links "$bundle" "$label"
 }
 
@@ -615,6 +699,300 @@ if [ -x "$GENERATOR" ]; then
     fail "generator accepted an empty --output value (would silently write to .codex/skills)"
   else
     pass "generator refuses an empty --output value"
+  fi
+
+  # Skill names become child paths. Duplicate or multi-component entries must
+  # fail before the output root receives any generated file.
+  MANIFEST_REPO="$TEST_TMP_ROOT/manifest validation repo"
+  mkdir -p -- "$MANIFEST_REPO/plugins"
+  if cp -R "$REPO_ROOT/scripts" "$MANIFEST_REPO/scripts" \
+      && cp -R "$SOURCE_BUNDLE" "$MANIFEST_REPO/plugins/codex-pro"; then
+    MANIFEST_OUTPUT="$MANIFEST_REPO/output"
+    duplicate_skill="${EXPECTED[0]}"
+    printf '%s\n' "$duplicate_skill" >> "$MANIFEST_REPO/scripts/codex-skills.manifest"
+    MANIFEST_STATUS=0
+    MANIFEST_OUTPUT_TEXT=$("$MANIFEST_REPO/scripts/generate-codex-skills.sh" \
+      --output "$MANIFEST_OUTPUT" 2>&1) || MANIFEST_STATUS=$?
+    if [ "$MANIFEST_STATUS" -ne 0 ]; then
+      pass "generator rejects duplicate expected skill names"
+    else
+      fail "generator accepted a duplicate expected skill name"
+    fi
+    assert_contains "$MANIFEST_OUTPUT_TEXT" "duplicate skill names" \
+      "duplicate skill rejection names the manifest class"
+    assert_eq 0 "$(find "$MANIFEST_OUTPUT" -type f -print 2>/dev/null | wc -l | tr -d '[:space:]')" \
+      "duplicate skill manifest is rejected before generated output"
+
+    cp "$MANIFEST" "$MANIFEST_REPO/scripts/codex-skills.manifest"
+    printf '%s\n' '../escape' >> "$MANIFEST_REPO/scripts/codex-skills.manifest"
+    MANIFEST_STATUS=0
+    MANIFEST_OUTPUT_TEXT=$("$MANIFEST_REPO/scripts/generate-codex-skills.sh" \
+      --output "$MANIFEST_OUTPUT" 2>&1) || MANIFEST_STATUS=$?
+    if [ "$MANIFEST_STATUS" -ne 0 ]; then
+      pass "generator rejects unsafe multi-component skill names"
+    else
+      fail "generator accepted an unsafe multi-component skill name"
+    fi
+    assert_contains "$MANIFEST_OUTPUT_TEXT" "unsafe skill name" \
+      "unsafe skill rejection names the manifest class"
+    assert_eq 0 "$(find "$MANIFEST_OUTPUT" -type f -print 2>/dev/null | wc -l | tr -d '[:space:]')" \
+      "unsafe skill manifest is rejected before generated output"
+
+    cp "$MANIFEST" "$MANIFEST_REPO/scripts/codex-skills.manifest"
+    python3 - "$MANIFEST_REPO/scripts/codex-bundle-resources.manifest" <<'PY'
+from pathlib import Path
+import sys
+
+path = Path(sys.argv[1])
+text = path.read_text(encoding="utf-8")
+source = "skills/codex-batch/references/script-template.sh"
+replacement = source + " skills/codex-review"
+if text.count(source) != 1:
+    raise SystemExit("fixture could not locate the batch resource mapping")
+path.write_text(text.replace(source, replacement), encoding="utf-8")
+PY
+    RESOURCE_SHAPE_OUTPUT="$MANIFEST_REPO/resource shape bundle"
+    RESOURCE_SHAPE_STATUS=0
+    RESOURCE_SHAPE_TEXT=$("$MANIFEST_REPO/scripts/generate-codex-skills.sh" \
+      --bundle-root "$RESOURCE_SHAPE_OUTPUT" 2>&1) || RESOURCE_SHAPE_STATUS=$?
+    if [ "$RESOURCE_SHAPE_STATUS" -ne 0 ]; then
+      pass "generator rejects a resource publish path that names an expected skill directory"
+    else
+      fail "generator accepted a resource publish path that names an expected skill directory"
+    fi
+    assert_contains "$RESOURCE_SHAPE_TEXT" "skill resource must name a child file" \
+      "resource publish shape rejection names the skill-directory class"
+    if [ ! -e "$RESOURCE_SHAPE_OUTPUT/$INVENTORY_NAME" ]; then
+      pass "invalid resource publish shape is rejected before bundle inventory is written"
+    else
+      fail "invalid resource publish shape wrote a bundle ownership inventory"
+    fi
+
+    # SKILL.md is executable instruction content. The hand-maintained source
+    # must be a regular in-bundle file, never a symlink to arbitrary content
+    # outside the package tree.
+    cp "$RESOURCE_MANIFEST" "$MANIFEST_REPO/scripts/codex-bundle-resources.manifest"
+    SOURCE_LINK_SKILL="${EXPECTED[0]}"
+    SOURCE_LINK_EXTERNAL="$MANIFEST_REPO/external source SKILL.md"
+    cp "$SOURCE_DIR/$SOURCE_LINK_SKILL/SKILL.md" "$SOURCE_LINK_EXTERNAL"
+    rm -f "$MANIFEST_REPO/plugins/codex-pro/skills/$SOURCE_LINK_SKILL/SKILL.md"
+    ln -s "$SOURCE_LINK_EXTERNAL" \
+      "$MANIFEST_REPO/plugins/codex-pro/skills/$SOURCE_LINK_SKILL/SKILL.md"
+    SOURCE_LINK_OUTPUT="$MANIFEST_REPO/source symlink output"
+    SOURCE_LINK_STATUS=0
+    SOURCE_LINK_TEXT=$("$MANIFEST_REPO/scripts/generate-codex-skills.sh" \
+      --output "$SOURCE_LINK_OUTPUT" 2>&1) || SOURCE_LINK_STATUS=$?
+    if [ "$SOURCE_LINK_STATUS" -ne 0 ]; then
+      pass "generator rejects a source SKILL.md symlink escape"
+    else
+      fail "generator followed a source SKILL.md symlink escape"
+    fi
+    assert_contains "$SOURCE_LINK_TEXT" "unsafe source skill" \
+      "source SKILL.md symlink rejection names the source class"
+    assert_eq 0 \
+      "$(find "$SOURCE_LINK_OUTPUT" -type f -print 2>/dev/null | wc -l | tr -d '[:space:]')" \
+      "source SKILL.md symlink is rejected before generated output"
+  else
+    fail "could not create isolated source fixture for skill manifest validation"
+  fi
+fi
+
+# ── Verification findings：isolated RED fixtures ──────────────────
+# 這些 fixture 會刻意建立 symlink、額外 owned 檔案與損壞的第二目的地；全部只在
+# TEST_TMP_ROOT 或 repo copy 內執行。recursive-parity fixture 會在隔離 repo 內再跑
+# 本測試一次，因此用環境旗標避免 fixture 自己遞迴建立下一層 fixture。
+if [ "${CODEX_PARITY_ISOLATED_RUN:-0}" != "1" ] && [ -x "$GENERATOR" ]; then
+  SYMLINK_SKILL="${EXPECTED[0]}"
+
+  # --output 的 expected skill child 本身若是 symlink，generator 不得跟隨它把
+  # SKILL.md 寫到 validated output root 外，也不得先生成其他 expected skills。
+  CHILD_LINK_OUTPUT="$TEST_TMP_ROOT/output child symlink"
+  CHILD_LINK_EXTERNAL="$TEST_TMP_ROOT/output child external"
+  mkdir -p -- "$CHILD_LINK_OUTPUT" "$CHILD_LINK_EXTERNAL"
+  printf '%s\n' 'child-link-external-sentinel' > "$CHILD_LINK_EXTERNAL/SKILL.md"
+  ln -s -- "$CHILD_LINK_EXTERNAL" "$CHILD_LINK_OUTPUT/$SYMLINK_SKILL"
+
+  CHILD_LINK_STATUS=0
+  "$GENERATOR" --output "$CHILD_LINK_OUTPUT" >/dev/null 2>&1 || CHILD_LINK_STATUS=$?
+  if [ "$CHILD_LINK_STATUS" -ne 0 ]; then
+    pass "legacy --output rejects an expected skill child symlink"
+  else
+    fail "legacy --output followed an expected skill child symlink (exit 0)"
+  fi
+  if [ "$(cat "$CHILD_LINK_EXTERNAL/SKILL.md" 2>/dev/null)" = \
+       'child-link-external-sentinel' ]; then
+    pass "expected skill child symlink rejection preserves the external target"
+  else
+    fail "legacy --output modified the external target through an expected skill child symlink"
+  fi
+  assert_eq 0 \
+    "$(find "$CHILD_LINK_OUTPUT" -type f -print | wc -l | tr -d '[:space:]')" \
+    "expected skill child symlink is rejected before any in-root generated file"
+
+  # expected directory是正常目錄但 SKILL.md 是 symlink 時也一樣：不得覆寫外部
+  # 檔案，且 validation 必須發生在其他 skill 被寫入之前。
+  SKILL_LINK_OUTPUT="$TEST_TMP_ROOT/output SKILL symlink"
+  SKILL_LINK_EXTERNAL="$TEST_TMP_ROOT/output SKILL external.md"
+  mkdir -p -- "$SKILL_LINK_OUTPUT/$SYMLINK_SKILL"
+  printf '%s\n' 'skill-link-external-sentinel' > "$SKILL_LINK_EXTERNAL"
+  ln -s -- "$SKILL_LINK_EXTERNAL" "$SKILL_LINK_OUTPUT/$SYMLINK_SKILL/SKILL.md"
+
+  SKILL_LINK_STATUS=0
+  "$GENERATOR" --output "$SKILL_LINK_OUTPUT" >/dev/null 2>&1 || SKILL_LINK_STATUS=$?
+  if [ "$SKILL_LINK_STATUS" -ne 0 ]; then
+    pass "legacy --output rejects an expected SKILL.md symlink"
+  else
+    fail "legacy --output followed an expected SKILL.md symlink (exit 0)"
+  fi
+  if [ "$(cat "$SKILL_LINK_EXTERNAL" 2>/dev/null)" = \
+       'skill-link-external-sentinel' ]; then
+    pass "expected SKILL.md symlink rejection preserves the external target"
+  else
+    fail "legacy --output modified the external target through an expected SKILL.md symlink"
+  fi
+  assert_eq 0 \
+    "$(find "$SKILL_LINK_OUTPUT" -type f -print | wc -l | tr -d '[:space:]')" \
+    "expected SKILL.md symlink is rejected before any in-root generated file"
+
+  # Complete-bundle validation must apply the same rule before reading an
+  # ownership marker. An external file containing the marker cannot vouch for
+  # an in-bundle skill directory through a symlink.
+  BUNDLE_SKILL_LINK_ROOT="$TEST_TMP_ROOT/bundle SKILL symlink"
+  BUNDLE_SKILL_LINK_EXTERNAL="$TEST_TMP_ROOT/bundle SKILL external.md"
+  mkdir -p -- "$BUNDLE_SKILL_LINK_ROOT/skills/$SYMLINK_SKILL"
+  printf '%s\n' "$GENERATED_MARKER" > "$BUNDLE_SKILL_LINK_EXTERNAL"
+  ln -s -- "$BUNDLE_SKILL_LINK_EXTERNAL" \
+    "$BUNDLE_SKILL_LINK_ROOT/skills/$SYMLINK_SKILL/SKILL.md"
+
+  BUNDLE_SKILL_LINK_STATUS=0
+  "$GENERATOR" --bundle-root "$BUNDLE_SKILL_LINK_ROOT" \
+    >/dev/null 2>&1 || BUNDLE_SKILL_LINK_STATUS=$?
+  if [ "$BUNDLE_SKILL_LINK_STATUS" -ne 0 ]; then
+    pass "complete bundle rejects an expected SKILL.md ownership symlink"
+  else
+    fail "complete bundle trusted an external generated marker through a SKILL.md symlink"
+  fi
+  assert_eq "$GENERATED_MARKER" \
+    "$(cat "$BUNDLE_SKILL_LINK_EXTERNAL" 2>/dev/null)" \
+    "complete-bundle SKILL.md symlink rejection preserves the external marker"
+
+  # A regular file may still be a hard link to an external inode. Generation
+  # may replace the in-root directory entry, but must never truncate the shared
+  # external inode in place.
+  HARDLINK_OUTPUT="$TEST_TMP_ROOT/output SKILL hardlink"
+  HARDLINK_EXTERNAL="$TEST_TMP_ROOT/output SKILL hardlink external.md"
+  mkdir -p -- "$HARDLINK_OUTPUT/$SYMLINK_SKILL"
+  printf '%s\n' 'hardlink-external-sentinel' > "$HARDLINK_EXTERNAL"
+  ln -- "$HARDLINK_EXTERNAL" "$HARDLINK_OUTPUT/$SYMLINK_SKILL/SKILL.md"
+
+  HARDLINK_STATUS=0
+  "$GENERATOR" --output "$HARDLINK_OUTPUT" >/dev/null 2>&1 || HARDLINK_STATUS=$?
+  assert_eq 0 "$HARDLINK_STATUS" \
+    "legacy --output safely replaces an expected SKILL.md hard link"
+  assert_eq 'hardlink-external-sentinel' \
+    "$(cat "$HARDLINK_EXTERNAL" 2>/dev/null)" \
+    "expected SKILL.md hard link replacement preserves the external inode"
+  if grep -qF "$GENERATED_MARKER" "$HARDLINK_OUTPUT/$SYMLINK_SKILL/SKILL.md"; then
+    pass "hard-linked in-root SKILL.md is replaced with generated content"
+  else
+    fail "hard-linked in-root SKILL.md was not replaced with generated content"
+  fi
+
+  # A newline in a direct-child directory name must never be split into a
+  # second, caller-relative rm target. The external victim deliberately has a
+  # generated marker so the historical line-based parser would delete it.
+  ORPHAN_OUTPUT="$TEST_TMP_ROOT/output newline orphan"
+  ORPHAN_CALLER="$TEST_TMP_ROOT/newline orphan caller"
+  ORPHAN_NAME="${SYMLINK_SKILL}"$'\n''victim'
+  mkdir -p -- "$ORPHAN_OUTPUT/$ORPHAN_NAME" "$ORPHAN_CALLER/victim"
+  printf '%s\n' "$GENERATED_MARKER" > "$ORPHAN_CALLER/victim/SKILL.md"
+  printf '%s\n' 'newline-orphan-external-sentinel' > \
+    "$ORPHAN_CALLER/victim/sentinel.txt"
+
+  ORPHAN_STATUS=0
+  (cd "$ORPHAN_CALLER" && "$GENERATOR" --output "$ORPHAN_OUTPUT" \
+    >/dev/null 2>&1) || ORPHAN_STATUS=$?
+  if [ "$ORPHAN_STATUS" -ne 0 ]; then
+    pass "legacy --output rejects a newline-bearing orphan directory before cleanup"
+  else
+    fail "legacy --output accepted a newline-bearing orphan directory"
+  fi
+  assert_eq 'newline-orphan-external-sentinel' \
+    "$(cat "$ORPHAN_CALLER/victim/sentinel.txt" 2>/dev/null)" \
+    "newline-bearing orphan cannot escape cleanup into the caller directory"
+
+  # 黑箱驗證 recursive parity：在隔離 repo 的 generator-owned expected skill
+  # 目錄塞入 inventory／manifest 都沒列的額外檔案。內層 parity 必須非零且點名
+  # 該路徑；只比 inventory 的舊實作會錯誤回報全綠。
+  RECURSIVE_REPO="$TEST_TMP_ROOT/recursive parity repo"
+  mkdir -p -- "$RECURSIVE_REPO"
+  if cp -R "$REPO_ROOT/." "$RECURSIVE_REPO/"; then
+    EXTRA_OWNED_PATH="skills/$SYMLINK_SKILL/unexpected-owned.txt"
+    printf '%s\n' 'must-be-detected-by-recursive-parity' > \
+      "$RECURSIVE_REPO/$EXTRA_OWNED_PATH"
+
+    RECURSIVE_STATUS=0
+    RECURSIVE_OUTPUT=$(CODEX_PARITY_ISOLATED_RUN=1 \
+      bash "$RECURSIVE_REPO/tests/codex-skills-parity.sh" 2>&1) || RECURSIVE_STATUS=$?
+    if [ "$RECURSIVE_STATUS" -ne 0 ]; then
+      pass "recursive parity rejects an extra file in an expected owned skill directory"
+    else
+      fail "recursive parity ignored an extra file in an expected owned skill directory"
+    fi
+    assert_contains "$RECURSIVE_OUTPUT" "$EXTRA_OWNED_PATH" \
+      "recursive parity names the extra owned skill path"
+  else
+    fail "could not create the isolated repo for recursive parity regression"
+  fi
+
+  # default mode 的兩個 committed destinations 必須先整組驗證。隔離 copy 先讓
+  # source 產生可觀察的新輸出，再破壞第二個（repo-root）inventory；若 generator
+  # 先 apply .codex 才驗 root，第一份 snapshot 就會被改掉。
+  DEFAULT_REPO="$TEST_TMP_ROOT/default validation repo"
+  mkdir -p -- "$DEFAULT_REPO"
+  if cp -R "$REPO_ROOT/." "$DEFAULT_REPO/"; then
+    DEFAULT_MARKER='<!-- isolated default validation source mutation -->'
+    printf '\n%s\n' "$DEFAULT_MARKER" >> \
+      "$DEFAULT_REPO/plugins/codex-pro/skills/$SYMLINK_SKILL/SKILL.md"
+    printf '%s\n' '../fixture-escape' >> "$DEFAULT_REPO/$INVENTORY_NAME"
+
+    DOT_BEFORE="$TEST_TMP_ROOT/default dot-codex before"
+    ROOT_BEFORE="$TEST_TMP_ROOT/default root bundle before"
+    mkdir -p -- "$DOT_BEFORE" "$ROOT_BEFORE"
+    cp -R "$DEFAULT_REPO/.codex/." "$DOT_BEFORE/"
+    cp -R "$DEFAULT_REPO/skills" "$ROOT_BEFORE/skills"
+    cp -R "$DEFAULT_REPO/references" "$ROOT_BEFORE/references"
+    cp -R "$DEFAULT_REPO/bin" "$ROOT_BEFORE/bin"
+    cp "$DEFAULT_REPO/$INVENTORY_NAME" "$ROOT_BEFORE/$INVENTORY_NAME"
+
+    DEFAULT_STATUS=0
+    "$DEFAULT_REPO/scripts/generate-codex-skills.sh" >/dev/null 2>&1 || DEFAULT_STATUS=$?
+    if [ "$DEFAULT_STATUS" -ne 0 ]; then
+      pass "default mode rejects an invalid second bundle destination"
+    else
+      fail "default mode accepted an invalid second bundle destination"
+    fi
+
+    if diff -r "$DOT_BEFORE" "$DEFAULT_REPO/.codex" >/dev/null 2>&1; then
+      pass "invalid second destination leaves the first .codex bundle unchanged"
+    else
+      fail "default mode mutated the first .codex bundle before validating the second destination"
+    fi
+
+    ROOT_UNCHANGED=1
+    for component in skills references bin; do
+      diff -r "$ROOT_BEFORE/$component" "$DEFAULT_REPO/$component" >/dev/null 2>&1 \
+        || ROOT_UNCHANGED=0
+    done
+    cmp -s "$ROOT_BEFORE/$INVENTORY_NAME" "$DEFAULT_REPO/$INVENTORY_NAME" \
+      || ROOT_UNCHANGED=0
+    if [ "$ROOT_UNCHANGED" -eq 1 ]; then
+      pass "invalid second destination leaves the root bundle unchanged"
+    else
+      fail "default mode changed the invalid root bundle during validation"
+    fi
+  else
+    fail "could not create the isolated repo for default destination validation"
   fi
 fi
 

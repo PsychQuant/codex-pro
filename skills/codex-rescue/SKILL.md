@@ -147,31 +147,43 @@ Codex 載入本 skill 時會提供 active `SKILL.md` 的絕對路徑。先以該
 BUNDLE_ROOT="$(cd "$SKILL_DIR/../.." && pwd -P)"
 CODEX_CALL="$BUNDLE_ROOT/bin/codex-pro-call"
 CODEX_RUNTIME_SOURCE="bundled"
+CODEX_RUNTIME_ERROR=""
+CODEX_RUNTIME_DETAIL=""
 
-if [ -x "$CODEX_CALL" ]; then
-  if ! CODEX_RUNTIME_CHECK=$("$CODEX_CALL" --check 2>&1); then
+if [ -f "$CODEX_CALL" ] && [ -x "$CODEX_CALL" ]; then
+  CODEX_RUNTIME_STATUS=0
+  CODEX_RUNTIME_CHECK=$("$CODEX_CALL" --check 2>&1) || CODEX_RUNTIME_STATUS=$?
+  if [ "$CODEX_RUNTIME_STATUS" -ne 0 ]; then
+    CODEX_RUNTIME_DETAIL="$CODEX_RUNTIME_CHECK"
     case "$CODEX_RUNTIME_CHECK" in
       error=unsupported_platform*|error=swift_missing*)
-        printf 'codex-pro runtime unavailable: %s\n' "$CODEX_RUNTIME_CHECK" >&2
+        CODEX_RUNTIME_ERROR="runtime_unavailable"
+        ;;
+      error=runtime_missing*|error=runtime_not_executable*|error=hash_mismatch*)
+        CODEX_RUNTIME_ERROR="package_corruption"
         ;;
       *)
-        printf 'error=package_corruption detail=%s remediation=reinstall_codex_pro\n' \
-          "$CODEX_RUNTIME_CHECK" >&2
+        CODEX_RUNTIME_ERROR="runtime_unavailable"
         ;;
     esac
-    exit 1
   fi
 elif [ -e "$BUNDLE_ROOT/.codex-plugin/plugin.json" ] \
-    || [ -e "$BUNDLE_ROOT/.codex-bundle-files" ]; then
-  printf 'error=package_corruption wrapper=%s remediation=reinstall_codex_pro\n' "$CODEX_CALL" >&2
-  exit 1
+    || [ -L "$BUNDLE_ROOT/.codex-plugin/plugin.json" ] \
+    || [ -e "$BUNDLE_ROOT/.codex-bundle-files" ] \
+    || [ -L "$BUNDLE_ROOT/.codex-bundle-files" ]; then
+  CODEX_RUNTIME_ERROR="package_corruption"
+  CODEX_RUNTIME_DETAIL="wrapper_missing_or_not_executable path=$CODEX_CALL"
 elif legacy_codex_call=$(command -v codex-call 2>/dev/null); then
   CODEX_CALL="$legacy_codex_call"
   CODEX_RUNTIME_SOURCE="legacy PATH fallback"
   printf 'warning=legacy_path_fallback runtime=%s\n' "$CODEX_CALL" >&2
 else
-  printf 'error=runtime_unavailable remediation=run_codex_setup\n' >&2
-  exit 1
+  CODEX_RUNTIME_ERROR="runtime_unavailable"
+  CODEX_RUNTIME_DETAIL="no_bundled_or_legacy_runtime remediation=run_codex_setup"
+fi
+
+if [ -n "$CODEX_RUNTIME_ERROR" ]; then
+  printf 'error=%s detail=%s\n' "$CODEX_RUNTIME_ERROR" "$CODEX_RUNTIME_DETAIL" >&2
 fi
 ```
 
@@ -180,18 +192,24 @@ OAuth 或連網前停止；`$codex-status`、`$codex-result`、`$codex-config` �
 `$codex-cancel` 仍可使用。含 native manifest 或 ownership inventory 的 bundle
 若缺 wrapper，必須回報 `error=package_corruption`，不得改走 PATH。
 
+若 `CODEX_RUNTIME_ERROR` 非空，不得執行 `$CODEX_CALL`、讀取 OAuth 或存取網路；
+直接進入 Step 5，照該 skill 的既有 result schema 寫入結構化 failure result。
+`package_corruption` 與 `runtime_unavailable` 都不 retry。
+
 ### Step 4.3: codex-call invocation
 
 呼叫 `codex-call` 寫結果到 `.codex-pro/rescue-<ISO8601-timestamp>.md`（首次跑 skill 需 `mkdir -p .codex-pro/`）：
 
 ```
-"$CODEX_CALL" \
+if [ -z "$CODEX_RUNTIME_ERROR" ]; then
+  "$CODEX_CALL" \
   --output .codex-pro/rescue-<timestamp>.md \
   --model "$MODEL" \
   --effort "$EFFORT" \
   --max-time "$MAX_TIME" \
   --instructions "<Step 3 system instructions>" \
   --prompt-file <Step 2 prompt 暫存檔>
+fi
 ```
 
 關鍵 flag：
@@ -233,6 +251,14 @@ OAuth 或連網前停止；`$codex-status`、`$codex-result`、`$codex-config` �
 | `auth` / `401` / `unauthorized` | `oauth_invalid` | unclear | 「OAuth token 失效。跑 $codex-setup 確認 ~/.codex/auth.json 狀態並重 login。」 |
 | timeout / >600 秒 | `timeout` | unclear | 「Rescue 超過 10 分鐘 hard timeout。考慮縮小 task scope（用 --context 限縮範圍、加 --criteria 收斂）或拆細 task。」 |
 | outcome `unclear`（Codex 自報） | `task_unclear` | unclear | 「Codex 無法 commit 答案 — task description 可能過模糊或需更多 context。建議補 `--criteria <成功標準>` 或拆 task 為更具體 sub-task。**不會 silent stub**。」 |
+| native preflight：套件缺檔、不可執行或 hash mismatch | `package_corruption` | unclear | 「codex-pro 套件損壞。重新安裝 plugin。**不會自動 retry**。」 |
+| native preflight：unsupported platform、缺 Swift 或 runtime unavailable | `runtime_unavailable` | unclear | 「Producer runtime 不可用。跑 $codex-setup 查看 remediation；consumer skills 仍可使用。**不會自動 retry**。」 |
+
+native preflight failure 的 result body 必須另寫一行
+`Runtime preflight detail: <sanitized detail>`，其值來自 `$CODEX_RUNTIME_DETAIL`。
+寫入前把 CR／LF／TAB 改為空白、移除其他 control characters，並截到 500 個字元；
+不得把未清理或未截斷的 detail 放進 YAML frontmatter。
+
 
 **所有 failure 仍寫 result file**（讓 user 有 trace、frontmatter `error` field 可觀察 fail mode 頻率）、**所有 failure 都不 retry**（fail-fast circuit-breaker 紀律、避免 #306 token-burn 與 #324 silent stub）。
 
@@ -247,7 +273,7 @@ effort: <$EFFORT resolved>        # profile 或 default xhigh
 timestamp: 2026-06-01T10:30:48+08:00
 outcome: <completed | partial | unclear | requires_external>
 profile_source: <default | global | project | mixed>  # v0.2 新增 optional; v0.1.1 file 無此 field 屬 valid
-error: <rate_limit | oauth_invalid | timeout | task_unclear>  # 僅 fail-fast 時出現
+error: <rate_limit | oauth_invalid | timeout | task_unclear | runtime_unavailable | package_corruption>  # 僅 fail-fast 時出現
 ---
 
 # Codex Rescue — <task brief 截斷>

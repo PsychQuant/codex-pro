@@ -37,6 +37,8 @@ expected_version = sys.argv[3]
 native_manifest_path = repo_root / ".codex-plugin" / "plugin.json"
 marketplace_path = repo_root / ".agents" / "plugins" / "marketplace.json"
 skills_manifest_path = repo_root / "scripts" / "codex-skills.manifest"
+resource_manifest_path = repo_root / "scripts" / "codex-bundle-resources.manifest"
+claude_plugin_root = repo_root / "plugins" / expected_name
 semver_re = re.compile(
     r"^(0|[1-9]\d*)\."
     r"(0|[1-9]\d*)\."
@@ -273,6 +275,55 @@ emit(
     f"actual={dict(versions)!r}",
 )
 
+# Claude Code automatically exposes a plugin root's bin/ directory on Bash
+# PATH.  The native-only runtime sources therefore live under runtime/ and
+# are mapped to bin/ only when the Codex bundles are generated.
+for executable in ("codex-call", "codex-pro-call"):
+    auto_path_path = claude_plugin_root / "bin" / executable
+    emit(
+        not auto_path_path.exists() and not auto_path_path.is_symlink(),
+        f"Claude source plugin omits auto-PATH bin/{executable}",
+        f"present={auto_path_path.relative_to(repo_root)}",
+    )
+
+resource_mappings: set[tuple[str, str]] = set()
+mapping_errors: list[str] = []
+try:
+    manifest_lines = resource_manifest_path.read_text(encoding="utf-8").splitlines()
+except OSError as exc:
+    mapping_errors.append(str(exc))
+else:
+    for number, raw in enumerate(manifest_lines, 1):
+        value = raw.split("#", 1)[0].strip()
+        if not value:
+            continue
+        fields = value.split()
+        if len(fields) == 1:
+            source = publish = fields[0]
+        elif len(fields) == 2:
+            source, publish = fields
+        else:
+            mapping_errors.append(
+                f"line {number}: expected '<source> [publish]', got {value!r}"
+            )
+            continue
+        resource_mappings.add((source, publish))
+
+emit(
+    not mapping_errors,
+    "resource manifest source-to-publish mappings are parseable",
+    "; ".join(mapping_errors),
+)
+for source, publish in (
+    ("runtime/codex-call", "bin/codex-call"),
+    ("runtime/codex-pro-call", "bin/codex-pro-call"),
+):
+    emit(
+        (source, publish) in resource_mappings,
+        f"resource manifest maps {source} to native {publish}",
+        f"actual={sorted(resource_mappings)!r}",
+    )
+
 
 def load_text(path: Path, label: str) -> str:
     try:
@@ -282,6 +333,36 @@ def load_text(path: Path, label: str) -> str:
         return ""
     emit(bool(text.strip()), f"{label} exists and is non-empty")
     return text
+
+
+repository_license = load_text(repo_root / "LICENSE", "repository LICENSE")
+claude_package_license = load_text(
+    claude_plugin_root / "LICENSE",
+    "Claude package LICENSE",
+)
+claude_package_notices = load_text(
+    claude_plugin_root / "THIRD_PARTY_NOTICES.md",
+    "Claude package third-party notices",
+)
+emit(
+    bool(repository_license) and claude_package_license == repository_license,
+    "Claude package carries the complete repository MIT license text",
+)
+missing_notice_tokens = [
+    token
+    for token in (
+        "runtime/codex-call",
+        "6fc6883ef1d655f5f782a97accc0a5adacc76226",
+        "Copyright (c) 2026 Che Cheng",
+        "[LICENSE](LICENSE)",
+    )
+    if token not in claude_package_notices
+]
+emit(
+    not missing_notice_tokens,
+    "Claude package notices identify the vendored runtime and local MIT text",
+    f"missing={missing_notice_tokens!r}",
+)
 
 
 documentation = {

@@ -20,8 +20,114 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 source "$SCRIPT_DIR/lib/assert.sh"
 
 ADV_REVIEW_SKILL="$REPO_ROOT/plugins/codex-pro/skills/codex-adversarial-review/SKILL.md"
+NATIVE_ADV_REVIEW_SKILL="$REPO_ROOT/skills/codex-adversarial-review/SKILL.md"
 
 assert_file "$ADV_REVIEW_SKILL" "adversarial-review SKILL.md exists"
+assert_file "$NATIVE_ADV_REVIEW_SKILL" "native adversarial-review SKILL.md exists"
+
+# ── Native runtime preflight must still produce the adversarial result contract ──
+native_preflight_check=$(python3 - "$NATIVE_ADV_REVIEW_SKILL" <<'PY'
+import re
+import sys
+
+text = open(sys.argv[1], encoding="utf-8").read()
+match = re.search(
+    r"### Step 4\.2: Resolve bundled Codex runtime\n(.*?)\n## Step 5: Handle exit code",
+    text,
+    re.DOTALL,
+)
+if not match:
+    print("resolver=missing")
+    raise SystemExit(0)
+resolver = match.group(1)
+step5 = text[match.end():]
+
+
+def invocation_block_guarded(block: str) -> bool:
+    guard = re.fullmatch(
+        r'if \[ -z "\$CODEX_RUNTIME_ERROR" \]; then\n(?P<body>.*?)\nfi',
+        block.strip(),
+        re.DOTALL,
+    )
+    if not guard:
+        return False
+    body = guard.group("body")
+    return (
+        body.count('"$CODEX_CALL"') == 1
+        and re.search(r'^[ \t]+"\$CODEX_CALL"[ \t]+\\$', body, re.MULTILINE)
+        is not None
+    )
+
+
+invocation_section = re.search(
+    r"### Step 4\.3: codex-call invocation\n(.*?)\n## Step 5: Handle exit code",
+    text,
+    re.DOTALL,
+)
+invocation_blocks = (
+    re.findall(r"```(?:bash)?\n(.*?)\n```", invocation_section.group(1), re.DOTALL)
+    if invocation_section
+    else []
+)
+call_blocks = [block for block in invocation_blocks if '"$CODEX_CALL"' in block]
+invocation_block = call_blocks[0] if len(call_blocks) == 1 else ""
+guard_scope = invocation_block_guarded(invocation_block)
+guard_match = re.fullmatch(
+    r'if \[ -z "\$CODEX_RUNTIME_ERROR" \]; then\n(?P<body>.*?)\nfi',
+    invocation_block.strip(),
+    re.DOTALL,
+)
+mutated_block = (
+    'if [ -z "$CODEX_RUNTIME_ERROR" ]; then\nfi\n' + guard_match.group("body")
+    if guard_match
+    else invocation_block
+)
+detail_contract = all(
+    token in step5
+    for token in (
+        "Runtime preflight detail:",
+        "$CODEX_RUNTIME_DETAIL",
+        "CR／LF／TAB",
+        "control characters",
+        "500 個字元",
+        "不得把未清理或未截斷的 detail 放進 YAML frontmatter",
+    )
+)
+checks = {
+    "resolver": "present",
+    "error_var": str('CODEX_RUNTIME_ERROR=""' in resolver).lower(),
+    "detail_var": str('CODEX_RUNTIME_DETAIL=""' in resolver).lower(),
+    "no_direct_exit": str("exit 1" not in resolver).lower(),
+    "wrapper_regular": str('[ -f "$CODEX_CALL" ] && [ -x "$CODEX_CALL" ]' in resolver).lower(),
+    "broken_markers": str(
+        '[ -L "$BUNDLE_ROOT/.codex-plugin/plugin.json" ]' in resolver
+        and '[ -L "$BUNDLE_ROOT/.codex-bundle-files" ]' in resolver
+    ).lower(),
+    "skip_invocation": str('if [ -z "$CODEX_RUNTIME_ERROR" ]' in resolver).lower(),
+    "guard_scope": str(guard_scope).lower(),
+    "guard_mutation_rejected": str(not invocation_block_guarded(mutated_block)).lower(),
+    "runtime_unavailable": str("runtime_unavailable" in step5).lower(),
+    "package_corruption": str("package_corruption" in step5).lower(),
+    "result_enum": str(bool(re.search(
+        r"error: <[^>]*runtime_unavailable[^>]*package_corruption[^>]*>", step5
+    ))).lower(),
+    "detail_contract": str(detail_contract).lower(),
+    "native_no_retry": str(all(
+        token in step5
+        for token in ("package_corruption", "runtime_unavailable", "所有 failure 都不 retry")
+    )).lower(),
+    "result_path": str(".codex-pro/adversarial-review-" in text).lower(),
+    "all_failures": str("所有 failure 仍寫 result file" in text).lower(),
+}
+print(" ".join(f"{key}={value}" for key, value in checks.items()))
+PY
+)
+case "$native_preflight_check" in
+  *"resolver=present error_var=true detail_var=true no_direct_exit=true wrapper_regular=true broken_markers=true skip_invocation=true guard_scope=true guard_mutation_rejected=true runtime_unavailable=true package_corruption=true result_enum=true detail_contract=true native_no_retry=true result_path=true all_failures=true"*)
+    pass "native adversarial-review preflight maps failures and preserves structured result output" ;;
+  *)
+    fail "native adversarial-review preflight/result contract incomplete: $native_preflight_check" ;;
+esac
 
 # ── (a) Frontmatter parse (name + allowed-tools + mental-model keyword) ──
 fm_check=$(python3 - "$ADV_REVIEW_SKILL" <<'PY' 2>/dev/null

@@ -17,8 +17,8 @@ PINNED_SHA256="fa80364b2159f3df4f2d9a27c885a7b50e510bf52933abaa79564945bedb6af0"
 PINNED_SOURCE_PATH="plugins/parallel-ai-agents/bin/codex-call"
 PINNED_RAW_URL="https://raw.githubusercontent.com/PsychQuant/parallel-ai-agents/$PINNED_COMMIT/$PINNED_SOURCE_PATH"
 
-SOURCE_RUNTIME="$REPO_ROOT/plugins/codex-pro/bin/codex-call"
-SOURCE_WRAPPER="$REPO_ROOT/plugins/codex-pro/bin/codex-pro-call"
+SOURCE_RUNTIME="$REPO_ROOT/plugins/codex-pro/runtime/codex-call"
+SOURCE_WRAPPER="$REPO_ROOT/plugins/codex-pro/runtime/codex-pro-call"
 SOURCE_PROVENANCE="$REPO_ROOT/plugins/codex-pro/references/codex-call-provenance.json"
 TEST_MODE="${1:-full}"
 
