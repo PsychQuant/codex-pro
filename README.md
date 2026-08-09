@@ -37,6 +37,8 @@ Marketplace 殼存在的理由是給未來「對外發布到 GitHub + `/plugin m
 
 所有 capability 都是 `plugins/codex-pro/skills/<skill>/SKILL.md` 結構，skill 觸發名統一形如 `/codex-pro:<skill>`：
 
+> **Codex 使用者**：同一批 skill 另有 Codex 格式的鏡像在 `.codex/skills/<skill>/SKILL.md`，叫用形如 `$<skill>`（索引見 [`AGENTS.md`](./AGENTS.md)）。鏡像由 `scripts/generate-codex-skills.sh` 從上述 plugin 版**單向生成**，漂移由 `tests/codex-skills-parity.sh` 擋下——**不要手改鏡像**，改來源後重跑生成腳本。
+
 | Skill | 狀態 | 用途 |
 |---|---|---|
 | `setup` | v0.1.0 | 驗證 OAuth、codex-call runtime、plugin manifest 環境是否就緒。**Read-only**，跑其他 skill 前先確認。 |

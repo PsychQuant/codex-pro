@@ -76,6 +76,7 @@ run_layer() {
 
 # ── Execute layers ────────────────────────────────────────────────
 run_layer static
+run_layer codex-skills-parity
 run_layer setup
 run_layer batch
 run_layer review
