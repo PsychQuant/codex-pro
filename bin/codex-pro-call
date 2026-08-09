@@ -1,0 +1,54 @@
+#!/usr/bin/env bash
+# codex-pro-call — integrity-check and execute the bundled codex-call snapshot.
+
+set -uo pipefail
+
+EXPECTED_SHA256="fa80364b2159f3df4f2d9a27c885a7b50e510bf52933abaa79564945bedb6af0"
+
+if ! SCRIPT_DIR="$(cd "$(dirname "$0")" 2>/dev/null && pwd -P)"; then
+  printf 'error=runtime_missing path=unresolved\n' >&2
+  exit 2
+fi
+RUNTIME_PATH="$SCRIPT_DIR/codex-call"
+
+platform="$(uname -s 2>/dev/null || printf unknown)"
+if [ "$platform" != "Darwin" ]; then
+  printf 'error=unsupported_platform actual=%s expected=Darwin\n' "$platform" >&2
+  exit 2
+fi
+
+if ! command -v swift >/dev/null 2>&1; then
+  printf 'error=swift_missing\n' >&2
+  exit 2
+fi
+if ! swift_version="$(swift --version 2>/dev/null)" || [ -z "$swift_version" ]; then
+  printf 'error=swift_missing\n' >&2
+  exit 2
+fi
+swift_version="${swift_version%%$'\n'*}"
+
+if [ ! -e "$RUNTIME_PATH" ] || [ ! -f "$RUNTIME_PATH" ]; then
+  printf 'error=runtime_missing path=%s\n' "$RUNTIME_PATH" >&2
+  exit 2
+fi
+if [ ! -x "$RUNTIME_PATH" ]; then
+  printf 'error=runtime_not_executable path=%s\n' "$RUNTIME_PATH" >&2
+  exit 2
+fi
+
+if ! hash_output="$(shasum -a 256 "$RUNTIME_PATH" 2>/dev/null)"; then
+  printf 'error=hash_mismatch expected=%s actual=unavailable\n' "$EXPECTED_SHA256" >&2
+  exit 2
+fi
+actual_sha256="${hash_output%%[[:space:]]*}"
+if [ "$actual_sha256" != "$EXPECTED_SHA256" ]; then
+  printf 'error=hash_mismatch expected=%s actual=%s\n' "$EXPECTED_SHA256" "$actual_sha256" >&2
+  exit 2
+fi
+
+if [ "${1:-}" = "--check" ]; then
+  printf 'ok runtime=%s sha256=%s swift=%s\n' "$RUNTIME_PATH" "$EXPECTED_SHA256" "$swift_version"
+  exit 0
+fi
+
+exec "$RUNTIME_PATH" "$@"

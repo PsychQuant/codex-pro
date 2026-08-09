@@ -1,8 +1,14 @@
 # codex-pro
 
-對 [`openai/codex-plugin-cc`](https://github.com/openai/codex-plugin-cc) 的進階重寫，以 **Claude Code marketplace** 殼包一個與之同名的 plugin `codex-pro`。
+對 [`openai/codex-plugin-cc`](https://github.com/openai/codex-plugin-cc) 的進階重寫，同時提供 **Codex 原生 plugin** 與 **Claude Code plugin**。兩種安裝方式共用九個 skill、profile 契約與結構化 `.codex-pro/` 結果檔。
 
-`codex-pro` 用 ensemble pattern + 自家 Swift HTTPS runtime（透過 `parallel-ai-agents` 的 `codex-call` wrapper）取代上游 single-plugin 架構，從根本解決 IPC deadlock、subagent stub、無限 retry、零 observability 等系統性痛點。
+`codex-pro` 以具 hard timeout、circuit breaker 與可觀測結果檔的 Swift HTTPS runtime 取代不穩定的 IPC 路徑。0.8.0 起，Codex 原生套件內含已釘選來源與雜湊的 runtime，不需另外安裝 Claude Code 或 `parallel-ai-agents`。
+
+| 使用環境 | 發布入口 | Skill 叫用 |
+|---|---|---|
+| Codex App／CLI 原生 plugin | repo 根層 `.codex-plugin/plugin.json` | `$codex-setup`、`$codex-review` 等 |
+| Codex 專案內 bundle | `.codex/` | `$codex-setup`、`$codex-review` 等 |
+| Claude Code plugin | `plugins/codex-pro/` | `/codex-pro:codex-setup`、`/codex-pro:codex-review` 等 |
 
 ---
 
@@ -20,7 +26,7 @@
 | `/codex:cancel` | `/codex-pro:codex-cancel` — 已落地 v0.1（informational only） |
 | （無對應）| `/codex-pro:codex-config` — 已落地 v0.1（codex-pro 自有 capability、補 Design constraint #5 profile-based config） |
 
-## Why a marketplace shell, not just a single plugin
+## Why a marketplace package, not just a single skill
 
 `openai/codex-plugin-cc` 把 review、adversarial-review、rescue、status、result、cancel 打包成單一 plugin — 共用同一條 IPC pipe、同一個 fail mode、同一份 hardcode sandbox profile。一個 capability 壞掉，其他連帶失靈（見 upstream issues [#330](https://github.com/openai/codex-plugin-cc/issues/330)、[#324](https://github.com/openai/codex-plugin-cc/issues/324)、[#306](https://github.com/openai/codex-plugin-cc/issues/306)）。
 
@@ -28,16 +34,17 @@
 
 - 每個 skill 各自有 circuit breaker
 - 各自有獨立的 profile（max-findings、sandbox、model alias）
-- 共用 `parallel-ai-agents/bin/codex-call` runtime（無 subprocess、hard timeout、HTTPS direct）
+- producer 共用 `codex-call` runtime（Codex 原生版使用套件內的釘選 snapshot；Claude Code 版維持從 PATH 解析）
 - 一個 skill fail 不會把 session 卡死
 
-Marketplace 殼存在的理由是給未來「對外發布到 GitHub + `/plugin marketplace add`」鋪好基礎結構，不是當前需要拆分多 plugin。
+Marketplace metadata 讓同一份 Git snapshot 可被 Codex CLI／App 或 Claude Code 安裝；本版仍維持 single plugin，沒有新增 MCP server、hook 或 app。
 
 ## Skills
 
-所有 capability 都是 `plugins/codex-pro/skills/<skill>/SKILL.md` 結構，skill 觸發名統一形如 `/codex-pro:<skill>`：
+所有 capability 的手工來源都是 `plugins/codex-pro/skills/<skill>/SKILL.md`。Claude Code
+叫用形如 `/codex-pro:<skill>`；Codex 原生版與專案內 bundle 則叫用 `$codex-*`：
 
-> **Codex 使用者**：同一批 skill 另有 Codex 格式的鏡像在 `.codex/skills/<skill>/SKILL.md`，叫用形如 `$<skill>`（索引見 [`AGENTS.md`](./AGENTS.md)）。鏡像由 `scripts/generate-codex-skills.sh` 從上述 plugin 版**單向生成**，漂移由 `tests/codex-skills-parity.sh` 擋下——**不要手改鏡像**，改來源後重跑生成腳本。
+> **Codex 使用者**：同一批 skill 有兩份完整生成 bundle：repo 根層供原生 plugin 安裝，`.codex/` 供專案內探索。兩者都由 `scripts/generate-codex-skills.sh` 從 `plugins/codex-pro/` **單向生成**，漂移由 `tests/codex-skills-parity.sh` 擋下。不要手改根層或 `.codex/` 的 `skills/`、`references/`、`bin/` 與 `.codex-bundle-files`。
 
 | Skill | 狀態 | 用途 |
 |---|---|---|
@@ -87,29 +94,108 @@ v0.2 起 codex-pro 把 skill 分四 category 讓使用者一眼看出「跑這�
 4. 用 `/codex-pro:codex-result --latest` 看最近一次 detail（read-only）
 5. 想 cancel 跑到一半的 producer call？用 Ctrl-C 或等 `--max-time 600`（`/codex-pro:codex-cancel` 為 informational explainer、解釋為何 v0.2 stateless model 無法真 cancel）
 
-## Install
+## Codex 原生安裝
 
+### 需求與能力邊界
+
+- Codex App 或支援 `codex plugin` 的 Codex CLI。
+- `$codex-review`、`$codex-adversarial-review`、`$codex-rescue` 三個 producer 目前只支援 macOS，並需要 Xcode Command Line Tools 提供的 `swift`。
+- producer 使用 Codex CLI 的 ChatGPT OAuth：先跑 `codex login`，確認 `~/.codex/auth.json` 可讀。
+- `$codex-status`、`$codex-result`、`$codex-config`、`$codex-cancel` 是純本機 consumer；即使不是 macOS、沒有 Swift 或 producer runtime 不可用，仍可使用。
+- `$codex-batch` 是獨立的 fan-out 例外，使用 `codex exec --full-auto` subprocess，不使用套件內的 Swift runtime；本版不承諾其跨平台可攜性。
+
+安裝 self-hosted Git marketplace：
+
+```bash
+codex plugin marketplace add PsychQuant/codex-pro --ref main --json
+codex plugin marketplace list --json
+codex plugin list --marketplace codex-pro --available --json
+codex plugin add codex-pro@codex-pro --json
 ```
+
+`plugin list --marketplace ...` 對尚未設定的名稱可能仍以空陣列、exit 0 回應，所以第二行
+的 marketplace listing 是必要驗證，不能只看 exit status。
+
+安裝後請開啟一個**新 task**，先叫用 `$codex-setup`；既有 task 不保證會重新探索剛安裝的 skill。完整驗收步驟見 [`tests/e2e-checklist.md`](./tests/e2e-checklist.md)。
+
+本機開發可直接加入 clone：
+
+```bash
+codex plugin marketplace add /absolute/path/to/codex-pro --json
+codex plugin add codex-pro@codex-pro --json
+```
+
+Git marketplace 更新後，以移除再安裝確保 plugin cache 取用新 snapshot：
+
+```bash
+codex plugin marketplace upgrade codex-pro --json
+codex plugin remove codex-pro@codex-pro --json
+codex plugin add codex-pro@codex-pro --json
+```
+
+回復或完整移除時，先移除 plugin，再移除 marketplace；不會刪除專案既有的 `.codex-pro/` 結果檔：
+
+```bash
+codex plugin remove codex-pro@codex-pro --json
+codex plugin marketplace remove codex-pro --json
+```
+
+Codex App 使用者要先在 Terminal 執行 `codex plugin marketplace add
+PsychQuant/codex-pro --ref main --json`，完全結束並重啟 App，再從 Plugins Directory 選擇
+`codex-pro` marketplace 與同名 plugin 安裝；開新 task 後檢查九個 skill。App 的可見性、
+更新與解除安裝仍是發行前的人工 gate。本專案尚未宣稱已進入 OpenAI 官方 plugin
+directory；0.8.0 發布後仍須依[官方 plugin 提交流程](https://developers.openai.com/plugins/deploy/submission)
+另行完成 directory submission 與審核，實際要求以提交當時的官方文件為準。
+
+## Claude Code 安裝
+
+```text
 # 1. 加入 marketplace（從 GitHub）
 /plugin marketplace add psychquant/codex-pro
 
-# 2. 安裝 plugin（marketplace 名與 plugin 名同為 codex-pro）
+# 2. 安裝 plugin
 /plugin install codex-pro@codex-pro
 
 # 3. 跑環境檢查
 /codex-pro:codex-setup
 ```
 
-開發 / iterate 時可直接 clone repo 後跑 `claude --plugin-dir <repo>/plugins/codex-pro`（指 plugin 目錄、不是 marketplace root）。
+開發時可直接 clone repo 後跑 `claude --plugin-dir <repo>/plugins/codex-pro`（指 plugin 目錄，不是 marketplace root）。Claude Code 版刻意維持從 PATH 尋找 `codex-call`，不會改用 Codex 原生 bundle 的 runtime。
+
+## Runtime、OAuth 與已知限制
+
+Codex 原生套件分發的 `codex-call` 是從 `PsychQuant/parallel-ai-agents` 釘選的逐位元 snapshot。來源 commit、Git blob、大小與 SHA-256 記錄於 [`codex-call-provenance.json`](./plugins/codex-pro/references/codex-call-provenance.json)，第三方聲明見 [`THIRD_PARTY_NOTICES.md`](./THIRD_PARTY_NOTICES.md)。`bin/codex-pro-call --check` 只做平台、Swift、執行權限與雜湊檢查；它不讀 OAuth、不修改檔案，也不連網。
+
+正常 producer 呼叫不同：runtime 會讀取 `~/.codex/auth.json`；token 即將到期時，會透過 `https://auth.openai.com/oauth/token` 更新憑證，使用 `~/.codex/.token-refresh.lock` 協調並行更新，之後呼叫 `https://chatgpt.com/backend-api/codex/responses`。這是 ChatGPT 的 private／experimental backend surface，並非承諾穩定的公開 API。
+
+釘選 snapshot 也保留上游已知限制：
+
+- [`parallel-ai-agents#28`](https://github.com/PsychQuant/parallel-ai-agents/issues/28)：SSE 的 UTF-8／CJK chunk 邊界與截斷問題。
+- [`parallel-ai-agents#35`](https://github.com/PsychQuant/parallel-ai-agents/issues/35)：尚無可依賴的穩定外部 runtime 契約。
+
+本版不修正上述上游問題，也不新增 Linux／Windows producer、改寫 batch、品牌資產、MCP server 或 hook。
+
+## 生成來源與 ownership
+
+手工維護的 skill 與 runtime 來源只在 `plugins/codex-pro/`。無參數執行：
+
+```bash
+scripts/generate-codex-skills.sh
+```
+
+會同步產生 repo 根層與 `.codex/` 兩個完整 bundle，包含九個 skills、nested resources、shared references、runtime wrapper、runtime snapshot 與 `.codex-bundle-files` inventory。不要直接編輯這些受管產物；修改來源後重生，並以 `bash tests/codex-skills-parity.sh` 檢查漂移。
 
 ## Tests
 
-三層 test scenarios 在 `tests/`：
+自動與人工測試在 `tests/`：
 
-- **Layer 1 (static)** — manifest JSON schema、SKILL.md frontmatter、`bash -n`、batch template byte-identical sha256、namespace consistency
+- **Codex package contract** — `tests/codex-plugin.sh` 驗原生 manifest、repo marketplace、九個 skills、版本與 plugin-creator validator
+- **Codex bundle parity** — `tests/codex-skills-parity.sh` 驗兩個完整 bundle、暫存重生、相對連結、ownership 與冪等性
+- **Codex runtime** — `tests/codex-runtime.sh` 驗 provenance、wrapper、resolver matrix；`--smoke` 在 macOS 執行真 Swift 離線檢查
+- **Layer 1 (static)** — Claude manifest JSON schema、SKILL.md frontmatter、`bash -n`、batch template byte-identical sha256、namespace consistency
 - **Layer 2 (behavioral)** — setup isolated env、producer skill collection logic mock + behavioral runtime test、read-only consumer mktemp fixture、batch exception markers
-- **Layer 3 (automated e2e, opt-in)** — `bash tests/e2e.sh --skill X --scenario Y`：跑 `claude --print --plugin-dir` 真正觸發 SKILL.md、verify result file 結構與 behavioral marker；5 scenario × 2 producer skill = 10 組合；release gate（非 commit gate）；~10 codex-call quota + ~500k Claude API tokens + 10-30min；含 Anthropic API rate-limit 自動 retry 3 次 30s/60s/120s backoff
-- **Layer 3 (manual)** — `tests/e2e-checklist.md` 含 plugin install UI flow 手動 checklist
+- **Layer 3 (automated e2e, opt-in)** — `bash tests/e2e.sh --skill X --scenario Y`：跑 `claude --print --plugin-dir` 真正觸發 SKILL.md、verify result file 結構與 behavioral marker；6 scenarios × 2 producer skills = 12 組合；release gate（非 commit gate）；約 12 次 codex-call quota + 600k Claude API tokens + 12–36 分鐘；含 Anthropic API rate-limit 自動 retry 3 次 30s／60s／120s backoff
+- **Layer 3 (manual)** — `tests/e2e-checklist.md` 同時涵蓋 Codex CLI／App 原生安裝與 Claude Code UI flow
 
 一條命令跑 Layer 1+2：
 
@@ -117,14 +203,14 @@ v0.2 起 codex-pro 把 skill 分四 category 讓使用者一眼看出「跑這�
 bash tests/run.sh
 ```
 
-跑完顯示 aggregate「N pass / N fail / N total」與 layer-level pass/fail count；exit 0 表全綠。Layer 3 是手動 markdown checklist，需要在 fresh Claude Code session 親自跑。
+跑完顯示 aggregate「N pass / N fail / N total」與 layer-level pass/fail count；exit 0 表全綠。Layer 3 是人工 markdown checklist，需要在全新 Codex task 或 Claude Code session 親自跑。
 
 也可單獨跑某 layer：`bash tests/static.sh`、`bash tests/setup.sh`、`bash tests/batch.sh`。
 
 ## Reference
 
 - **Upstream we replace**: <https://github.com/openai/codex-plugin-cc> — 原 OpenAI codex plugin（200+ open issues 是 codex-pro 設計的反例來源）
-- **Runtime dependency**: `parallel-ai-agents`（屬 `psychquant-claude-plugins` marketplace）— 提供 `codex-call` Swift wrapper，直連 `chatgpt.com/backend-api`、避開 `codex exec` subprocess（這是 upstream IPC deadlock 的根因）
+- **Runtime provenance**: [`plugins/codex-pro/references/codex-call-provenance.json`](./plugins/codex-pro/references/codex-call-provenance.json) — Codex 原生版分發釘選 snapshot；Claude Code 版維持 PATH 契約
 - **設計細節 / design rationale**: see [`CLAUDE.md`](./CLAUDE.md)
 - **Spec-driven development**: 走 Spectra SDD — specs 在 `openspec/specs/`、change proposals 在 `openspec/changes/`
 

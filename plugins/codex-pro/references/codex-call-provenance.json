@@ -1,0 +1,12 @@
+{
+  "repository": "https://github.com/PsychQuant/parallel-ai-agents",
+  "path": "plugins/parallel-ai-agents/bin/codex-call",
+  "commit": "6fc6883ef1d655f5f782a97accc0a5adacc76226",
+  "blob": "c2418f5c0a0a3d092859d6252d2910c460dee981",
+  "raw_url": "https://raw.githubusercontent.com/PsychQuant/parallel-ai-agents/6fc6883ef1d655f5f782a97accc0a5adacc76226/plugins/parallel-ai-agents/bin/codex-call",
+  "bytes": 25329,
+  "mode": "100755",
+  "sha256": "fa80364b2159f3df4f2d9a27c885a7b50e510bf52933abaa79564945bedb6af0",
+  "license": "MIT",
+  "known_upstream_issues": [28, 35]
+}

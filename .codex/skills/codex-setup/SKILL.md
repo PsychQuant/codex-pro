@@ -1,7 +1,7 @@
 ---
 name: codex-setup
 description: |
-  驗證 codex-pro 環境是否就緒 — 檢查 Codex OAuth token、codex-call wrapper。
+  驗證 codex-pro 環境是否就緒 — 檢查 Codex OAuth token、bundled producer runtime，並分別回報 consumer skills。
   Use when: 使用者輸入 $codex-setup、第一次使用 codex-pro、診斷其他 $codex-* command 失敗時。
   輸出 4 欄 markdown readiness report（Check / Status / Detail / Remediation）。純 read-only — 不修改任何環境或設定。
   Trigger keywords: verify codex-pro environment, check codex setup, codex-pro readiness, codex 環境檢查
@@ -51,73 +51,75 @@ fi
 | `exists_but_not_readable` | ✗ | `OAuth token 檔存在但目前帳號無讀取權限` | `chmod u+r ~/.codex/auth.json` |
 | `missing` | ✗ | `OAuth token 檔（~/.codex/auth.json）不存在` | 執行 `codex login` 完成 ChatGPT OAuth 流程後再試 |
 
-### Check 2: codex-call wrapper PATH
+### Check 2: Codex producer runtime
 
-執行以下純 read-only Bash（`command -v` 只查 PATH，不執行 wrapper）：
+Codex 載入本 skill 時會提供 active `SKILL.md` 的絕對路徑。先以該實際路徑的
+目錄設定 `SKILL_DIR`，不得從目前工作目錄推測，再執行以下純 read-only Bash：
 
 ```bash
-if cc_path=$(command -v codex-call 2>/dev/null); then
-  echo "found path=$cc_path"
+BUNDLE_ROOT="$(cd "$SKILL_DIR/../.." && pwd -P)"
+wrapper="$BUNDLE_ROOT/bin/codex-pro-call"
+
+if [ -x "$wrapper" ]; then
+  wrapper_status=0
+  wrapper_output=$("$wrapper" --check 2>&1) || wrapper_status=$?
+  if [ "$wrapper_status" -eq 0 ]; then
+    echo "bundled path=$wrapper $wrapper_output"
+  else
+    case "$wrapper_output" in
+      error=unsupported_platform*|error=swift_missing*)
+        echo "unavailable source=bundled $wrapper_output"
+        ;;
+      *)
+        echo "package corruption source=bundled $wrapper_output"
+        ;;
+    esac
+  fi
+elif [ -e "$BUNDLE_ROOT/.codex-plugin/plugin.json" ] \
+    || [ -e "$BUNDLE_ROOT/.codex-bundle-files" ]; then
+  echo "package corruption path=$wrapper error=wrapper_missing_or_not_executable"
+elif legacy_codex_call=$(command -v codex-call 2>/dev/null); then
+  echo "legacy PATH fallback path=$legacy_codex_call"
 else
-  echo "missing"
+  echo "unavailable error=runtime_unavailable"
 fi
 ```
 
-依輸出決定該列的 Status / Detail / Remediation：
+`--check` 不執行 runtime snapshot、不讀取或修改 OAuth，也不存取網路。依輸出判定：
 
-| 輸出 | Status | Detail | Remediation |
-|------|--------|--------|-------------|
-| `found path=<絕對路徑>` | ✓ | `codex-call 可呼叫，位於 <絕對路徑>` | N/A |
-| `missing` | ✗ | `codex-call 不在 PATH 中` | 安裝 / 確認 `parallel-ai-agents` plugin 已啟用且其 `bin/` 目錄被 Claude Code 自動加入 PATH（執行 `/plugin list` 確認）|
+| 輸出 | Producer Status | Detail | Remediation |
+|------|-----------------|--------|-------------|
+| `bundled path=... ok runtime=...` | ✓ | bundled runtime、Swift 與 SHA-256 完整 | N/A |
+| `legacy PATH fallback path=...` | ⚠ | 舊式無 marker 鏡像透過 PATH 相容 | 更新或重新安裝 codex-pro 原生 plugin |
+| `package corruption ...` | ✗ | 原生套件缺檔、權限或完整性驗證失敗 | 重新安裝 codex-pro plugin；不得改走 PATH |
+| `unavailable ... error=unsupported_platform` | ✗ | producer 僅支援 macOS | consumer skills 仍可使用 |
+| `unavailable ... error=swift_missing` | ✗ | 找不到可執行的 Swift compiler | 安裝或修復 Xcode Command Line Tools |
+| `unavailable error=runtime_unavailable` | ✗ | 無 bundled runtime，也無 legacy PATH 相容路徑 | 更新或重新安裝 codex-pro |
 
-**注意**：本檢查刻意不寫死 `parallel-ai-agents/bin/codex-call` 絕對路徑（見 design D3）— `codex-call` 應透過 `parallel-ai-agents` plugin 安裝時暴露於 PATH。若路徑解析失敗，根因是 parallel-ai-agents 安裝異常，setup 不越權繞道。
-
-> **Plugin manifest 檢查在 Codex 環境不適用，已從本 skill 移除。**
+> **Claude Code 專用 manifest self-check 已由 Codex bundle 完整性檢查取代。**
 >
-> Claude Code 版另有第 3 項檢查，讀 plugin manifest JSON 驗證安裝狀態。
-> Codex 沒有 plugin manifest 這個概念，那個檔案必然不存在——執行它只會
-> 得到誤導性的 `not_found`，看起來像安裝壞了。
->
-> Codex 環境以上方兩項檢查（OAuth、codex-call runtime）判斷就緒狀態。
-> 下方的 Readiness Report 也因此只有兩列。
+> producer（review、adversarial-review、rescue）需要 macOS 與 Xcode Command Line
+> Tools Swift；consumer（`$codex-status`、`$codex-result`、`$codex-config`、
+> `$codex-cancel`）只讀本機檔案，在 producer unavailable 時仍可使用。
 
 ## Readiness Report 輸出
 
-兩項檢查完成後，把每項的 Status / Detail / Remediation 組裝成 4 欄 markdown 表格直接回傳給使用者：
+兩項檢查完成後，把 OAuth、producer runtime 與 consumer availability 組裝成 4 欄
+markdown 表格直接回傳給使用者：
 
 ```
 | Check | Status | Detail | Remediation |
 |-------|--------|--------|-------------|
 | OAuth token | <Check 1 Status> | <Check 1 Detail> | <Check 1 Remediation 或 N/A> |
-| codex-call wrapper | <Check 2 Status> | <Check 2 Detail> | <Check 2 Remediation 或 N/A> |
+| Producer runtime | <Check 2 Producer Status> | <Check 2 Detail> | <Check 2 Remediation 或 N/A> |
+| Consumer skills | ✓ | `$codex-status`、`$codex-result`、`$codex-config`、`$codex-cancel` 可使用 | N/A |
 ```
 
 表格後空一行，依以下規則輸出總結句：
 
-- 兩項 Status 皆為 ✓ → `All checks passed — codex-pro ready.`
-- 有任何 ✗ 或 ⚠ → `N check(s) need attention — see Remediation column above.`（其中 N = 非 ✓ 的列數）
-
-### 完整輸出範例（全綠路徑）
-
-```
-| Check | Status | Detail | Remediation |
-|-------|--------|--------|-------------|
-| OAuth token | ✓ | `~/.codex/auth.json` 存在 (mode 600) | N/A |
-| codex-call wrapper | ✓ | codex-call 可呼叫，位於 /Users/<user>/.claude/plugins/cache/.../bin/codex-call | N/A |
-
-All checks passed — codex-pro ready.
-```
-
-### 完整輸出範例（缺 OAuth token）
-
-```
-| Check | Status | Detail | Remediation |
-|-------|--------|--------|-------------|
-| OAuth token | ✗ | OAuth token 檔（~/.codex/auth.json）不存在 | 執行 `codex login` 完成 ChatGPT OAuth 流程後再試 |
-| codex-call wrapper | ✓ | codex-call 可呼叫，位於 /Users/<user>/.../bin/codex-call | N/A |
-
-1 check(s) need attention — see Remediation column above.
-```
+- OAuth 與 Producer runtime 皆為 ✓ → `All checks passed — codex-pro ready.`
+- Producer runtime 為 ✗ 或 ⚠ → 明確回報 producer unavailable 或 degraded，並再次列出仍可使用的四個 consumer skills。
+- OAuth 為 ✗ 或 ⚠ → 只回報 remediation，不執行 `codex login` 或變更權限。
 
 ## 結束時的約束
 

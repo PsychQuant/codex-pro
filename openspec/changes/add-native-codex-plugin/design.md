@@ -65,7 +65,7 @@ Rejected alternative：掃 cache 能在目前機器碰巧找到檔案，但 sour
 
 版本 0.8.0 必須同時出現在 Codex manifest、Claude plugin manifest 與 Claude marketplace entry。`tests/codex-plugin.sh` 驗證原生 manifest、self-hosted marketplace、版本一致、runtime/provenance、wrapper matrix 與 package resources；升級後的 `tests/codex-skills-parity.sh` 對兩個 committed bundles 與暫存重生 bundle 做 recursive parity、相對連結解析、冪等性與 ownership safety。
 
-release gate 另執行內建 `plugin-creator` validator、完整 `tests/run.sh`、macOS `swift --version`、wrapper `--check` 與 snapshot 的 offline self-test。Codex CLI／App 的真正安裝、啟用與新 task invocation 放在 e2e checklist，且 producer smoke 必須在未注入 Claude plugin PATH 的情境產出 `.codex-pro/review-*.md`。
+release gate 另執行內建 `plugin-creator` validator、完整 `tests/run.sh`、macOS `swift --version`、wrapper `--check`，並以固定 JSON payload 呼叫 snapshot 的 `--selftest-error-extract` 離線測試 hook；該 hook 必須帶一個 JSON 引數，不能以空引數呼叫。Codex CLI／App 的真正安裝、啟用與新 task invocation 放在 e2e checklist，且 producer smoke 必須在未注入 Claude plugin PATH 的情境產出 `.codex-pro/review-*.md`。
 
 ### D6. 最小 marketplace metadata
 
@@ -106,7 +106,7 @@ release gate 另執行內建 `plugin-creator` validator、完整 `tests/run.sh`�
 
 - 新測試先在缺 manifest／resources／runtime 時呈現 RED，再由實作轉為 GREEN。
 - `python3 <plugin-creator-skill>/scripts/validate_plugin.py <repo-root>`、`bash tests/run.sh`、`bash tests/codex-plugin.sh`、`bash tests/codex-skills-parity.sh` 全部通過。
-- 在 macOS 上，`bin/codex-pro-call --check` 與 `bin/codex-call --selftest-error-extract` 通過；測試不得把「全部 skip」算成功。
+- 在 macOS 上，`bin/codex-pro-call --check` 與 `bin/codex-call --selftest-error-extract '{"error":{"message":"offline self-test"}}'` 通過，後者輸出 `offline self-test`；測試不得把「全部 skip」算成功。
 - e2e checklist 記錄 Codex CLI marketplace add／plugin add、新 task 的 setup、consumer、producer smoke，以及 Codex App 視覺安裝檢查。
 
 ### Scope boundaries

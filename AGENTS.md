@@ -32,16 +32,23 @@ Changes can be parked（暫存）— temporarily moved out of `openspec/changes/
 
 # codex-pro Skills（Codex）
 
-本 repo 的 skill 同時以兩種格式存在：
+本 repo 的 skill 有一份手工來源與兩份 Codex 生成 bundle：
 
-| 格式 | 路徑 | 叫用 |
-|---|---|---|
-| Claude Code plugin | `plugins/codex-pro/skills/<name>/SKILL.md` | `/codex-pro:<name>` |
-| **Codex（本檔適用）** | `.codex/skills/<name>/SKILL.md` | `$<name>` |
+| 格式 | 路徑 | 叫用 | Ownership |
+|---|---|---|---|
+| Claude Code plugin／來源 | `plugins/codex-pro/skills/<name>/SKILL.md` | `/codex-pro:<name>` | 手工維護 |
+| Codex 專案內 bundle | `.codex/skills/<name>/SKILL.md` | `$<name>` | 生成 |
+| Codex 原生 plugin bundle | `skills/<name>/SKILL.md` | `$<name>` | 生成 |
 
-`.codex/` 那份由 `scripts/generate-codex-skills.sh` 從 plugin 版**單向生成**，
-漂移由 `tests/codex-skills-parity.sh` 擋下。**不要手改 `.codex/skills/` 下的檔案** ——
-改來源後重跑生成腳本。
+`scripts/generate-codex-skills.sh` 會從 `plugins/codex-pro/` **單向生成** `.codex/`
+與 repo 根層的完整 bundle。兩份都包含 `skills/`、`references/`、`bin/` 與
+`.codex-bundle-files`；不要手改這些受管產物。修改 `plugins/codex-pro/skills/`、
+`plugins/codex-pro/references/` 或 `plugins/codex-pro/bin/` 後，執行：
+
+```bash
+scripts/generate-codex-skills.sh
+bash tests/codex-skills-parity.sh
+```
 
 ## 可用 skill
 
@@ -59,19 +66,25 @@ Changes can be parked（暫存）— temporarily moved out of `openspec/changes/
 
 ## ⚠️ 執行前提
 
-**部分** skill 依賴 `bin/codex-call`，而該執行檔目前**經由 `parallel-ai-agents`
-這個 Claude Code plugin 分發**。沒有安裝 Claude Code 的機器上不存在該檔案。
+| 類別 | Skills | Codex 原生版需求／行為 |
+|---|---|---|
+| Producer | `$codex-review`、`$codex-adversarial-review`、`$codex-rescue` | macOS、可執行的 Swift、`codex login` OAuth；優先使用 bundle 內 `bin/codex-pro-call`，損壞時 fail-closed |
+| Consumer | `$codex-status`、`$codex-result`、`$codex-config`、`$codex-cancel` | 純本機讀取；不需要 macOS、Swift 或 runtime |
+| 診斷 | `$codex-setup` | 任何平台都可執行；唯讀檢查 OAuth 與 producer readiness，不連網 |
+| Batch 例外 | `$codex-batch` | 使用 `codex exec --full-auto` subprocess 並寫 output dir，不使用 bundle 內 Swift runtime |
 
-| 需要 `codex-call` 才能執行 | 不需要（純本機讀取）|
-|---|---|
-| `$codex-review`、`$codex-adversarial-review`、`$codex-rescue`、`$codex-batch` | `$codex-status`、`$codex-result`、`$codex-config`、`$codex-cancel` |
+釘選 runtime 的手工來源位於 `plugins/codex-pro/bin/`，生成後在原生 plugin 內是
+`bin/codex-call` 與 `bin/codex-pro-call`；不需要安裝 Claude Code 或
+`parallel-ai-agents`。Claude Code 版維持舊契約：producer 從 PATH 解析 `codex-call`，
+不會改用 Codex bundle。
 
-`$codex-setup` 兩者皆非：它的工作就是**檢查** `codex-call` 在不在，缺檔時正常
-回報 ✗ 而不是失敗 —— 所以在沒有 codex-call 的機器上它照樣能跑，也是該先跑的那個。
+原生 CLI 安裝：
 
-右欄那四個只讀 `.codex-pro/*.md`，沒有 codex-call 也完全可用。左欄那四個會叫得
-出來但執行失敗。
+```bash
+codex plugin marketplace add PsychQuant/codex-pro --ref main --json
+codex plugin add codex-pro@codex-pro --json
+```
 
-獨立取得路徑尚未提供，追蹤於
-[#9](https://github.com/PsychQuant/codex-pro/issues/9) 第 2 項與
-[parallel-ai-agents#35](https://github.com/PsychQuant/parallel-ai-agents/issues/35)。
+安裝後必須開新 task 讓 Codex 重新探索九個 skill，再先跑 `$codex-setup`。完整的安裝、
+更新、producer smoke 與回復流程見 `tests/e2e-checklist.md`；runtime 的 OAuth side effect、
+private backend 與已知上游限制見 `README.md`。

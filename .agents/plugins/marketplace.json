@@ -1,0 +1,20 @@
+{
+  "name": "codex-pro",
+  "interface": {
+    "displayName": "codex-pro"
+  },
+  "plugins": [
+    {
+      "name": "codex-pro",
+      "source": {
+        "source": "local",
+        "path": "./"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Developer Tools"
+    }
+  ]
+}

@@ -138,12 +138,54 @@ IFS='|' read -r MODEL EFFORT MAX_TIME FOCUS_DEFAULT PROFILE_SOURCE <<< "$PROFILE
 
 `$MODEL` / `$EFFORT` / `$MAX_TIME` 為 resolved value（profile 或 default）；`$PROFILE_SOURCE` 為 aggregate enum（`default` / `global` / `project` / `mixed`）供 Step 5 frontmatter。rescue 不使用 `$FOCUS_DEFAULT`（focus_default 僅 adversarial-review 用）。
 
-### Step 4.2: codex-call invocation
+### Step 4.2: Resolve bundled Codex runtime
+
+Codex 載入本 skill 時會提供 active `SKILL.md` 的絕對路徑。先以該實際路徑的
+目錄設定 `SKILL_DIR`；不得從目前工作目錄猜測。接著以前景、同步方式執行：
+
+```bash
+BUNDLE_ROOT="$(cd "$SKILL_DIR/../.." && pwd -P)"
+CODEX_CALL="$BUNDLE_ROOT/bin/codex-pro-call"
+CODEX_RUNTIME_SOURCE="bundled"
+
+if [ -x "$CODEX_CALL" ]; then
+  if ! CODEX_RUNTIME_CHECK=$("$CODEX_CALL" --check 2>&1); then
+    case "$CODEX_RUNTIME_CHECK" in
+      error=unsupported_platform*|error=swift_missing*)
+        printf 'codex-pro runtime unavailable: %s\n' "$CODEX_RUNTIME_CHECK" >&2
+        ;;
+      *)
+        printf 'error=package_corruption detail=%s remediation=reinstall_codex_pro\n' \
+          "$CODEX_RUNTIME_CHECK" >&2
+        ;;
+    esac
+    exit 1
+  fi
+elif [ -e "$BUNDLE_ROOT/.codex-plugin/plugin.json" ] \
+    || [ -e "$BUNDLE_ROOT/.codex-bundle-files" ]; then
+  printf 'error=package_corruption wrapper=%s remediation=reinstall_codex_pro\n' "$CODEX_CALL" >&2
+  exit 1
+elif legacy_codex_call=$(command -v codex-call 2>/dev/null); then
+  CODEX_CALL="$legacy_codex_call"
+  CODEX_RUNTIME_SOURCE="legacy PATH fallback"
+  printf 'warning=legacy_path_fallback runtime=%s\n' "$CODEX_CALL" >&2
+else
+  printf 'error=runtime_unavailable remediation=run_codex_setup\n' >&2
+  exit 1
+fi
+```
+
+若 bundled wrapper 回報 `unsupported_platform` 或 `swift_missing`，producer 在讀取
+OAuth 或連網前停止；`$codex-status`、`$codex-result`、`$codex-config` 與
+`$codex-cancel` 仍可使用。含 native manifest 或 ownership inventory 的 bundle
+若缺 wrapper，必須回報 `error=package_corruption`，不得改走 PATH。
+
+### Step 4.3: codex-call invocation
 
 呼叫 `codex-call` 寫結果到 `.codex-pro/rescue-<ISO8601-timestamp>.md`（首次跑 skill 需 `mkdir -p .codex-pro/`）：
 
 ```
-codex-call \
+"$CODEX_CALL" \
   --output .codex-pro/rescue-<timestamp>.md \
   --model "$MODEL" \
   --effort "$EFFORT" \

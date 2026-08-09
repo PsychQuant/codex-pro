@@ -49,12 +49,12 @@ The automated suite SHALL verify the pinned runtime fingerprint and wrapper beha
 
 ### Requirement: macOS offline runtime smoke cannot silently skip
 
-On macOS, the release gate SHALL execute `swift --version`, the generated wrapper `--check`, and the vendored snapshot `--selftest-error-extract`. The gate MUST fail when any command fails and MUST fail when all runtime checks are skipped. On non-macOS CI, the same script SHALL report the platform limitation distinctly from a passing macOS runtime smoke.
+On macOS, the release gate SHALL execute `swift --version`, the generated wrapper `--check`, and the vendored snapshot `--selftest-error-extract '{"error":{"message":"offline self-test"}}'`. The snapshot hook SHALL receive that deterministic JSON argument and SHALL output `offline self-test` without network access. The gate MUST fail when any command fails and MUST fail when all runtime checks are skipped. On non-macOS CI, the same script SHALL report the platform limitation distinctly from a passing macOS runtime smoke.
 
 #### Scenario: macOS runtime smoke passes
 
 - **WHEN** the release gate runs on macOS with Xcode Command Line Tools and the pinned snapshot
-- **THEN** Swift, wrapper integrity, and the snapshot offline self-test all execute and pass
+- **THEN** Swift and wrapper integrity pass, and the snapshot offline self-test outputs `offline self-test`
 
 #### Scenario: Empty smoke execution is rejected
 

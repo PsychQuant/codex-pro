@@ -1,0 +1,536 @@
+#!/usr/bin/swift
+
+// codex-call — direct HTTP wrapper for chatgpt.com/backend-api
+//
+// Replaces `codex exec --full-auto -o output "prompt"` with a clean HTTP call
+// that bypasses the codex CLI subprocess (which can hang on stdin/stdout pipes).
+//
+// Usage:
+//   codex-call --output FILE [--model gpt-5.6-sol] [--effort xhigh]
+//              [--service-tier ""] [--max-time 600]
+//              [--instructions TEXT] [--prompt-file FILE | PROMPT]
+//
+// Reads OAuth token from ~/.codex/auth.json (codex CLI's token store).
+// Auto-refreshes access_token if within 5 min of expiry. Refresh uses a file
+// lock to prevent concurrent races during parallel ensemble runs.
+
+import Foundation
+#if canImport(Darwin)
+import Darwin
+#endif
+
+// MARK: - Configuration
+
+let HOME_DIR = FileManager.default.homeDirectoryForCurrentUser
+let AUTH_FILE = HOME_DIR.appendingPathComponent(".codex/auth.json").path
+let LOCK_FILE = HOME_DIR.appendingPathComponent(".codex/.token-refresh.lock").path
+let TOKEN_URL = URL(string: "https://auth.openai.com/oauth/token")!
+let CODEX_URL = URL(string: "https://chatgpt.com/backend-api/codex/responses")!
+let CLIENT_ID = "app_EMoamEEZ73f0CkXaXp7hrann"
+let REFRESH_THRESHOLD_SEC: Int = 300
+
+// MARK: - Helpers
+
+func die(_ msg: String, code: Int32 = 1) -> Never {
+    FileHandle.standardError.write(Data("error: \(msg)\n".utf8))
+    exit(code)
+}
+
+func log(_ msg: String) {
+    FileHandle.standardError.write(Data("[codex-call] \(msg)\n".utf8))
+}
+
+// MARK: - JWT exp
+
+func jwtExp(_ token: String) -> Int {
+    let parts = token.split(separator: ".")
+    guard parts.count >= 2 else { return 0 }
+    var payload = String(parts[1])
+        .replacingOccurrences(of: "-", with: "+")
+        .replacingOccurrences(of: "_", with: "/")
+    while payload.count % 4 != 0 { payload += "=" }
+    // `exp` is a JSON NumericDate; JSONSerialization may surface it as Int OR Double (large/fractional).
+    // `as? Int` fails on the Double case → a perfectly valid token reads exp=0 → forced refresh every
+    // call. Parse via NSNumber so both encodings work. A genuine parse failure still returns 0, which
+    // conservatively forces a refresh (safe direction: refresh-when-unsure beats using a dead token).
+    guard let data = Data(base64Encoded: payload),
+          let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+          let exp = (json["exp"] as? NSNumber)?.intValue
+    else { return 0 }
+    return exp
+}
+
+// MARK: - Auth file
+
+func loadAuthRaw() throws -> [String: Any] {
+    let data = try Data(contentsOf: URL(fileURLWithPath: AUTH_FILE))
+    guard let obj = try JSONSerialization.jsonObject(with: data) as? [String: Any]
+    else { throw NSError(domain: "codex-call", code: 1,
+                         userInfo: [NSLocalizedDescriptionKey: "auth.json is not an object"]) }
+    return obj
+}
+
+func saveAuthRaw(_ auth: [String: Any]) throws {
+    let data = try JSONSerialization.data(withJSONObject: auth, options: [.prettyPrinted, .sortedKeys])
+    let tmp = AUTH_FILE + ".tmp"
+    // The temp holds live OAuth secrets (access/refresh/id tokens). chmod-AFTER-write leaves a window
+    // where Data.write(.atomic)'s own staging file exists at umask-default (often 0644 — group/other
+    // readable). Tighten umask to 0o077 around the write so every file created here is ≤0600 from birth.
+    let oldMask = umask(0o077)
+    defer { umask(oldMask) }
+    try data.write(to: URL(fileURLWithPath: tmp), options: .atomic)
+    _ = chmod(tmp, 0o600)
+    if rename(tmp, AUTH_FILE) != 0 {
+        throw NSError(domain: "codex-call", code: 2,
+                      userInfo: [NSLocalizedDescriptionKey: "rename failed: \(String(cString: strerror(errno)))"])
+    }
+}
+
+// MARK: - OAuth refresh
+
+func httpFormPost(url: URL, fields: [String: String], timeout: TimeInterval = 30) throws -> Data {
+    var req = URLRequest(url: url, timeoutInterval: timeout)
+    req.httpMethod = "POST"
+    req.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
+    // x-www-form-urlencoded must escape everything except RFC 3986 unreserved chars. `.urlQueryAllowed`
+    // is WRONG here: it intentionally leaves + & = / unescaped (legal in a query component), but in a
+    // form body `+` decodes to space server-side and a literal `&`/`=` inside a value breaks the field
+    // boundary. An opaque refresh_token containing any of these would be silently corrupted (failed
+    // refresh) or inject extra fields (parameter pollution).
+    let formUnreserved = CharacterSet(charactersIn:
+        "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~")
+    let body = fields.map { (k, v) in
+        let ek = k.addingPercentEncoding(withAllowedCharacters: formUnreserved) ?? k
+        let ev = v.addingPercentEncoding(withAllowedCharacters: formUnreserved) ?? v
+        return "\(ek)=\(ev)"
+    }.joined(separator: "&")
+    req.httpBody = body.data(using: .utf8)
+
+    let sem = DispatchSemaphore(value: 0)
+    var result: Data?
+    var error: Error?
+    var status: Int = 0
+    URLSession.shared.dataTask(with: req) { data, resp, err in
+        status = (resp as? HTTPURLResponse)?.statusCode ?? 0
+        result = data
+        error = err
+        sem.signal()
+    }.resume()
+    sem.wait()
+
+    if let err = error { throw err }
+    guard status == 200, let data = result else {
+        let body = result.flatMap { String(data: $0, encoding: .utf8) } ?? "(no body)"
+        throw NSError(domain: "codex-call", code: status,
+                      userInfo: [NSLocalizedDescriptionKey: "HTTP \(status): \(body.prefix(500))"])
+    }
+    return data
+}
+
+func refreshIfNeeded(_ auth: inout [String: Any]) throws {
+    guard var tokens = auth["tokens"] as? [String: Any],
+          let access = tokens["access_token"] as? String,
+          let refresh = tokens["refresh_token"] as? String
+    else { throw NSError(domain: "codex-call", code: 3,
+                          userInfo: [NSLocalizedDescriptionKey: "auth.json missing tokens.access_token/refresh_token"]) }
+
+    let now = Int(Date().timeIntervalSince1970)
+    if jwtExp(access) - now > REFRESH_THRESHOLD_SEC { return }
+
+    // file lock
+    try FileManager.default.createDirectory(
+        at: URL(fileURLWithPath: LOCK_FILE).deletingLastPathComponent(),
+        withIntermediateDirectories: true)
+    let fd = open(LOCK_FILE, O_CREAT | O_WRONLY, 0o600)
+    if fd < 0 {
+        throw NSError(domain: "codex-call", code: 4,
+                      userInfo: [NSLocalizedDescriptionKey: "open lock failed: \(String(cString: strerror(errno)))"])
+    }
+    defer { close(fd) }
+    if flock(fd, LOCK_EX) != 0 {
+        throw NSError(domain: "codex-call", code: 5,
+                      userInfo: [NSLocalizedDescriptionKey: "flock failed: \(String(cString: strerror(errno)))"])
+    }
+    defer { _ = flock(fd, LOCK_UN) }
+
+    // Re-read after acquiring lock — another process may have refreshed during the flock wait (which
+    // can be tens of seconds under parallel-ensemble contention). Re-sample `now` AND re-extract the
+    // refresh_token from the re-read file: reusing the pre-lock `now` skews the freshness recheck
+    // optimistic (may skip a needed refresh), and reusing the pre-lock `refresh` POSTs a refresh_token
+    // that a concurrent process may have already rotated — OAuth refresh tokens are single-use, so a
+    // consumed one fails the whole refresh.
+    auth = try loadAuthRaw()
+    let nowLocked = Int(Date().timeIntervalSince1970)
+    if let t = auth["tokens"] as? [String: Any],
+       let a = t["access_token"] as? String,
+       jwtExp(a) - nowLocked > REFRESH_THRESHOLD_SEC {
+        return
+    }
+    tokens = auth["tokens"] as? [String: Any] ?? tokens
+    let refreshNow = (tokens["refresh_token"] as? String) ?? refresh
+
+    let respData = try httpFormPost(url: TOKEN_URL, fields: [
+        "grant_type": "refresh_token",
+        "refresh_token": refreshNow,
+        "client_id": CLIENT_ID,
+    ])
+    guard let json = try JSONSerialization.jsonObject(with: respData) as? [String: Any],
+          let newAccess = json["access_token"] as? String
+    else { throw NSError(domain: "codex-call", code: 6,
+                          userInfo: [NSLocalizedDescriptionKey: "refresh response missing access_token"]) }
+
+    tokens["access_token"] = newAccess
+    if let newRefresh = json["refresh_token"] as? String { tokens["refresh_token"] = newRefresh }
+    if let newId = json["id_token"] as? String { tokens["id_token"] = newId }
+    auth["tokens"] = tokens
+
+    let fmt = ISO8601DateFormatter()
+    fmt.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+    auth["last_refresh"] = fmt.string(from: Date())
+
+    try saveAuthRaw(auth)
+    log("token refreshed")
+}
+
+// MARK: - SSE error message extraction
+
+/// The information-free fallback, named rather than inlined so #28 can key off it.
+let CODEX_FALLBACK_MESSAGE = "Codex error"
+
+/// Pull the human-readable message out of an SSE `error` / `response.failed` event.
+///
+/// The backend puts it in different places depending on the event shape:
+///   `{"type":"error","error":{"code":…,"message":…}}`                  → json["error"]["message"]
+///   `{"type":"response.failed","response":{"error":{"message":…}}}`    → json["response"]["error"]["message"]
+///   (defensive: a hypothetical top-level form)                        → json["message"]
+///
+/// #25 — the `json["error"]["message"]` path was missing, so a real backend error
+/// like `server_is_overloaded` matched none of the paths and collapsed to the
+/// "Codex error" fallback. Every HTTP-200-stream failure then looked identical,
+/// making "retry now vs stop" undecidable. Order matters: the top-level path stays
+/// first so the new one cannot shadow it.
+///
+/// KNOWN GAP (#28): each path accepts any String, including "" — an empty top-level
+/// `message` therefore shadows a real nested one. Fixing that needs an informativeness
+/// predicate rather than a presence check, which is tracked with the rest of the SSE
+/// terminal-event semantics in #28. Deliberately NOT fixed here: #25 is scoped to the
+/// missing path, which has a reproducible payload.
+func extractErrorMessage(_ json: [String: Any]) -> String {
+    let raw = (json["message"] as? String)
+        ?? ((json["error"] as? [String: Any])?["message"] as? String)
+        ?? ((json["response"] as? [String: Any])?["error"] as? [String: Any])?["message"] as? String
+        ?? CODEX_FALLBACK_MESSAGE
+    return sanitizeBackendText(raw)
+}
+
+/// Cap and de-fang backend-controlled text before it becomes an error message.
+///
+/// Why this ships with #25 instead of joining #28's deferral pile: before this change the
+/// shape the backend actually emits (`error.message`) matched none of the paths and
+/// collapsed to the constant — the sink was dead in practice. Adding the path is what
+/// makes it live, so the cap belongs to the same change. The two sibling external-text
+/// sites already truncate identically (`body.prefix(500)`); this makes the third
+/// consistent instead of leaving the newest one as the only uncapped route.
+///
+/// C0/DEL/C1 are stripped because this text is written straight to a TTY and also reaches
+/// an agent's context via the Bash tool. Newline and tab are kept for readability — NOT
+/// because they are harmless. They are not: 500 blank lines will scroll the real failure
+/// out of a terminal just as effectively as a CSI erase. What actually bounds that is the
+/// budget below, not the character filter.
+///
+/// The budget is measured in UTF-8 BYTES and LINES, not Characters. `String.count` counts
+/// extended grapheme clusters, which are unbounded in scalar length — a base character
+/// plus N combining marks is ONE Character — so a Character-based cap does not bound
+/// anything. Measured on the previous grapheme-based version: 500 CJK characters passed
+/// as 1,500 bytes and 500 clusters of 20 combining marks passed as 20,500 bytes, both
+/// with no truncation marker. Bytes and lines are what a TTY and a token budget actually
+/// spend, so those are what we cap (#25 R6).
+///
+/// Remaining sanitization gaps — bidi overrides (U+202A–U+202E, U+2066–U+2069), the
+/// Unicode Tags block, U+FEFF, U+2028/U+2029, the two sibling `body.prefix(500)` sites
+/// that share the Character-counting flaw, and the forgeable in-band marker — are tracked
+/// in #28. They need one coherent pass over every backend-text sink, not a fourth
+/// piecemeal edit here.
+func sanitizeBackendText(_ raw: String) -> String {
+    let stripped = String(String.UnicodeScalarView(raw.unicodeScalars.filter { s in
+        if s.value == 0x0A || s.value == 0x09 { return true }          // keep \n, \t
+        if s.value < 0x20 || s.value == 0x7F { return false }           // C0 + DEL
+        if s.value >= 0x80 && s.value <= 0x9F { return false }          // C1
+        return true
+    }))
+    return clampToBudget(stripped)
+}
+
+/// Byte + line budget. Truncates on whichever limit is hit first.
+func clampToBudget(_ s: String, maxBytes: Int = 2000, maxLines: Int = 20) -> String {
+    var out = String.UnicodeScalarView()
+    var bytes = 0
+    var lines = 1
+    var clipped = false
+    for scalar in s.unicodeScalars {
+        let w = String(scalar).utf8.count
+        if scalar.value == 0x0A {
+            if lines + 1 > maxLines { clipped = true; break }
+            lines += 1
+        }
+        if bytes + w > maxBytes { clipped = true; break }
+        out.append(scalar)
+        bytes += w
+    }
+    return clipped ? String(out) + "…(truncated)" : String(out)
+}
+
+// MARK: - SSE streaming
+
+final class StreamCollector: NSObject, URLSessionDataDelegate {
+    var accumulated = ""
+    var buffer = ""
+    var statusCode: Int = 0
+    var streamError: Error?
+    let done = DispatchSemaphore(value: 0)
+    var firstBytes: Data?
+
+    func urlSession(_ session: URLSession, dataTask: URLSessionDataTask,
+                    didReceive response: URLResponse,
+                    completionHandler: @escaping (URLSession.ResponseDisposition) -> Void) {
+        statusCode = (response as? HTTPURLResponse)?.statusCode ?? 0
+        completionHandler(.allow)
+    }
+
+    func urlSession(_ session: URLSession, dataTask: URLSessionDataTask, didReceive data: Data) {
+        if statusCode != 200 {
+            // Buffer error body for reporting
+            firstBytes = (firstBytes ?? Data()) + data
+            return
+        }
+        // KNOWN GAP (#28): `didReceive` delivers Data on TCP availability, with no
+        // alignment to UTF-8 codepoint boundaries. A cut mid-character makes this
+        // decode return nil and drops the WHOLE chunk — every complete event in it
+        // included — and the bytes are not retained for the next chunk. With this
+        // plugin defaulting to CJK output that is routine, not a corner case. Fixing
+        // it needs byte-level buffering; tracked in #28 with the rest of the framing.
+        guard let chunk = String(data: data, encoding: .utf8) else { return }
+        buffer += chunk
+        while let range = buffer.range(of: "\n\n") {
+            let event = String(buffer[buffer.startIndex..<range.lowerBound])
+            buffer.removeSubrange(buffer.startIndex..<range.upperBound)
+            processEvent(event)
+            // KNOWN GAP (#28): this bail aborts the drain within a single callback,
+            // so sibling events already in `buffer` go unprocessed. Left as-is here
+            // deliberately — changing it only pays off together with the terminal-event
+            // policy, and that policy still lacks the backend trace it depends on.
+            if streamError != nil { return }
+        }
+    }
+
+    func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
+        if statusCode != 200 {
+            let body = firstBytes.flatMap { String(data: $0, encoding: .utf8) } ?? "(no body)"
+            streamError = NSError(domain: "codex-call", code: statusCode,
+                                  userInfo: [NSLocalizedDescriptionKey: "HTTP \(statusCode): \(body.prefix(500))"])
+        } else if let err = error, streamError == nil {
+            streamError = err
+        }
+        done.signal()
+    }
+
+    func processEvent(_ event: String) {
+        let dataLines = event.split(separator: "\n", omittingEmptySubsequences: false)
+            .compactMap { line -> String? in
+                guard line.hasPrefix("data:") else { return nil }
+                return String(line.dropFirst(5)).trimmingCharacters(in: .whitespaces.subtracting(.newlines))
+            }
+        let payload = dataLines.joined()
+        if payload.isEmpty || payload == "[DONE]" { return }
+        guard let data = payload.data(using: .utf8),
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let type = json["type"] as? String
+        else { return }
+
+        switch type {
+        case "response.output_text.delta":
+            if let delta = json["delta"] as? String { accumulated += delta }
+        case "error", "response.failed":
+            // Unconditional assignment — same as before #25. Which terminal event should
+            // win when several arrive is a policy question that two attempts (#25 R1
+            // first-wins latch, R2 informativeness bit) both got wrong, because nobody
+            // has yet observed how the backend actually tears down. Tracked in #28,
+            // where the trace comes first and the policy second. #25 only fixes the
+            // missing extraction path, which has a reproducible payload.
+            streamError = NSError(domain: "codex-call", code: -1,
+                                   userInfo: [NSLocalizedDescriptionKey: extractErrorMessage(json)])
+        default:
+            break
+        }
+    }
+}
+
+func streamCodex(prompt: String, outputFile: String, model: String, effort: String,
+                 serviceTier: String, maxTime: Int, instructions: String) throws {
+    var auth = try loadAuthRaw()
+    try refreshIfNeeded(&auth)
+    guard let tokens = auth["tokens"] as? [String: Any],
+          let access = tokens["access_token"] as? String
+    else { throw NSError(domain: "codex-call", code: 7,
+                          userInfo: [NSLocalizedDescriptionKey: "post-refresh: tokens missing"]) }
+    let accountId = (tokens["account_id"] as? String) ?? ""
+
+    var body: [String: Any] = [
+        "model": model,
+        "store": false,
+        "stream": true,
+        "instructions": instructions,
+        "input": [["role": "user", "content": [["type": "input_text", "text": prompt]]]],
+        "text": ["verbosity": "medium"],
+        "include": ["reasoning.encrypted_content"],
+        "tool_choice": "auto",
+        "parallel_tool_calls": true,
+        "reasoning": ["effort": effort, "summary": "auto"],
+    ]
+    // Translate legacy/friendly names to backend wire values.
+    // Mirrors codex-rs ServiceTier::request_value(): Fast→priority, Flex→flex.
+    // Backend rejects "fast" with HTTP 400; codex CLI does this translation internally.
+    let wireTier: String = {
+        switch serviceTier.lowercased() {
+        case "fast", "priority": return "priority"
+        case "flex":             return "flex"
+        case "":                 return ""
+        default:                 return serviceTier  // pass through unknown values
+        }
+    }()
+    if !wireTier.isEmpty { body["service_tier"] = wireTier }
+
+    var req = URLRequest(url: CODEX_URL, timeoutInterval: TimeInterval(maxTime))
+    req.httpMethod = "POST"
+    req.setValue("Bearer \(access)", forHTTPHeaderField: "Authorization")
+    req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+    req.setValue("responses=experimental", forHTTPHeaderField: "OpenAI-Beta")
+    req.setValue("codex_cli_rs", forHTTPHeaderField: "originator")
+    req.setValue(accountId, forHTTPHeaderField: "chatgpt-account-id")
+    req.setValue("text/event-stream", forHTTPHeaderField: "Accept")
+    req.httpBody = try JSONSerialization.data(withJSONObject: body)
+
+    let collector = StreamCollector()
+    let config = URLSessionConfiguration.default
+    config.timeoutIntervalForRequest = TimeInterval(maxTime)
+    config.timeoutIntervalForResource = TimeInterval(maxTime)
+    let session = URLSession(configuration: config, delegate: collector, delegateQueue: nil)
+
+    session.dataTask(with: req).resume()
+    let waitResult = collector.done.wait(timeout: .now() + .seconds(maxTime + 5))
+    session.invalidateAndCancel()
+
+    if waitResult == .timedOut {
+        throw NSError(domain: "codex-call", code: 408,
+                      userInfo: [NSLocalizedDescriptionKey: "Hard timeout after \(maxTime)s"])
+    }
+    if let err = collector.streamError { throw err }
+
+    // Fail-closed on empty output: a 200 stream with no text deltas (model emitted only reasoning,
+    // an aborted stream before the first delta, etc.) would otherwise write an empty file and exit 0.
+    // In an ensemble that reads exit code + file, a blank result is misread as "this reviewer passed
+    // with no findings" — a forged vote. Treat empty output as a non-zero failure instead.
+    if collector.accumulated.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+        throw NSError(domain: "codex-call", code: 422,
+                      userInfo: [NSLocalizedDescriptionKey: "Codex stream completed with no text output — refusing to write an empty result (an empty file would be misread as a passing review)."])
+    }
+
+    try collector.accumulated.write(toFile: outputFile, atomically: true, encoding: .utf8)
+    log("wrote \(collector.accumulated.count) chars to \(outputFile)")
+}
+
+// MARK: - Argument parsing
+
+struct Args {
+    var output: String?
+    var model: String = "gpt-5.6-sol"  // governance SNAPSHOT (#23) — authoritative: codex-pro references/defaults.json; callers SHOULD pass --model
+    var effort: String = "xhigh"
+    var serviceTier: String = ""
+    var maxTime: Int = 600
+    var instructions: String = "You are a careful, rigorous reviewer. Respond in the user's language."
+    var promptFile: String?
+    var prompt: String?
+    var selftestErrorExtract: String?   // hidden test hook (#25); see --selftest-error-extract
+}
+
+func parseArgs() -> Args {
+    var a = Args()
+    var args = Array(CommandLine.arguments.dropFirst())
+    while !args.isEmpty {
+        let head = args.removeFirst()
+        func next() -> String {
+            guard !args.isEmpty else { die("missing value for \(head)") }
+            return args.removeFirst()
+        }
+        switch head {
+        case "--output", "-o": a.output = next()
+        case "--model": a.model = next()
+        case "--effort": a.effort = next()
+        case "--service-tier": a.serviceTier = next()
+        case "--max-time": a.maxTime = Int(next()) ?? a.maxTime
+        case "--instructions": a.instructions = next()
+        case "--prompt-file": a.promptFile = next()
+        // Hidden test hook (#25) — deliberately absent from --help. Feeds one SSE
+        // event payload through extractErrorMessage and prints the result; sends no
+        // HTTP. Exists because CODEX_URL is a hardcoded constant with no injection
+        // point, so the extraction chain is otherwise untestable from bats.
+        case "--selftest-error-extract": a.selftestErrorExtract = next()
+        case "--help", "-h":
+            print("""
+            codex-call — direct HTTP wrapper for chatgpt.com/backend-api
+
+            Usage:
+              codex-call --output FILE [--model gpt-5.6-sol] [--effort xhigh]
+                         [--service-tier ""] [--max-time 600]
+                         [--instructions TEXT]
+                         [--prompt-file FILE | PROMPT]
+
+            If no PROMPT and no --prompt-file is given, reads prompt from stdin.
+
+            Auth: reads ~/.codex/auth.json (auto-refreshes if expired).
+            """)
+            exit(0)
+        default:
+            if a.prompt == nil { a.prompt = head }
+            else { die("unexpected positional argument: \(head)") }
+        }
+    }
+    return a
+}
+
+// MARK: - Main
+
+let a = parseArgs()
+
+// Hidden test hook (#25) — must precede the --output guard: this path sends no
+// request and writes no file, so requiring --output would be meaningless.
+if let raw = a.selftestErrorExtract {
+    guard let data = raw.data(using: .utf8),
+          let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+    else { die("--selftest-error-extract: invalid JSON") }
+    print(extractErrorMessage(json))
+    exit(0)
+}
+
+guard let output = a.output else { die("--output is required") }
+
+let prompt: String
+if let pf = a.promptFile {
+    do { prompt = try String(contentsOfFile: pf, encoding: .utf8) }
+    catch { die("cannot read prompt file: \(error.localizedDescription)") }
+} else if let p = a.prompt {
+    prompt = p
+} else {
+    let stdinData = FileHandle.standardInput.readDataToEndOfFile()
+    prompt = String(data: stdinData, encoding: .utf8) ?? ""
+}
+if prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+    die("empty prompt")
+}
+
+do {
+    try streamCodex(prompt: prompt, outputFile: output, model: a.model, effort: a.effort,
+                    serviceTier: a.serviceTier, maxTime: a.maxTime, instructions: a.instructions)
+} catch {
+    die(error.localizedDescription)
+}

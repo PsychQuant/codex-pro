@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# scripts/generate-codex-skills.sh — 由 Claude plugin skill 產出 Codex 鏡像（#9）。
+# scripts/generate-codex-skills.sh — 由單一來源產出完整 Codex bundles。
 #
 # 為什麼需要這支腳本：
 #   codex-pro 的 skill 以 Claude Code plugin 格式撰寫（plugins/codex-pro/skills/），
@@ -17,17 +17,21 @@
 # 來源是唯一 source of truth，本腳本只讀不改來源。
 #
 # 用法：
-#   scripts/generate-codex-skills.sh                     # 寫進 .codex/skills/
-#   scripts/generate-codex-skills.sh --output <dir>      # 寫進指定目錄（測試用）
+#   scripts/generate-codex-skills.sh                     # 更新 .codex/ 與 repo root
+#   scripts/generate-codex-skills.sh --bundle-root <dir> # 更新一個完整 bundle
+#   scripts/generate-codex-skills.sh --output <dir>      # 舊版 skill-only 測試介面
 
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
-SOURCE_DIR="$REPO_ROOT/plugins/codex-pro/skills"
+SOURCE_BUNDLE="$REPO_ROOT/plugins/codex-pro"
+SOURCE_DIR="$SOURCE_BUNDLE/skills"
 MANIFEST="$SCRIPT_DIR/codex-skills.manifest"
-DEFAULT_MIRROR="$REPO_ROOT/.codex/skills"
+RESOURCE_MANIFEST="$SCRIPT_DIR/codex-bundle-resources.manifest"
+DEFAULT_CODEX_BUNDLE="$REPO_ROOT/.codex"
+INVENTORY_NAME=".codex-bundle-files"
 GENERATED_MARKER="GENERATED FILE — DO NOT EDIT"
 
 # ── 輸出目錄解析 ─────────────────────────────────────────────────
@@ -35,45 +39,45 @@ GENERATED_MARKER="GENERATED FILE — DO NOT EDIT"
 # 傳入**空字串**時 `:-` 會當成「沒給」而 fallback 到真正的 .codex/skills/ ——
 # 呼叫端只要 `mktemp -d` 失敗沒檢查，就會拿 committed 產物當暫存目錄來寫。
 # 具名 flag 能把「沒給」與「給了空值」分開，後者是錯誤而非預設。
-MIRROR_DIR=""
-MIRROR_GIVEN=0
+MODE="default"
+DESTINATION=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --output)
       [ $# -ge 2 ] || { echo "FATAL: --output requires a directory argument" >&2; exit 2; }
-      MIRROR_DIR="$2"; MIRROR_GIVEN=1; shift 2 ;;
+      [ "$MODE" = "default" ] || { echo "FATAL: output modes are mutually exclusive" >&2; exit 2; }
+      MODE="output"; DESTINATION="$2"; shift 2 ;;
     --output=*)
-      MIRROR_DIR="${1#--output=}"; MIRROR_GIVEN=1; shift ;;
+      [ "$MODE" = "default" ] || { echo "FATAL: output modes are mutually exclusive" >&2; exit 2; }
+      MODE="output"; DESTINATION="${1#--output=}"; shift ;;
+    --bundle-root)
+      [ $# -ge 2 ] || { echo "FATAL: --bundle-root requires a directory argument" >&2; exit 2; }
+      [ "$MODE" = "default" ] || { echo "FATAL: output modes are mutually exclusive" >&2; exit 2; }
+      MODE="bundle"; DESTINATION="$2"; shift 2 ;;
+    --bundle-root=*)
+      [ "$MODE" = "default" ] || { echo "FATAL: output modes are mutually exclusive" >&2; exit 2; }
+      MODE="bundle"; DESTINATION="${1#--bundle-root=}"; shift ;;
     -h|--help)
-      sed -n '2,20p' "$0"; exit 0 ;;
+      sed -n '2,28p' "$0"; exit 0 ;;
     *)
-      echo "FATAL: unknown argument '$1' (expected --output <dir>)" >&2; exit 2 ;;
+      echo "FATAL: unknown argument '$1' (expected --bundle-root <dir> or --output <dir>)" >&2
+      exit 2 ;;
   esac
 done
 
-if [ "$MIRROR_GIVEN" -eq 1 ] && [ -z "$MIRROR_DIR" ]; then
-  echo "FATAL: --output was given an empty value." >&2
-  echo "       Refusing to silently fall back to $DEFAULT_MIRROR — that would" >&2
-  echo "       overwrite committed artifacts when the caller meant a temp dir." >&2
+if [ "$MODE" != "default" ] && [ -z "$DESTINATION" ]; then
+  if [ "$MODE" = "bundle" ]; then flag="--bundle-root"; else flag="--output"; fi
+  echo "FATAL: $flag was given an empty value." >&2
+  echo "       Refusing to silently fall back to a committed destination." >&2
   exit 2
 fi
-[ -n "$MIRROR_DIR" ] || MIRROR_DIR="$DEFAULT_MIRROR"
 
 # 目的地必須先存在或可建立，然後解析成絕對路徑再做安全檢查 ——
 # 檢查 `.` 或 `../..` 這種相對寫法沒有意義，要比對的是它實際指到哪。
-mkdir -p -- "$MIRROR_DIR"
-MIRROR_DIR="$(cd -- "$MIRROR_DIR" && pwd)"
 
 # 這支腳本會在目的地內 `rm -rf` 孤兒鏡像。目的地若被指到 repo root 或 /，
 # 那個迴圈會把 .git/、plugins/、scripts/ 一併當成孤兒刪掉。破壞不可逆，
 # 所以在任何刪除發生前先擋住明顯不安全的目的地。
-case "$MIRROR_DIR" in
-  /|"$HOME"|"$REPO_ROOT")
-    echo "FATAL: refusing to use '$MIRROR_DIR' as output directory." >&2
-    echo "       This script removes orphan subdirectories inside the output dir;" >&2
-    echo "       pointing it at / , \$HOME or the repo root would delete real content." >&2
-    exit 2 ;;
-esac
 
 if [ ! -d "$SOURCE_DIR" ]; then
   echo "FATAL: source skills dir missing: $SOURCE_DIR" >&2
@@ -85,10 +89,21 @@ if [ ! -r "$MANIFEST" ]; then
   exit 2
 fi
 
+if [ ! -r "$RESOURCE_MANIFEST" ]; then
+  echo "FATAL: bundle resource manifest missing: $RESOURCE_MANIFEST" >&2
+  exit 2
+fi
+
 if ! command -v python3 >/dev/null 2>&1; then
   echo "FATAL: python3 not on PATH" >&2
   exit 2
 fi
+
+if ! WORK_ROOT="$(mktemp -d)" || [ -z "$WORK_ROOT" ] || [ ! -d "$WORK_ROOT" ]; then
+  echo "FATAL: could not create generator staging directory" >&2
+  exit 2
+fi
+trap 'rm -rf -- "$WORK_ROOT"' EXIT
 
 # ── 預期 skill 集合（顯式契約）─────────────────────────────────
 # 不從來源目錄枚舉就好 —— 那樣的話來源少一個 skill 時，generator 與 test 會
@@ -125,10 +140,161 @@ while IFS= read -r d; do
   fi
 done < <(find "$SOURCE_DIR" -mindepth 1 -maxdepth 1 -type d | sort)
 
+# ── resource manifest 與來源樹必須精確雙向相等 ──────────────────
+RESOURCE_PATHS="$WORK_ROOT/resources"
+ACTUAL_RESOURCES="$WORK_ROOT/actual-resources"
+
+python3 - "$RESOURCE_MANIFEST" "$SOURCE_BUNDLE" > "$RESOURCE_PATHS" <<'PY'
+from pathlib import Path, PurePosixPath
+import os
+import sys
+
+manifest = Path(sys.argv[1])
+source = Path(sys.argv[2]).resolve()
+paths = []
+errors = []
+
+for number, raw in enumerate(manifest.read_text(encoding="utf-8").splitlines(), 1):
+    value = raw.split("#", 1)[0].strip()
+    if not value:
+        continue
+    pure = PurePosixPath(value)
+    parts = value.split("/")
+    if pure.is_absolute() or value.startswith("~"):
+        errors.append(f"line {number}: absolute/home-relative path is forbidden: {value}")
+    elif any(part in ("", ".", "..") for part in parts):
+        errors.append(f"line {number}: path is not normalized: {value}")
+    elif parts[0] not in ("skills", "references", "bin"):
+        errors.append(f"line {number}: path must be under skills/, references/, or bin/: {value}")
+    elif value.endswith("/SKILL.md"):
+        errors.append(f"line {number}: SKILL.md belongs to codex-skills.manifest: {value}")
+    else:
+        target = source.joinpath(*parts)
+        try:
+            resolved = target.resolve(strict=True)
+        except FileNotFoundError:
+            errors.append(f"line {number}: source resource is missing: {value}")
+        else:
+            if os.path.commonpath((str(source), str(resolved))) != str(source):
+                errors.append(f"line {number}: source resource escapes source bundle: {value}")
+            elif not resolved.is_file():
+                errors.append(f"line {number}: source resource is not a file: {value}")
+    paths.append(value)
+
+if paths != sorted(paths):
+    errors.append("resource paths are not bytewise sorted")
+if len(paths) != len(set(paths)):
+    errors.append("resource paths contain duplicates")
+if errors:
+    sys.stderr.write("FATAL: invalid bundle resource manifest: " + "; ".join(errors) + "\n")
+    raise SystemExit(3)
+print(*paths, sep="\n")
+PY
+
+{
+  find "$SOURCE_DIR" -type f ! -name SKILL.md -print
+  [ ! -d "$SOURCE_BUNDLE/references" ] || find "$SOURCE_BUNDLE/references" -type f -print
+  [ ! -d "$SOURCE_BUNDLE/bin" ] || find "$SOURCE_BUNDLE/bin" -type f -print
+} | sed "s#^$SOURCE_BUNDLE/##" | LC_ALL=C sort > "$ACTUAL_RESOURCES"
+
+if ! cmp -s "$RESOURCE_PATHS" "$ACTUAL_RESOURCES"; then
+  echo "FATAL: $RESOURCE_MANIFEST does not exactly match publishable non-SKILL source files:" >&2
+  diff -u "$RESOURCE_PATHS" "$ACTUAL_RESOURCES" >&2 || true
+  exit 3
+fi
+
+EXPECTED_INVENTORY="$WORK_ROOT/expected-inventory"
+{
+  for skill in "${EXPECTED[@]}"; do printf 'skills/%s/SKILL.md\n' "$skill"; done
+  cat "$RESOURCE_PATHS"
+} | LC_ALL=C sort -u > "$EXPECTED_INVENTORY"
+
+resolve_destination() {
+  python3 - "$1" <<'PY'
+from pathlib import Path
+import sys
+
+value = sys.argv[1]
+if "\n" in value or "\r" in value:
+    raise SystemExit(2)
+print(Path(value).expanduser().resolve(strict=False))
+PY
+}
+
+validate_destination() {
+  # validate_destination <raw-path> <bundle|output>
+  local raw="$1" kind="$2" resolved canonical_home reason
+  [ -n "$raw" ] || { echo "FATAL: empty $kind destination" >&2; return 2; }
+  resolved="$(resolve_destination "$raw")" || {
+    echo "FATAL: could not safely resolve $kind destination '$raw'" >&2
+    return 2
+  }
+  canonical_home="$(resolve_destination "$HOME")" || return 2
+
+  case "$resolved" in
+    /)
+      echo "FATAL: refusing literal filesystem root '/' as $kind destination" >&2
+      return 2 ;;
+    "$canonical_home")
+      echo "FATAL: refusing current-user home '$resolved' as $kind destination" >&2
+      return 2 ;;
+  esac
+
+  if [ "$kind" = "output" ] && [ "$resolved" = "$REPO_ROOT" ]; then
+    echo "FATAL: refusing repository root as skill-only output destination" >&2
+    return 2
+  fi
+  if [ -e "$resolved" ] && [ ! -d "$resolved" ]; then
+    echo "FATAL: $kind destination exists but is not a directory: $resolved" >&2
+    return 2
+  fi
+
+  # repo root 是刻意的 native bundle；除此特例外，目的地不得是來源或
+  # 來源的祖先，也不得落在 .git/scripts/來源裡。
+  if ! reason="$(python3 - "$resolved" "$kind" "$REPO_ROOT" "$SOURCE_BUNDLE" "$SCRIPT_DIR" 2>&1 <<'PY'
+import os
+import sys
+from pathlib import Path
+
+dest = os.path.realpath(sys.argv[1])
+kind = sys.argv[2]
+repo, source, scripts = map(os.path.realpath, sys.argv[3:])
+if kind == "bundle" and dest == repo:
+    raise SystemExit(0)
+
+cursor = Path(dest)
+while not cursor.exists() and cursor != cursor.parent:
+    cursor = cursor.parent
+if not cursor.is_dir():
+    print(f"nearest existing ancestor is not a directory: {cursor}")
+    raise SystemExit(1)
+
+def within(path, parent):
+    return os.path.commonpath((path, parent)) == parent
+
+if within(source, dest):
+    print("destination is an ancestor of the hand-maintained source")
+    raise SystemExit(1)
+for protected in (source, scripts, os.path.join(repo, ".git")):
+    if within(dest, protected):
+        print(f"destination is inside protected path {protected}")
+        raise SystemExit(1)
+PY
+)"; then
+    echo "FATAL: unsafe $kind destination '$resolved': $reason" >&2
+    return 2
+  fi
+
+  printf '%s\n' "$resolved"
+}
+
 # ── 移除我們自己產生的孤兒鏡像 ───────────────────────────────────
 # 只刪「帶 generated marker」的目錄 —— 那些才是本腳本擁有的產物。目的地若還有
 # 別人手寫的 skill，本腳本無權處置：既不刪、也不假裝沒看到，直接失敗。
 # 全刪 = 壟斷整個 .codex/skills/；靜默略過 = 之後 parity 比對莫名其妙紅。
+generate_skill_only() {
+  local MIRROR_DIR="$1"
+
 if [ -d "$MIRROR_DIR" ]; then
   while IFS= read -r d; do
     name="$(basename "$d")"
@@ -176,7 +342,7 @@ def sub_exact(pattern, repl, count, why, flags=0):
     自己預期命中幾次，數量不符即失敗。
     """
     global text
-    new, n = re.subn(pattern, repl, text, flags=flags)
+    new, n = re.subn(pattern, lambda _: repl, text, flags=flags)
     if n != count:
         fatal(f"{why}: expected {count} match(es), got {n}. Source structure changed; "
               f"update the rule in scripts/generate-codex-skills.sh.")
@@ -196,66 +362,168 @@ text = re.sub(r"/codex-pro:([a-z0-9-]+)", r"$\1", text)
 if "/codex-pro:" in text:
     fatal("Claude namespace '/codex-pro:' still present after rewrite.")
 
-# ── codex-setup 具名特例 ──────────────────────────────────────
-# CLAUDE_PLUGIN_ROOT 只在 Claude Code plugin 執行期存在。Codex 環境下
-# `${CLAUDE_PLUGIN_ROOT:-$(pwd)}` 會 fallback 到 cwd，然後去讀一個在 Codex 下
-# 必然不存在的 .claude-plugin/plugin.json，回報誤導性的 not_found ——
-# 看起來像「安裝壞了」，實際上是這個檢查在此環境本就不適用。
-#
-# 只換掉那段 bash 是不夠的：description 仍宣稱會檢查 manifest、流程仍寫「三項
-# 檢查」、報表仍要求填 Plugin manifest 那一列、兩個範例仍顯示它 ✓。Check 3
-# 既沒執行也沒輸出，agent 只能自己編一個值填進去。所以整份契約要一起收斂成兩項。
-#
-# 為什麼是「拿掉那一列」而不是「保留但固定 N/A」：後者要求 agent 每次都記得把
-# 該列排除在「全 ✓」的計數之外 —— 多一條例外規則就多一個被忘記的機會。
-# 拿掉之後契約是齊一的：每一列都必須 ✓。
+# ── Codex runtime resolver ────────────────────────────────────
+# 一般 skill shell 沒有穩定的 plugin-root 環境變數。Codex 會在載入 skill 時
+# 告知 active SKILL.md 的絕對路徑，所以生成版從那個位置往上兩層取得 bundle。
+# 有 native marker 時 runtime 損壞必須 fail-closed；只有舊式無 marker 鏡像才
+# 能保留 PATH 相容路徑。
+PRODUCER_SKILLS = {
+    "codex-review",
+    "codex-adversarial-review",
+    "codex-rescue",
+}
+
+if skill in PRODUCER_SKILLS:
+    PRODUCER_RUNTIME_SECTION = r"""### Step 4.2: Resolve bundled Codex runtime
+
+Codex 載入本 skill 時會提供 active `SKILL.md` 的絕對路徑。先以該實際路徑的
+目錄設定 `SKILL_DIR`；不得從目前工作目錄猜測。接著以前景、同步方式執行：
+
+```bash
+BUNDLE_ROOT="$(cd "$SKILL_DIR/../.." && pwd -P)"
+CODEX_CALL="$BUNDLE_ROOT/bin/codex-pro-call"
+CODEX_RUNTIME_SOURCE="bundled"
+
+if [ -x "$CODEX_CALL" ]; then
+  if ! CODEX_RUNTIME_CHECK=$("$CODEX_CALL" --check 2>&1); then
+    case "$CODEX_RUNTIME_CHECK" in
+      error=unsupported_platform*|error=swift_missing*)
+        printf 'codex-pro runtime unavailable: %s\n' "$CODEX_RUNTIME_CHECK" >&2
+        ;;
+      *)
+        printf 'error=package_corruption detail=%s remediation=reinstall_codex_pro\n' \
+          "$CODEX_RUNTIME_CHECK" >&2
+        ;;
+    esac
+    exit 1
+  fi
+elif [ -e "$BUNDLE_ROOT/.codex-plugin/plugin.json" ] \
+    || [ -e "$BUNDLE_ROOT/.codex-bundle-files" ]; then
+  printf 'error=package_corruption wrapper=%s remediation=reinstall_codex_pro\n' "$CODEX_CALL" >&2
+  exit 1
+elif legacy_codex_call=$(command -v codex-call 2>/dev/null); then
+  CODEX_CALL="$legacy_codex_call"
+  CODEX_RUNTIME_SOURCE="legacy PATH fallback"
+  printf 'warning=legacy_path_fallback runtime=%s\n' "$CODEX_CALL" >&2
+else
+  printf 'error=runtime_unavailable remediation=run_codex_setup\n' >&2
+  exit 1
+fi
+```
+
+若 bundled wrapper 回報 `unsupported_platform` 或 `swift_missing`，producer 在讀取
+OAuth 或連網前停止；`$codex-status`、`$codex-result`、`$codex-config` 與
+`$codex-cancel` 仍可使用。含 native manifest 或 ownership inventory 的 bundle
+若缺 wrapper，必須回報 `error=package_corruption`，不得改走 PATH。
+
+### Step 4.3: codex-call invocation"""
+
+    sub_exact(r"### Step 4\.2: codex-call invocation", PRODUCER_RUNTIME_SECTION, 1,
+              "producer invocation heading")
+    old_invocation = "codex-call \\\n"
+    new_invocation = '"$CODEX_CALL" \\\n'
+    if text.count(old_invocation) != 1:
+        fatal("producer command: expected exactly one bare codex-call invocation")
+    text = text.replace(old_invocation, new_invocation)
+
+# codex-setup 需要完整替換 Claude Code 的 PATH／manifest 檢查與報表，來源檔則
+# 完全維持原契約。生成版的 wrapper --check 只做平台、Swift、mode 與 hash 驗證，
+# 不執行 snapshot、不讀 OAuth、不連網。
 if skill == "codex-setup":
-    # 注意這段文字自己不能含任何被 residue 掃描的 token —— 它的工作正是說明那些
-    # 東西為何不在。掃描列表因此只放「會被 agent 當成可執行事實」的東西（環境
-    # 變數、必然不存在的路徑、Claude-only 命令、過期的計數契約），不放「Plugin
-    # manifest」這種單純的概念指涉：解釋一件事的缺席，必須能叫出它的名字。
-    NOTICE = (
-        "> **Plugin manifest 檢查在 Codex 環境不適用，已從本 skill 移除。**\n"
-        ">\n"
-        "> Claude Code 版另有第 3 項檢查，讀 plugin manifest JSON 驗證安裝狀態。\n"
-        "> Codex 沒有 plugin manifest 這個概念，那個檔案必然不存在——執行它只會\n"
-        "> 得到誤導性的 `not_found`，看起來像安裝壞了。\n"
-        ">\n"
-        "> Codex 環境以上方兩項檢查（OAuth、codex-call runtime）判斷就緒狀態。\n"
-        "> 下方的 Readiness Report 也因此只有兩列。\n"
-    )
+    SETUP_RUNTIME_SECTION = r"""### Check 2: Codex producer runtime
+
+Codex 載入本 skill 時會提供 active `SKILL.md` 的絕對路徑。先以該實際路徑的
+目錄設定 `SKILL_DIR`，不得從目前工作目錄推測，再執行以下純 read-only Bash：
+
+```bash
+BUNDLE_ROOT="$(cd "$SKILL_DIR/../.." && pwd -P)"
+wrapper="$BUNDLE_ROOT/bin/codex-pro-call"
+
+if [ -x "$wrapper" ]; then
+  wrapper_status=0
+  wrapper_output=$("$wrapper" --check 2>&1) || wrapper_status=$?
+  if [ "$wrapper_status" -eq 0 ]; then
+    echo "bundled path=$wrapper $wrapper_output"
+  else
+    case "$wrapper_output" in
+      error=unsupported_platform*|error=swift_missing*)
+        echo "unavailable source=bundled $wrapper_output"
+        ;;
+      *)
+        echo "package corruption source=bundled $wrapper_output"
+        ;;
+    esac
+  fi
+elif [ -e "$BUNDLE_ROOT/.codex-plugin/plugin.json" ] \
+    || [ -e "$BUNDLE_ROOT/.codex-bundle-files" ]; then
+  echo "package corruption path=$wrapper error=wrapper_missing_or_not_executable"
+elif legacy_codex_call=$(command -v codex-call 2>/dev/null); then
+  echo "legacy PATH fallback path=$legacy_codex_call"
+else
+  echo "unavailable error=runtime_unavailable"
+fi
+```
+
+`--check` 不執行 runtime snapshot、不讀取或修改 OAuth，也不存取網路。依輸出判定：
+
+| 輸出 | Producer Status | Detail | Remediation |
+|------|-----------------|--------|-------------|
+| `bundled path=... ok runtime=...` | ✓ | bundled runtime、Swift 與 SHA-256 完整 | N/A |
+| `legacy PATH fallback path=...` | ⚠ | 舊式無 marker 鏡像透過 PATH 相容 | 更新或重新安裝 codex-pro 原生 plugin |
+| `package corruption ...` | ✗ | 原生套件缺檔、權限或完整性驗證失敗 | 重新安裝 codex-pro plugin；不得改走 PATH |
+| `unavailable ... error=unsupported_platform` | ✗ | producer 僅支援 macOS | consumer skills 仍可使用 |
+| `unavailable ... error=swift_missing` | ✗ | 找不到可執行的 Swift compiler | 安裝或修復 Xcode Command Line Tools |
+| `unavailable error=runtime_unavailable` | ✗ | 無 bundled runtime，也無 legacy PATH 相容路徑 | 更新或重新安裝 codex-pro |
+
+> **Claude Code 專用 manifest self-check 已由 Codex bundle 完整性檢查取代。**
+>
+> producer（review、adversarial-review、rescue）需要 macOS 與 Xcode Command Line
+> Tools Swift；consumer（`$codex-status`、`$codex-result`、`$codex-config`、
+> `$codex-cancel`）只讀本機檔案，在 producer unavailable 時仍可使用。
+"""
+
+    SETUP_REPORT_SECTION = """## Readiness Report 輸出
+
+兩項檢查完成後，把 OAuth、producer runtime 與 consumer availability 組裝成 4 欄
+markdown 表格直接回傳給使用者：
+
+```
+| Check | Status | Detail | Remediation |
+|-------|--------|--------|-------------|
+| OAuth token | <Check 1 Status> | <Check 1 Detail> | <Check 1 Remediation 或 N/A> |
+| Producer runtime | <Check 2 Producer Status> | <Check 2 Detail> | <Check 2 Remediation 或 N/A> |
+| Consumer skills | ✓ | `$codex-status`、`$codex-result`、`$codex-config`、`$codex-cancel` 可使用 | N/A |
+```
+
+表格後空一行，依以下規則輸出總結句：
+
+- OAuth 與 Producer runtime 皆為 ✓ → `All checks passed — codex-pro ready.`
+- Producer runtime 為 ✗ 或 ⚠ → 明確回報 producer unavailable 或 degraded，並再次列出仍可使用的四個 consumer skills。
+- OAuth 為 ✗ 或 ⚠ → 只回報 remediation，不執行 `codex login` 或變更權限。
+"""
 
     sub_exact(r"檢查 Codex OAuth token、codex-call wrapper、plugin manifest。",
-              "檢查 Codex OAuth token、codex-call wrapper。", 1,
-              "description mentions plugin manifest")
-
+              "檢查 Codex OAuth token、bundled producer runtime，並分別回報 consumer skills。",
+              1, "setup description")
     sub_exact(r"按順序執行以下三項檢查", "按順序執行以下兩項檢查", 1,
-              "execution-flow says three checks")
+              "setup execution-flow count")
+    sub_exact(r"### Check 2: codex-call wrapper PATH\n.*?(?=\n## Readiness Report 輸出)",
+              SETUP_RUNTIME_SECTION, 1, "setup runtime and manifest sections",
+              flags=re.DOTALL)
+    sub_exact(r"## Readiness Report 輸出\n.*?(?=\n## 結束時的約束)",
+              SETUP_REPORT_SECTION, 1, "setup readiness report", flags=re.DOTALL)
 
-    sub_exact(r"### Check 3: Plugin manifest self-check\n.*?(?=\n## Readiness Report 輸出)",
-              NOTICE, 1, "Check 3 section", flags=re.DOTALL)
-
-    sub_exact(r"三項檢查完成後", "兩項檢查完成後", 1,
-              "report intro says three checks")
-
-    sub_exact(r"\| Plugin manifest \| <Check 3 Status>[^\n]*\n", "", 1,
-              "report template row for Plugin manifest")
-
-    sub_exact(r"- 三項 Status 皆為 ✓", "- 兩項 Status 皆為 ✓", 1,
-              "summary rule says three checks")
-
-    sub_exact(r"\| Plugin manifest \| ✓ \|[^\n]*\n", "", 2,
-              "worked-example rows for Plugin manifest")
-
-    # Postcondition：整份契約真的收斂乾淨了才算數。逐條 sub_exact 只保證
-    # 「我想到的那幾處被改了」，這裡保證「沒有我沒想到的殘留」。
     for token in ("CLAUDE_PLUGIN_ROOT", ".claude-plugin", "/plugin update",
-                  "三項", "<Check 3"):
+                  "CODEX_PLUGIN_ROOT", "CODEX_SKILL_ROOT", "CODEX_HOME",
+                  "~/.codex/plugins/cache", "三項", "<Check 3"):
         if token in text:
-            fatal(f"Claude-only residue '{token}' still present after the codex-setup "
-                  f"special case. A new occurrence appeared in the source.")
-    if NOTICE.splitlines()[0] not in text:
-        fatal("codex-setup not-applicable notice missing from output.")
+            fatal(f"unsupported resolver residue '{token}' remains in generated setup")
+    for token in ("SKILL_DIR", "BUNDLE_ROOT", "bin/codex-pro-call", "--check",
+                  "legacy PATH fallback", "package corruption", "unsupported_platform",
+                  "swift_missing", "$codex-status", "$codex-result", "$codex-config",
+                  "$codex-cancel"):
+        if token not in text:
+            fatal(f"generated setup contract is missing '{token}'")
 
 # ── generated marker ─────────────────────────────────────────
 # 插在 frontmatter 之後、body 之前——frontmatter 前加註解會破壞 YAML 解析。
@@ -282,3 +550,183 @@ PY
 done
 
 echo "✓ generated $generated Codex skill mirror(s) → ${MIRROR_DIR#"$REPO_ROOT"/}"
+}
+
+validate_bundle_state() {
+  # 所有驗證都在 cleanup 前完成。這個函式只讀 bundle 的明確 marker /
+  # inventory，不枚舉 repo root 的其他內容。
+  local bundle="$1" prior="$2" skill subtree output
+
+  for subtree in skills references bin; do
+    if [ -L "$bundle/$subtree" ]; then
+      echo "FATAL: bundle subtree must not be a symlink: $bundle/$subtree" >&2
+      return 3
+    fi
+  done
+
+  for skill in "${EXPECTED[@]}"; do
+    if [ -e "$bundle/skills/$skill" ] || [ -L "$bundle/skills/$skill" ]; then
+      if [ -L "$bundle/skills/$skill" ] || [ ! -d "$bundle/skills/$skill" ] || \
+         [ ! -f "$bundle/skills/$skill/SKILL.md" ] || \
+         ! grep -qF "$GENERATED_MARKER" "$bundle/skills/$skill/SKILL.md"; then
+        echo "FATAL: refusing to replace non-generated skill directory: $bundle/skills/$skill" >&2
+        return 3
+      fi
+    fi
+  done
+
+  : > "$prior"
+  if [ -e "$bundle/$INVENTORY_NAME" ] || [ -L "$bundle/$INVENTORY_NAME" ]; then
+    if [ -L "$bundle/$INVENTORY_NAME" ] || [ ! -f "$bundle/$INVENTORY_NAME" ]; then
+      echo "FATAL: bundle inventory must be a regular file: $bundle/$INVENTORY_NAME" >&2
+      return 3
+    fi
+    if ! output="$(python3 - "$bundle" "$bundle/$INVENTORY_NAME" 2>&1 > "$prior" <<'PY'
+from pathlib import Path, PurePosixPath
+import os
+import sys
+
+bundle = Path(sys.argv[1]).resolve()
+inventory = Path(sys.argv[2])
+paths = inventory.read_text(encoding="utf-8").splitlines()
+errors = []
+
+if paths != sorted(paths):
+    errors.append("inventory is not bytewise sorted")
+if len(paths) != len(set(paths)):
+    errors.append("inventory contains duplicate paths")
+for value in paths:
+    pure = PurePosixPath(value)
+    parts = value.split("/")
+    if pure.is_absolute() or value.startswith("~") or any(part in ("", ".", "..") for part in parts):
+        errors.append(f"unsafe inventory path: {value}")
+        continue
+    if parts[0] not in ("skills", "references", "bin") or len(parts) < 2:
+        errors.append(f"inventory path is outside generated subtrees: {value}")
+        continue
+    target = bundle.joinpath(*parts)
+    resolved = target.resolve(strict=False)
+    if os.path.commonpath((str(bundle), str(resolved))) != str(bundle):
+        errors.append(f"inventory path escapes bundle root: {value}")
+    elif target.exists() and target.is_dir():
+        errors.append(f"inventory path unexpectedly names a directory: {value}")
+
+if errors:
+    sys.stderr.write("; ".join(errors))
+    raise SystemExit(1)
+print(*paths, sep="\n")
+PY
+)"; then
+      echo "FATAL: unsafe prior ownership inventory: $output" >&2
+      return 3
+    fi
+  fi
+
+  # 新資源的 parent 若經 symlink 跳出 bundle，cp/mkdir 也可能寫到外部；
+  # 在任何刪除或寫入前一次檢查所有目標。
+  if ! output="$(python3 - "$bundle" "$EXPECTED_INVENTORY" 2>&1 <<'PY'
+from pathlib import Path
+import os
+import sys
+
+bundle = Path(sys.argv[1]).resolve()
+errors = []
+for value in Path(sys.argv[2]).read_text(encoding="utf-8").splitlines():
+    target = bundle.joinpath(*value.split("/"))
+    parent = target.parent.resolve(strict=False)
+    if os.path.commonpath((str(bundle), str(parent))) != str(bundle):
+        errors.append(f"generated target parent escapes bundle: {value}")
+    elif not value.startswith("skills/") and target.exists() and target.is_dir():
+        errors.append(f"generated resource target is a directory: {value}")
+if errors:
+    sys.stderr.write("; ".join(errors))
+    raise SystemExit(1)
+PY
+)"; then
+    echo "FATAL: unsafe generated target: $output" >&2
+    return 3
+  fi
+}
+
+stage_complete_bundle() {
+  local stage="$1" resource
+  mkdir -p -- "$stage/skills" "$stage/references" "$stage/bin"
+  generate_skill_only "$stage/skills" >/dev/null
+
+  while IFS= read -r resource; do
+    [ -n "$resource" ] || continue
+    mkdir -p -- "$(dirname "$stage/$resource")"
+    cp -p -- "$SOURCE_BUNDLE/$resource" "$stage/$resource"
+  done < "$RESOURCE_PATHS"
+  cp -- "$EXPECTED_INVENTORY" "$stage/$INVENTORY_NAME"
+}
+
+apply_complete_bundle() {
+  local bundle="$1" index="$2" stage prior resource old target skill inventory_tmp
+  stage="$WORK_ROOT/stage-$index"
+  prior="$WORK_ROOT/prior-$index"
+  stage_complete_bundle "$stage"
+  validate_bundle_state "$bundle" "$prior"
+
+  # 從這裡才開始 mutation。每一個刪除目標都來自「舊 inventory - 新
+  # inventory」，或是已以 generated marker 驗證的 expected skill。
+  mkdir -p -- "$bundle/skills" "$bundle/references" "$bundle/bin"
+
+  while IFS= read -r old; do
+    [ -n "$old" ] || continue
+    grep -Fqx "$old" "$EXPECTED_INVENTORY" && continue
+    target="$bundle/$old"
+    if [ -e "$target" ] || [ -L "$target" ]; then
+      if [ -d "$target" ] && [ ! -L "$target" ]; then
+        echo "FATAL: prior inventory path unexpectedly became a directory: $old" >&2
+        return 3
+      fi
+      rm -f -- "$target"
+    fi
+  done < "$prior"
+
+  for skill in "${EXPECTED[@]}"; do
+    target="$bundle/skills/$skill"
+    if [ -e "$target" ]; then rm -rf -- "$target"; fi
+    mv -- "$stage/skills/$skill" "$target"
+  done
+
+  while IFS= read -r resource; do
+    [ -n "$resource" ] || continue
+    case "$resource" in skills/*) continue ;; esac
+    target="$bundle/$resource"
+    mkdir -p -- "$(dirname "$target")"
+    if [ -e "$target" ] || [ -L "$target" ]; then
+      [ ! -d "$target" ] || { echo "FATAL: generated resource target is a directory: $resource" >&2; return 3; }
+      rm -f -- "$target"
+    fi
+    cp -p -- "$stage/$resource" "$target"
+  done < "$RESOURCE_PATHS"
+
+  inventory_tmp="$(mktemp "$bundle/.codex-bundle-files.tmp.XXXXXX")"
+  cp -- "$stage/$INVENTORY_NAME" "$inventory_tmp"
+  mv -f -- "$inventory_tmp" "$bundle/$INVENTORY_NAME"
+  echo "✓ generated complete Codex bundle → $bundle"
+}
+
+# ── 目的地在所有 source / manifest 檢查完成後才解析，並在任何
+# cleanup 前一次全部驗證。無參數的兩個 committed destinations 也先同時驗證。
+case "$MODE" in
+  output)
+    OUTPUT_DIR="$(validate_destination "$DESTINATION" output)"
+    mkdir -p -- "$OUTPUT_DIR"
+    generate_skill_only "$OUTPUT_DIR"
+    ;;
+  bundle)
+    BUNDLE_DIR="$(validate_destination "$DESTINATION" bundle)"
+    mkdir -p -- "$BUNDLE_DIR"
+    apply_complete_bundle "$BUNDLE_DIR" 1
+    ;;
+  default)
+    CODEX_BUNDLE_DIR="$(validate_destination "$DEFAULT_CODEX_BUNDLE" bundle)"
+    ROOT_BUNDLE_DIR="$(validate_destination "$REPO_ROOT" bundle)"
+    mkdir -p -- "$CODEX_BUNDLE_DIR"
+    apply_complete_bundle "$CODEX_BUNDLE_DIR" 1
+    apply_complete_bundle "$ROOT_BUNDLE_DIR" 2
+    ;;
+esac

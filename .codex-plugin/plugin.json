@@ -1,0 +1,37 @@
+{
+  "name": "codex-pro",
+  "version": "0.8.0",
+  "description": "Codex workflows for environment readiness, code review, adversarial review, rescue, batch processing, and local result inspection.",
+  "author": {
+    "name": "Che Cheng"
+  },
+  "homepage": "https://github.com/PsychQuant/codex-pro",
+  "repository": "https://github.com/PsychQuant/codex-pro",
+  "license": "MIT",
+  "keywords": [
+    "codex",
+    "code-review",
+    "rescue",
+    "adversarial-review",
+    "workflow"
+  ],
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "codex-pro",
+    "shortDescription": "Review, rescue, and inspect with Codex",
+    "longDescription": "Use Codex workflows for readiness checks, code review, adversarial review, task rescue, batch work, and structured local result inspection.",
+    "developerName": "Che Cheng",
+    "category": "Developer Tools",
+    "capabilities": [
+      "Interactive",
+      "Read",
+      "Write"
+    ],
+    "websiteURL": "https://github.com/PsychQuant/codex-pro",
+    "defaultPrompt": [
+      "Check whether codex-pro is ready in this project.",
+      "Review my current changes with codex-pro.",
+      "Show my latest codex-pro result."
+    ]
+  }
+}

@@ -27,15 +27,31 @@
 
 ## 3. Consumer 端的解析範例（non-normative）
 
+本契約規範的是「已知 codex-pro bundle root 後」的穩定相對路徑，不規範 host
+如何發現或安裝 plugin。Consumer 應使用 active skill／plugin context 提供的絕對路徑，
+不得掃描版本 cache 或從目前工作目錄猜測安裝位置。
+
+Codex 原生 plugin 或 repo-local bundle 內的 skill，可從 Codex 提供的 active
+`SKILL.md` 絕對位置設定 `SKILL_DIR`：
+
 ```bash
-CP_DIR=$(ls -d ~/.claude/plugins/cache/codex-pro/codex-pro/*/ 2>/dev/null | grep -E '/[0-9]+\.[0-9]+\.[0-9]+/$' | sort -V | tail -1)
-DEFAULTS="$CP_DIR/references/defaults.json"   # 缺檔 → consumer fail-fast（版本 < 0.7.0）
-MODEL=$(python3 -c "import json;print(json.load(open('$DEFAULTS'))['model'])")
+SKILL_DIR="/absolute/path/from/active-skill-context/skills/codex-review"
+BUNDLE_ROOT=$(cd "$SKILL_DIR/../.." && pwd -P)
+DEFAULTS="$BUNDLE_ROOT/references/defaults.json"
+[ -f "$DEFAULTS" ] || { echo "codex-pro defaults missing: $DEFAULTS" >&2; exit 1; }
+MODEL=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1], encoding="utf-8"))["model"])' "$DEFAULTS")
 # 再依序疊 ~/.codex-pro/profile.yaml 與 ./.codex-pro/profile.yaml 的同名欄位（若存在）
 ```
+
+Claude Code plugin 內的 consumer 應使用 host 提供的 plugin root；外部 plugin 若要消費
+本契約，則由其安裝／依賴層明確傳入 codex-pro root。掃描
+`~/.claude/plugins/cache/` 不是本契約的一部分，也不保證跨版本正確。
 
 ## 4. Stability guarantees
 
 - `defaults.json` 的路徑（`references/defaults.json` 相對 plugin root）、四個欄位名、profile.yaml 兩層路徑與 per-field 優先序 = **STABLE**，非 major 不動
 - defaults **值**會隨治理決策變動（model 換代）— consumer 不應 pin 值，應 pin 契約
-- executable（codex-call）**不在本契約內** — 那是 parallel-ai-agents 的 surface（codex-pro design D3：executable 歸 pai）
+- executable（codex-call）**不在本 profile 解析契約內**。Codex 原生發布釘選一份
+  bundled snapshot，其來源與呼叫契約由 `codex-call-provenance.json`、
+  `THIRD_PARTY_NOTICES.md` 與 `bin/codex-pro-call` 管理；Claude Code 版則維持 PATH
+  解析。外部 consumer 不應從本檔推論 executable 的位置或穩定性

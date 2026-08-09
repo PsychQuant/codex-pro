@@ -1,6 +1,7 @@
-# Layer 3 — e2e checklist for codex-pro
+# Release e2e checklist for codex-pro
 
-Layer 3 = Claude 跑 SKILL.md prose 真正觸發 codex-call。補 Layer 2 的 SKILL.md→runtime drift blind spot（Layer 2 跑 test-script 自 implement 的 mock；Layer 3 跑 Claude 解讀 SKILL.md 的 real invocation）。
+本檢核表有兩條人工發行路徑：Codex CLI／App 原生 plugin，以及 Claude Code Layer 3。
+兩者都補足靜態與 behavioral tests 看不到的 host 安裝、skill 探索與真實 invocation。
 
 **兩種跑法**：自動化 `bash tests/e2e.sh`（preferred）+ manual checklist（plugin install 等 UI flow）。
 
@@ -10,6 +11,108 @@ Layer 3 = Claude 跑 SKILL.md prose 真正觸發 codex-call。補 Layer 2 的 SK
 cd <codex-pro repo root>
 bash tests/run.sh
 ```
+
+## Codex native plugin release checklist
+
+這一段必須在**獨立 macOS 登入帳號或 disposable VM** 執行，不能只設定 `CODEX_HOME`。
+Vendored Swift runtime 以 `FileManager.homeDirectoryForCurrentUser` 取得
+`~/.codex/auth.json`，不讀 `CODEX_HOME`；在日常 macOS 帳號測 producer 仍可能讀取並更新
+日常 OAuth。不要複製、改名或刪除日常使用者的 auth file。
+
+### N0. Disposable CLI 環境
+
+- [ ] 登入專用 macOS 測試帳號或啟動 disposable macOS VM；記錄 `whoami` 與 home 路徑，
+  確認都不是日常帳號。整段 N0–N5 必須留在此隔離邊界內。
+- [ ] 在隔離帳號建立專用工作目錄，例如
+  `CODEX_PRO_E2E_WORKDIR=$(mktemp -d "${TMPDIR:-/tmp}/codex-pro-e2e.XXXXXX")`；fixture 與
+  測試紀錄只放在這個已知路徑。
+- [ ] 記下 `CODEX_PRO_E2E_BIN_DIR=$(dirname "$(command -v codex)")`。啟動 smoke task 時，
+  將 PATH 限縮為 `"$CODEX_PRO_E2E_BIN_DIR:/usr/bin:/bin:/usr/sbin:/sbin"`，並清除 Claude
+  plugin 路徑提示：
+
+  ```bash
+  env -u CLAUDE_PLUGIN_ROOT -u PLUGIN_ROOT -u CODEX_PLUGIN_ROOT \
+    PATH="$CODEX_PRO_E2E_BIN_DIR:/usr/bin:/bin:/usr/sbin:/sbin" \
+    codex
+  ```
+- [ ] 在隔離 OS 帳號內跑 `codex login`，使用 disposable ChatGPT test account；確認此隔離
+  帳號的 `~/.codex/auth.json` 可讀，且日常 OS 帳號的 home 未掛載或未被測試程序存取。
+- [ ] 確認 `swift --version` 成功；以下命令應為 non-zero，證明 producer smoke 不依賴
+  Claude plugin 注入：
+
+  ```bash
+  env PATH="$CODEX_PRO_E2E_BIN_DIR:/usr/bin:/bin:/usr/sbin:/sbin" \
+    sh -c 'command -v codex-call'
+  ```
+
+### N1. Self-hosted marketplace 與安裝
+
+- [ ] 加入 Git marketplace：
+
+  ```bash
+  codex plugin marketplace add PsychQuant/codex-pro --ref main --json
+  ```
+
+- [ ] 跑 `codex plugin marketplace list --json`，確認列出 marketplace `codex-pro`；不能只
+  依賴 `plugin list` 的 exit status。
+- [ ] 跑 `codex plugin list --marketplace codex-pro --available --json`，確認看到未安裝的
+  `codex-pro` 0.8.0。
+- [ ] 安裝：`codex plugin add codex-pro@codex-pro --json`。再以 `codex plugin list
+  --marketplace codex-pro --json` 確認 installed 與 enabled 狀態。
+
+### N2. 新 task、九個 skills 與 setup
+
+- [ ] 在相同隔離 OS 帳號內，以限縮 PATH 與已清除的 Claude variables 啟動一個**新
+  Codex task**。安裝前已存在的 task 不算驗收證據。
+- [ ] 在新 task 確認可探索以下九個名稱：`$codex-setup`、`$codex-review`、
+  `$codex-adversarial-review`、`$codex-rescue`、`$codex-batch`、`$codex-status`、
+  `$codex-result`、`$codex-config`、`$codex-cancel`。
+- [ ] 跑 `$codex-setup`。預期 OAuth 可讀，runtime source 為 bundled wrapper，SHA-256 與
+  provenance 相符，producer readiness 為 ready；輸出不得提議安裝 Claude Code 或
+  `parallel-ai-agents`。
+- [ ] 跑純本機 consumer `$codex-config`。預期能顯示 resolved model／effort／max_time，
+  不建立 result file、不呼叫網路。
+
+### N3. Producer fixture smoke 與結果檔
+
+- [ ] 在 disposable 路徑建立小型 Git fixture：先 commit 一個短文字檔，再新增一行形成
+  current uncommitted diff；不要在 codex-pro repo 本身製造 fixture diff。
+- [ ] 從 fixture 目錄開另一個新 task，在仍無 `codex-call` PATH 與 Claude variables 的情境
+  叫用 `$codex-review`，選 current uncommitted diff。預期只發出一次前景 producer call，
+  不 fallback 到 PATH、不要求安裝 `parallel-ai-agents`。
+- [ ] 確認 fixture 下新增且僅新增預期的 `.codex-pro/review-*.md`；檔案含可解析 YAML
+  frontmatter、non-empty `## Summary` 與 `## Findings`。
+- [ ] 跑 `$codex-status` 看到該 result，再跑 `$codex-result --latest review`，確認顯示同一檔案。
+
+### N4. 更新、重新安裝與 CLI rollback
+
+- [ ] 跑 `codex plugin marketplace upgrade codex-pro --json`，確認 Git snapshot refresh 成功。
+- [ ] 跑 `codex plugin remove codex-pro@codex-pro --json` 後，再跑 `codex plugin add
+  codex-pro@codex-pro --json`；開**另一個新 task**，再確認版本、九個 skill 與
+  `$codex-setup`。
+- [ ] 驗證 rollback 順序：先跑 `codex plugin remove codex-pro@codex-pro --json`，再跑
+  `codex plugin marketplace remove codex-pro --json`。確認 listing 與已安裝狀態消失，但
+  fixture 下既有 `.codex-pro/review-*.md` 保留。
+- [ ] 保留測試紀錄後，僅清理 `$CODEX_PRO_E2E_WORKDIR`；先驗證實際路徑位於系統暫存
+  目錄，禁止以空變數、`~` 或廣泛路徑執行遞迴刪除。依測試環境政策另行移除隔離 OS
+  帳號或 VM。
+
+### N5. Codex App 視覺 gate
+
+- [ ] 在同一隔離 OS 帳號先以 CLI 執行 `codex plugin marketplace add
+  PsychQuant/codex-pro --ref main --json`；完全結束並重啟 Codex App。
+- [ ] 開啟 Plugins Directory，選擇 `codex-pro` marketplace，確認 listing 顯示同名 plugin
+  0.8.0。不要把「加入 Git marketplace」寫成 App UI 內的操作。
+- [ ] 安裝並啟用 plugin，開新 task，人工確認九個 skill 可見；跑 `$codex-setup` 與一個純
+  本機 consumer。App 仍需遵守 macOS＋Swift 與 OAuth 前提。
+- [ ] 走一次 update 或 reinstall UI，開新 task 確認仍載入 0.8.0。
+- [ ] 從 App 解除安裝 plugin，必要時移除 marketplace；確認新 task 不再列出 skills，既有
+  專案 result files 不被刪除。
+- [ ] 記錄官方 directory 狀態為「尚未提交／審核中的外部步驟」；不得把 self-hosted smoke
+  寫成已在官方 directory 發布。
+
+以上 N0–N5 是 native release gate。任何一段因 host UI 或網路限制無法執行時，應在發行
+紀錄明列 skipped 原因，不能以自動測試取代 App 視覺確認。
 
 ## Automated Layer 3 — `bash tests/e2e.sh`
 
@@ -44,7 +147,8 @@ bash tests/e2e.sh --skill adversarial-review --scenario all-empty
 bash tests/e2e.sh --skill adversarial-review --scenario with-profile
 ```
 
-完整 matrix 通過後算 release gate clear。10/10 PASS 是目標、acceptable 1-2 個因偶發 rate limit / codex quota 個別 fail 需 retry。
+完整 matrix 通過後算 release gate clear。12/12 PASS 是目標；因偶發 rate limit／Codex quota
+失敗的個別案例必須 retry 至通過，不能把 failure 當成 acceptable PASS。
 
 ## Manual Layer 3 — UI Flow Checklist
 
@@ -53,7 +157,8 @@ bash tests/e2e.sh --skill adversarial-review --scenario with-profile
 ## Preconditions
 
 - [ ] **Layer 1+2 已綠**：跑完 `bash tests/run.sh` 顯示 0 fail / exit 0
-- [ ] **Layer 3 automated 已綠**：跑完 `bash tests/e2e.sh` 12 組合全 PASS（或 acceptable 1-2 個個別 rate-limit fail 已 retry pass）
+- [ ] **Layer 3 automated 已綠**：跑完 `bash tests/e2e.sh` 12 組合全 PASS；個別
+  rate-limit failure 已 retry 至通過
 
 ## A. Plugin install path（正規 marketplace 路徑）
 
@@ -65,9 +170,12 @@ bash tests/e2e.sh --skill adversarial-review --scenario with-profile
 
 - [ ] **Setup ready 全綠**：在 OAuth token、codex-call、plugin manifest 三者就緒環境下跑 `/codex-pro:codex-setup`。預期：輸出 3 列 markdown 表格、3 個 Status 全 ✓、摘要含字串 `ready`。
 
-- [ ] **Setup 缺 OAuth 報 codex login**：暫時 rename `~/.codex/auth.json` → `~/.codex/auth.json.bak`，再跑 `/codex-pro:codex-setup`。預期：OAuth 列 Status ✗、Remediation 文字含 `codex login`；摘要含 `need attention`。**測完還原檔名**。
+- [ ] **Setup 缺 OAuth 報 codex login**：在 disposable test account／VM 的未登入狀態跑
+  `/codex-pro:codex-setup`。預期：OAuth 列 Status ✗、Remediation 文字含 `codex login`；
+  摘要含 `need attention`。不要改名日常使用者的真實 auth file。
 
-- [ ] **Setup 為 read-only**：B 段的兩次跑 setup 前後，跑 `ls -la ~/.codex/` 比對。預期：除了你自己改檔名造成的差異外，目錄內容無 setup 引入的 mutation。
+- [ ] **Setup 為 read-only**：B 段的兩次 setup 前後，比對 disposable account 的
+  `~/.codex/`。預期：目錄內容沒有 setup 引入的 mutation。
 
 ## C. Batch skill（已落地、含 Design constraint #1 exception）
 
@@ -81,7 +189,7 @@ bash tests/e2e.sh --skill adversarial-review --scenario with-profile
 
 ## Post-test cleanup checklist
 
-- [ ] B 段的 `~/.codex/auth.json` rename **已還原**（你應該看到原檔再次存在）
+- [ ] B 段使用的 disposable account／VM 沒有污染日常 Codex home
 - [ ] C 段的 `/tmp/` 內 fake output 已清乾淨
 - [ ] `bash tests/run.sh` 再跑一次仍綠（確認 e2e 過程沒污染 repo）
 

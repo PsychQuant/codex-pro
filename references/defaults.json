@@ -1,0 +1,7 @@
+{
+  "$comment": "EXTERNAL-CONSUMER CONTRACT (STABLE since 0.7.0, #7) — machine-readable single source of codex-pro's hardcoded defaults. Model-generation bumps change THIS file (+ contract version note); producer-skill prose tables mirror it. Consumers: issue-driven-dev (idd-verify codex leg).",
+  "contract_version": "1.0.0",
+  "model": "gpt-5.6-sol",
+  "effort": "xhigh",
+  "max_time": 600
+}

@@ -3,13 +3,13 @@
   "owner": {
     "name": "Che Cheng"
   },
-  "description": "Advanced Codex integration marketplace for Claude Code — drop-in upgrade for openai/codex-plugin-cc with ensemble pattern, hard timeouts, circuit breaker, and structured observability.",
+  "description": "Codex workflows for native Codex and Claude Code, with hard timeouts, circuit breakers, profile governance, and structured local results.",
   "plugins": [
     {
       "name": "codex-pro",
-      "version": "0.7.0",
+      "version": "0.8.0",
       "source": "./plugins/codex-pro",
-      "description": "v0.7.0: EXTERNAL-CONSUMER CONTRACT (#7) — profile-contract.md + defaults.json (machine-readable single source for model/effort/max_time; consumers pin the contract, not values). Codex integration plugin — environment setup, ensemble review, rescue delegation, and structured background jobs. Read-only setup; mutating commands require explicit user invocation."
+      "description": "v0.8.0: Native Codex plugin distribution with complete generated bundles, a pinned macOS Swift runtime, fail-closed skill-relative resolution, self-hosted marketplace metadata, and release gates; Claude Code compatibility remains supported."
     }
   ]
 }
