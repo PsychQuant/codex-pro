@@ -937,6 +937,68 @@ if [ "${CODEX_PARITY_ISOLATED_RUN:-0}" != "1" ] && [ -x "$GENERATOR" ]; then
     fail "stale inventory parent-symlink validation mutated the bundle destination"
   fi
 
+  # A newly declared shared resource has no prior-inventory entry yet, so its
+  # current destination parents need their own no-symlink validation. Merely
+  # resolving inside the bundle is insufficient: an in-bundle redirect would
+  # overwrite an unrelated physical file while inventory records only the
+  # lexical managed path.
+  EXPECTED_PARENT_REPO="$TEST_TMP_ROOT/current resource parent symlink repo"
+  EXPECTED_PARENT_BUNDLE="$TEST_TMP_ROOT/current resource parent symlink bundle"
+  EXPECTED_PARENT_BEFORE="$TEST_TMP_ROOT/current resource parent symlink before"
+  mkdir -p -- "$EXPECTED_PARENT_REPO/plugins" \
+    "$EXPECTED_PARENT_BUNDLE/references" \
+    "$EXPECTED_PARENT_BUNDLE/unowned-area" "$EXPECTED_PARENT_BEFORE"
+  if cp -R "$REPO_ROOT/scripts" "$EXPECTED_PARENT_REPO/scripts" \
+      && cp -R "$SOURCE_BUNDLE" "$EXPECTED_PARENT_REPO/plugins/codex-pro"; then
+    printf '%s\n' 'managed-current-resource' > \
+      "$EXPECTED_PARENT_REPO/plugins/codex-pro/references/current-parent-resource.txt"
+    python3 - \
+      "$EXPECTED_PARENT_REPO/scripts/codex-bundle-resources.manifest" <<'PY'
+from pathlib import Path
+import sys
+
+path = Path(sys.argv[1])
+lines = path.read_text(encoding="utf-8").splitlines()
+anchor = "skills/codex-batch/references/script-template.sh"
+mapping = (
+    "references/current-parent-resource.txt "
+    "references/redirect/sentinel.txt"
+)
+if lines.count(anchor) != 1:
+    raise SystemExit("fixture could not locate the sorted resource anchor")
+lines.insert(lines.index(anchor), mapping)
+path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+PY
+    printf '%s\n' 'current-parent-unowned-sentinel' > \
+      "$EXPECTED_PARENT_BUNDLE/unowned-area/sentinel.txt"
+    ln -s -- ../unowned-area \
+      "$EXPECTED_PARENT_BUNDLE/references/redirect"
+    cp -R "$EXPECTED_PARENT_BUNDLE/." "$EXPECTED_PARENT_BEFORE/"
+
+    EXPECTED_PARENT_STATUS=0
+    EXPECTED_PARENT_OUTPUT=$( \
+      "$EXPECTED_PARENT_REPO/scripts/generate-codex-skills.sh" \
+      --bundle-root "$EXPECTED_PARENT_BUNDLE" 2>&1 \
+    ) || EXPECTED_PARENT_STATUS=$?
+    if [ "$EXPECTED_PARENT_STATUS" -ne 0 ]; then
+      pass "complete bundle rejects a current resource target with a nested parent symlink"
+    else
+      fail "complete bundle followed a nested parent symlink for a current resource target"
+    fi
+    assert_contains "$EXPECTED_PARENT_OUTPUT" "unsafe generated target" \
+      "current resource parent-symlink rejection names the unsafe generated-target class"
+    assert_eq 'current-parent-unowned-sentinel' \
+      "$(cat "$EXPECTED_PARENT_BUNDLE/unowned-area/sentinel.txt" 2>/dev/null)" \
+      "current resource parent-symlink rejection preserves the unowned sentinel"
+    if diff -r "$EXPECTED_PARENT_BEFORE" "$EXPECTED_PARENT_BUNDLE" >/dev/null 2>&1; then
+      pass "current resource parent-symlink rejection leaves the entire bundle unchanged"
+    else
+      fail "current resource parent-symlink validation mutated the bundle destination"
+    fi
+  else
+    fail "could not create the isolated repo for current resource parent-symlink validation"
+  fi
+
   # SKILL.md is a file write target, not a container. If an expected skill has
   # a directory at that path, mv would otherwise place its temporary output
   # inside the directory and falsely report a successful nine-skill run. The

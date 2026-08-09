@@ -116,13 +116,11 @@ run_layer() {
       fi
     fi
   else
-    # No summary parsed — fall back to exit code (defensive)
-    if [ "$exit_code" -eq 0 ]; then
-      LAYERS_PASS+=1
-    else
-      LAYERS_FAIL+=1
-      FAILED_LAYERS+=("$layer (no summary; exit=$exit_code)")
-    fi
+    # Every assertion layer owns a parseable summary contract. Fail closed when
+    # it disappears: an empty/truncated test script can otherwise exit 0 and
+    # silently turn a missing release gate into a passing layer.
+    LAYERS_FAIL+=1
+    FAILED_LAYERS+=("$layer (no summary; exit=$exit_code)")
   fi
 }
 

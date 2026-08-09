@@ -63,6 +63,12 @@ printf '%s\n' \
   'exit 23' \
   > "$DISPATCHER_TEST_ROOT/passing-summary-nonzero.sh"
 
+printf '%s\n' \
+  '#!/usr/bin/env bash' \
+  'echo "fixture completed without an assertion report"' \
+  'exit 0' \
+  > "$DISPATCHER_TEST_ROOT/zero-no-summary.sh"
+
 run_fixture_case() {
   local layer="$1" expected_exit="$2" label="$3" status=0 output
   output=$(CODEX_PRO_RUN_FIXTURE_DIR="$DISPATCHER_TEST_ROOT" \
@@ -82,6 +88,7 @@ run_fixture_case() {
 
 run_fixture_case fatal-no-summary 17 "fatal layer without summary"
 run_fixture_case passing-summary-nonzero 23 "zero-failure summary followed by non-zero exit"
+run_fixture_case zero-no-summary 0 "zero-exit layer without summary"
 
 if ! cleanup_dispatcher_test_root; then
   fail "dispatcher regression cleans only its validated temporary root"

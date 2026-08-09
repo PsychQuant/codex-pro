@@ -908,8 +908,11 @@ bundle = Path(sys.argv[1]).resolve()
 errors = []
 for value in Path(sys.argv[2]).read_text(encoding="utf-8").splitlines():
     target = bundle.joinpath(*value.split("/"))
-    parent = target.parent.resolve(strict=False)
-    if os.path.commonpath((str(bundle), str(parent))) != str(bundle):
+    parent = target.parent
+    resolved_parent = parent.resolve(strict=False)
+    if resolved_parent != parent:
+        errors.append(f"generated target parent contains a symbolic link: {value}")
+    elif os.path.commonpath((str(bundle), str(resolved_parent))) != str(bundle):
         errors.append(f"generated target parent escapes bundle: {value}")
     elif not value.startswith("skills/") and target.exists() and target.is_dir():
         errors.append(f"generated resource target is a directory: {value}")
