@@ -1,8 +1,8 @@
 ---
 name: codex-setup
 description: |
-  驗證 codex-pro 環境是否就緒 — 檢查 Codex OAuth token、codex-call wrapper、plugin manifest。
-  Use when: 使用者輸入 $codex-setup、第一次使用 codex-pro、診斷其他 $* command 失敗時。
+  驗證 codex-pro 環境是否就緒 — 檢查 Codex OAuth token、codex-call wrapper。
+  Use when: 使用者輸入 $codex-setup、第一次使用 codex-pro、診斷其他 $codex-* command 失敗時。
   輸出 4 欄 markdown readiness report（Check / Status / Detail / Remediation）。純 read-only — 不修改任何環境或設定。
   Trigger keywords: verify codex-pro environment, check codex setup, codex-pro readiness, codex 環境檢查
 allowed-tools:
@@ -25,7 +25,7 @@ allowed-tools:
 
 ## 執行流程
 
-按順序執行以下三項檢查、收集每項結果，最後依「Readiness Report 輸出」一節組裝成 4 欄 markdown 表格回傳給使用者。任何一項檢查腳本都嚴格僅讀取資訊、不修改任何狀態。
+按順序執行以下兩項檢查、收集每項結果，最後依「Readiness Report 輸出」一節組裝成 4 欄 markdown 表格回傳給使用者。任何一項檢查腳本都嚴格僅讀取資訊、不修改任何狀態。
 
 ### Check 1: OAuth token
 
@@ -72,42 +72,29 @@ fi
 
 **注意**：本檢查刻意不寫死 `parallel-ai-agents/bin/codex-call` 絕對路徑（見 design D3）— `codex-call` 應透過 `parallel-ai-agents` plugin 安裝時暴露於 PATH。若路徑解析失敗，根因是 parallel-ai-agents 安裝異常，setup 不越權繞道。
 
-### Check 3: Plugin manifest self-check
-
-執行以下純 read-only Bash 解析 plugin 自身 manifest（`python3` 只 parse JSON、不寫檔）：
-
-> **此檢查在 Codex 環境不適用。**
+> **Plugin manifest 檢查在 Codex 環境不適用，已從本 skill 移除。**
 >
-> 原始檢查讀 `.claude-plugin/plugin.json` 驗證 Claude Code plugin manifest。
-> Codex 沒有 plugin manifest 這個概念，該檔案必然不存在——執行它只會得到
-> 誤導性的 `not_found`，看起來像安裝壞了。
+> Claude Code 版另有第 3 項檢查，讀 plugin manifest JSON 驗證安裝狀態。
+> Codex 沒有 plugin manifest 這個概念，那個檔案必然不存在——執行它只會
+> 得到誤導性的 `not_found`，看起來像安裝壞了。
 >
-> Codex 環境請改以 Check 1（OAuth）與 Check 2（codex-call runtime）判斷就緒狀態。
-
-依輸出決定該列的 Status / Detail / Remediation：
-
-| 輸出 | Status | Detail | Remediation |
-|------|--------|--------|-------------|
-| `ok name=codex-pro version=<v> path=...` | ✓ | `.claude-plugin/plugin.json` 解析成功（`codex-pro` v<v>） | N/A |
-| `ok name=<其他>` | ⚠ | manifest 解析成功但 name 非 `codex-pro` | 確認 plugin 安裝來源是否正確 |
-| `not_found path=...` | ✗ | 找不到 manifest（`.claude-plugin/plugin.json`） | 確認 plugin 目錄結構完整、重新安裝 plugin |
-| `parse_error: ...` | ✗ | 顯示 parse error 訊息（含行列號）| 檢查 manifest JSON syntax；若 plugin 由 marketplace 安裝，重新跑 `/plugin update codex-pro` |
+> Codex 環境以上方兩項檢查（OAuth、codex-call runtime）判斷就緒狀態。
+> 下方的 Readiness Report 也因此只有兩列。
 
 ## Readiness Report 輸出
 
-三項檢查完成後，把每項的 Status / Detail / Remediation 組裝成 4 欄 markdown 表格直接回傳給使用者：
+兩項檢查完成後，把每項的 Status / Detail / Remediation 組裝成 4 欄 markdown 表格直接回傳給使用者：
 
 ```
 | Check | Status | Detail | Remediation |
 |-------|--------|--------|-------------|
 | OAuth token | <Check 1 Status> | <Check 1 Detail> | <Check 1 Remediation 或 N/A> |
 | codex-call wrapper | <Check 2 Status> | <Check 2 Detail> | <Check 2 Remediation 或 N/A> |
-| Plugin manifest | <Check 3 Status> | <Check 3 Detail> | <Check 3 Remediation 或 N/A> |
 ```
 
 表格後空一行，依以下規則輸出總結句：
 
-- 三項 Status 皆為 ✓ → `All checks passed — codex-pro ready.`
+- 兩項 Status 皆為 ✓ → `All checks passed — codex-pro ready.`
 - 有任何 ✗ 或 ⚠ → `N check(s) need attention — see Remediation column above.`（其中 N = 非 ✓ 的列數）
 
 ### 完整輸出範例（全綠路徑）
@@ -117,7 +104,6 @@ fi
 |-------|--------|--------|-------------|
 | OAuth token | ✓ | `~/.codex/auth.json` 存在 (mode 600) | N/A |
 | codex-call wrapper | ✓ | codex-call 可呼叫，位於 /Users/<user>/.claude/plugins/cache/.../bin/codex-call | N/A |
-| Plugin manifest | ✓ | `.claude-plugin/plugin.json` 解析成功（codex-pro v0.1.0） | N/A |
 
 All checks passed — codex-pro ready.
 ```
@@ -129,7 +115,6 @@ All checks passed — codex-pro ready.
 |-------|--------|--------|-------------|
 | OAuth token | ✗ | OAuth token 檔（~/.codex/auth.json）不存在 | 執行 `codex login` 完成 ChatGPT OAuth 流程後再試 |
 | codex-call wrapper | ✓ | codex-call 可呼叫，位於 /Users/<user>/.../bin/codex-call | N/A |
-| Plugin manifest | ✓ | `.claude-plugin/plugin.json` 解析成功（codex-pro v0.1.0） | N/A |
 
 1 check(s) need attention — see Remediation column above.
 ```

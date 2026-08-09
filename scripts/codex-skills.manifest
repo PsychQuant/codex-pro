@@ -1,0 +1,18 @@
+# Expected Codex skill mirrors (#9). One name per line; `#` comments ignored.
+#
+# 這份清單是「應該存在哪些 skill」的顯式契約。generator 與 parity test 都讀它。
+# 沒有它的話，來源目錄少一個 skill（誤刪、改名）時，generator 與 test 會一起
+# 少一個、然後全綠 —— 兩邊用同一個來源枚舉，就沒有人能發現少了東西。
+#
+# 合法地新增 / 刪除 / 改名 skill 時，必須同時更新這個檔案。那正是重點：
+# 讓「skill 集合變了」成為一個需要明講的動作，而不是靜默發生的事。
+
+codex-adversarial-review
+codex-batch
+codex-cancel
+codex-config
+codex-rescue
+codex-result
+codex-review
+codex-setup
+codex-status

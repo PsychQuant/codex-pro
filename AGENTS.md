@@ -59,9 +59,18 @@ Changes can be parked（暫存）— temporarily moved out of `openspec/changes/
 
 ## ⚠️ 執行前提
 
-這些 skill 依賴 `bin/codex-call`，而該執行檔目前**經由 `parallel-ai-agents` 這個
-Claude Code plugin 分發**。沒有安裝 Claude Code 的機器上不存在該檔案 —— skill
-叫得出來，但執行會失敗。
+**部分** skill 依賴 `bin/codex-call`，而該執行檔目前**經由 `parallel-ai-agents`
+這個 Claude Code plugin 分發**。沒有安裝 Claude Code 的機器上不存在該檔案。
+
+| 需要 `codex-call` 才能執行 | 不需要（純本機讀取）|
+|---|---|
+| `$codex-review`、`$codex-adversarial-review`、`$codex-rescue`、`$codex-batch` | `$codex-status`、`$codex-result`、`$codex-config`、`$codex-cancel` |
+
+`$codex-setup` 兩者皆非：它的工作就是**檢查** `codex-call` 在不在，缺檔時正常
+回報 ✗ 而不是失敗 —— 所以在沒有 codex-call 的機器上它照樣能跑，也是該先跑的那個。
+
+右欄那四個只讀 `.codex-pro/*.md`，沒有 codex-call 也完全可用。左欄那四個會叫得
+出來但執行失敗。
 
 獨立取得路徑尚未提供，追蹤於
 [#9](https://github.com/PsychQuant/codex-pro/issues/9) 第 2 項與

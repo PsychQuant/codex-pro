@@ -8,13 +8,17 @@
 #
 # 為什麼是生成而非手動維護兩份：
 #   9 個 skill × 2 份，改一邊忘另一邊只是時間問題。單向生成 + tests/codex-skills-parity.sh
-#   的 git-diff 空檢查，讓漂移在 CI 就紅，而不是等 Codex 使用者踩到。
+#   的 fresh-regeneration 比對，讓漂移在測試就紅，而不是等 Codex 使用者踩到。
 #
 # 為什麼不是 symlink：
 #   兩種格式實測有內容差異（命名空間前綴、codex-setup 的 Claude-only 檢查），
 #   symlink 前提不成立。
 #
 # 來源是唯一 source of truth，本腳本只讀不改來源。
+#
+# 用法：
+#   scripts/generate-codex-skills.sh                     # 寫進 .codex/skills/
+#   scripts/generate-codex-skills.sh --output <dir>      # 寫進指定目錄（測試用）
 
 set -euo pipefail
 
@@ -22,14 +26,62 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 SOURCE_DIR="$REPO_ROOT/plugins/codex-pro/skills"
+MANIFEST="$SCRIPT_DIR/codex-skills.manifest"
+DEFAULT_MIRROR="$REPO_ROOT/.codex/skills"
+GENERATED_MARKER="GENERATED FILE — DO NOT EDIT"
 
-# 輸出目錄可覆寫，讓 parity test 能生成到暫存目錄再比對，而不必動到 committed
-# 產物。若寫死輸出，測試就只能靠 git status 判斷漂移——那在「產物尚未提交」的
-# 首次執行必然誤報，等於在最該通過的時刻是紅的。
-MIRROR_DIR="${1:-$REPO_ROOT/.codex/skills}"
+# ── 輸出目錄解析 ─────────────────────────────────────────────────
+# 用具名 --output 而非位置參數。位置參數 + `${1:-default}` 有個安靜的坑：
+# 傳入**空字串**時 `:-` 會當成「沒給」而 fallback 到真正的 .codex/skills/ ——
+# 呼叫端只要 `mktemp -d` 失敗沒檢查，就會拿 committed 產物當暫存目錄來寫。
+# 具名 flag 能把「沒給」與「給了空值」分開，後者是錯誤而非預設。
+MIRROR_DIR=""
+MIRROR_GIVEN=0
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --output)
+      [ $# -ge 2 ] || { echo "FATAL: --output requires a directory argument" >&2; exit 2; }
+      MIRROR_DIR="$2"; MIRROR_GIVEN=1; shift 2 ;;
+    --output=*)
+      MIRROR_DIR="${1#--output=}"; MIRROR_GIVEN=1; shift ;;
+    -h|--help)
+      sed -n '2,20p' "$0"; exit 0 ;;
+    *)
+      echo "FATAL: unknown argument '$1' (expected --output <dir>)" >&2; exit 2 ;;
+  esac
+done
+
+if [ "$MIRROR_GIVEN" -eq 1 ] && [ -z "$MIRROR_DIR" ]; then
+  echo "FATAL: --output was given an empty value." >&2
+  echo "       Refusing to silently fall back to $DEFAULT_MIRROR — that would" >&2
+  echo "       overwrite committed artifacts when the caller meant a temp dir." >&2
+  exit 2
+fi
+[ -n "$MIRROR_DIR" ] || MIRROR_DIR="$DEFAULT_MIRROR"
+
+# 目的地必須先存在或可建立，然後解析成絕對路徑再做安全檢查 ——
+# 檢查 `.` 或 `../..` 這種相對寫法沒有意義，要比對的是它實際指到哪。
+mkdir -p -- "$MIRROR_DIR"
+MIRROR_DIR="$(cd -- "$MIRROR_DIR" && pwd)"
+
+# 這支腳本會在目的地內 `rm -rf` 孤兒鏡像。目的地若被指到 repo root 或 /，
+# 那個迴圈會把 .git/、plugins/、scripts/ 一併當成孤兒刪掉。破壞不可逆，
+# 所以在任何刪除發生前先擋住明顯不安全的目的地。
+case "$MIRROR_DIR" in
+  /|"$HOME"|"$REPO_ROOT")
+    echo "FATAL: refusing to use '$MIRROR_DIR' as output directory." >&2
+    echo "       This script removes orphan subdirectories inside the output dir;" >&2
+    echo "       pointing it at / , \$HOME or the repo root would delete real content." >&2
+    exit 2 ;;
+esac
 
 if [ ! -d "$SOURCE_DIR" ]; then
   echo "FATAL: source skills dir missing: $SOURCE_DIR" >&2
+  exit 2
+fi
+
+if [ ! -r "$MANIFEST" ]; then
+  echo "FATAL: expected-skill manifest missing: $MANIFEST" >&2
   exit 2
 fi
 
@@ -38,27 +90,70 @@ if ! command -v python3 >/dev/null 2>&1; then
   exit 2
 fi
 
-mkdir -p "$MIRROR_DIR"
+# ── 預期 skill 集合（顯式契約）─────────────────────────────────
+# 不從來源目錄枚舉就好 —— 那樣的話來源少一個 skill 時，generator 與 test 會
+# 一起少一個然後全綠。manifest 是外部固定點，讓「集合變了」必須被明講。
+declare -a EXPECTED=()
+while IFS= read -r line; do
+  line="${line%%#*}"
+  line="$(printf '%s' "$line" | tr -d '[:space:]')"
+  [ -n "$line" ] && EXPECTED+=("$line")
+done < "$MANIFEST"
 
-# 先移除孤兒鏡像：來源刪掉的 skill 若留著鏡像，Codex 使用者會叫出一個已廢棄的命令。
+if [ "${#EXPECTED[@]}" -eq 0 ]; then
+  echo "FATAL: manifest lists no skills: $MANIFEST" >&2
+  exit 2
+fi
+
+for skill in "${EXPECTED[@]}"; do
+  if [ ! -r "$SOURCE_DIR/$skill/SKILL.md" ]; then
+    echo "FATAL: manifest expects '$skill' but $SOURCE_DIR/$skill/SKILL.md is missing or unreadable." >&2
+    echo "       Either restore the source skill, or update $MANIFEST deliberately." >&2
+    exit 3
+  fi
+done
+
+# 來源有、manifest 沒有 → 同樣是錯的（新增 skill 忘了登記，Codex 使用者就叫不出來）。
+while IFS= read -r d; do
+  name="$(basename "$d")"
+  found=0
+  for skill in "${EXPECTED[@]}"; do [ "$skill" = "$name" ] && found=1 && break; done
+  if [ "$found" -eq 0 ]; then
+    echo "FATAL: source skill '$name' is not listed in $MANIFEST." >&2
+    echo "       Add it to the manifest (deliberately) so the mirror set stays explicit." >&2
+    exit 3
+  fi
+done < <(find "$SOURCE_DIR" -mindepth 1 -maxdepth 1 -type d | sort)
+
+# ── 移除我們自己產生的孤兒鏡像 ───────────────────────────────────
+# 只刪「帶 generated marker」的目錄 —— 那些才是本腳本擁有的產物。目的地若還有
+# 別人手寫的 skill，本腳本無權處置：既不刪、也不假裝沒看到，直接失敗。
+# 全刪 = 壟斷整個 .codex/skills/；靜默略過 = 之後 parity 比對莫名其妙紅。
 if [ -d "$MIRROR_DIR" ]; then
   while IFS= read -r d; do
     name="$(basename "$d")"
-    if [ ! -d "$SOURCE_DIR/$name" ]; then
+    expected=0
+    for skill in "${EXPECTED[@]}"; do [ "$skill" = "$name" ] && expected=1 && break; done
+    [ "$expected" -eq 1 ] && continue
+
+    if [ -f "$d/SKILL.md" ] && grep -qF "$GENERATED_MARKER" "$d/SKILL.md"; then
       echo "→ removing orphan mirror: $name"
-      rm -rf "$d"
+      rm -rf -- "$d"
+    else
+      echo "FATAL: '$MIRROR_DIR/$name' is not in the manifest and was not generated by" >&2
+      echo "       this script (no generated marker). Refusing to delete someone else's" >&2
+      echo "       skill. Move it aside, or add it to $MANIFEST." >&2
+      exit 3
     fi
   done < <(find "$MIRROR_DIR" -mindepth 1 -maxdepth 1 -type d | sort)
 fi
 
+# ── 生成 ─────────────────────────────────────────────────────────
 generated=0
-while IFS= read -r skill_dir; do
-  skill="$(basename "$skill_dir")"
-  src="$skill_dir/SKILL.md"
-  [ -r "$src" ] || { echo "⚠ skipping '$skill' (no readable SKILL.md)" >&2; continue; }
-
+for skill in "${EXPECTED[@]}"; do
+  src="$SOURCE_DIR/$skill/SKILL.md"
   out_dir="$MIRROR_DIR/$skill"
-  mkdir -p "$out_dir"
+  mkdir -p -- "$out_dir"
 
   SKILL_NAME="$skill" python3 - "$src" "$out_dir/SKILL.md" <<'PY'
 import os, re, sys
@@ -67,44 +162,100 @@ src_path, out_path = sys.argv[1], sys.argv[2]
 skill = os.environ["SKILL_NAME"]
 text = open(src_path, encoding="utf-8").read()
 
+
+def fatal(msg):
+    sys.stderr.write(f"FATAL [{skill}]: {msg}\n")
+    sys.exit(3)
+
+
+def sub_exact(pattern, repl, count, why, flags=0):
+    """替換並斷言命中次數。
+
+    只驗「有沒有改到東西」是不夠的 —— 來源新增了第二處同樣的東西時，舊的那處
+    仍然命中，檢查就通過了，而新的那處靜默留在產物裡。所以每條規則都要說出
+    自己預期命中幾次，數量不符即失敗。
+    """
+    global text
+    new, n = re.subn(pattern, repl, text, flags=flags)
+    if n != count:
+        fatal(f"{why}: expected {count} match(es), got {n}. Source structure changed; "
+              f"update the rule in scripts/generate-codex-skills.sh.")
+    text = new
+
+
 # ── 命名空間改寫 ──────────────────────────────────────────────
 # Claude Code 用 /<plugin>:<skill>，Codex 用 $<skill>。這是兩個 harness 的
 # 命令語法差異，不是內容差異——其餘散文一字不動。
 #
-# 交替分支涵蓋 glob 形式（`/codex-pro:*`，用於「其他 X command」這類泛指）。
-# 只寫 [a-z0-9-]+ 會漏掉它，留下一個看不出錯但指向不存在命名空間的殘留。
-text = re.sub(r"/codex-pro:([a-z0-9-]+|\*)", r"$\1", text)
+# glob 形式先處理，且**不能**併進具名的 regex。`/codex-pro:*` 若走 `$\1` 會
+# 產出 `$*` —— 那既不是 Codex 的 skill 命名空間，還會被讀成 shell 的 `$*`。
+# 本 repo 的 skill 一律有 codex- 前綴，所以 glob 的正確對應是 `$codex-*`。
+text = text.replace("/codex-pro:*", "$codex-*")
+text = re.sub(r"/codex-pro:([a-z0-9-]+)", r"$\1", text)
+
+if "/codex-pro:" in text:
+    fatal("Claude namespace '/codex-pro:' still present after rewrite.")
 
 # ── codex-setup 具名特例 ──────────────────────────────────────
 # CLAUDE_PLUGIN_ROOT 只在 Claude Code plugin 執行期存在。Codex 環境下
 # `${CLAUDE_PLUGIN_ROOT:-$(pwd)}` 會 fallback 到 cwd，然後去讀一個在 Codex 下
 # 必然不存在的 .claude-plugin/plugin.json，回報誤導性的 not_found ——
 # 看起來像「安裝壞了」，實際上是這個檢查在此環境本就不適用。
-# 換成明確聲明，而不是讓它靜默失敗。
 #
-# 這是全檔唯一需要人工判斷的內容差異；其餘皆機械轉換。
+# 只換掉那段 bash 是不夠的：description 仍宣稱會檢查 manifest、流程仍寫「三項
+# 檢查」、報表仍要求填 Plugin manifest 那一列、兩個範例仍顯示它 ✓。Check 3
+# 既沒執行也沒輸出，agent 只能自己編一個值填進去。所以整份契約要一起收斂成兩項。
+#
+# 為什麼是「拿掉那一列」而不是「保留但固定 N/A」：後者要求 agent 每次都記得把
+# 該列排除在「全 ✓」的計數之外 —— 多一條例外規則就多一個被忘記的機會。
+# 拿掉之後契約是齊一的：每一列都必須 ✓。
 if skill == "codex-setup":
-    before = text
-    text = re.sub(
-        r"```bash\nplugin_root=\"\$\{CLAUDE_PLUGIN_ROOT:-\$\(pwd\)\}\".*?\n```",
-        "> **此檢查在 Codex 環境不適用。**\n"
+    # 注意這段文字自己不能含任何被 residue 掃描的 token —— 它的工作正是說明那些
+    # 東西為何不在。掃描列表因此只放「會被 agent 當成可執行事實」的東西（環境
+    # 變數、必然不存在的路徑、Claude-only 命令、過期的計數契約），不放「Plugin
+    # manifest」這種單純的概念指涉：解釋一件事的缺席，必須能叫出它的名字。
+    NOTICE = (
+        "> **Plugin manifest 檢查在 Codex 環境不適用，已從本 skill 移除。**\n"
         ">\n"
-        "> 原始檢查讀 `.claude-plugin/plugin.json` 驗證 Claude Code plugin manifest。\n"
-        "> Codex 沒有 plugin manifest 這個概念，該檔案必然不存在——執行它只會得到\n"
-        "> 誤導性的 `not_found`，看起來像安裝壞了。\n"
+        "> Claude Code 版另有第 3 項檢查，讀 plugin manifest JSON 驗證安裝狀態。\n"
+        "> Codex 沒有 plugin manifest 這個概念，那個檔案必然不存在——執行它只會\n"
+        "> 得到誤導性的 `not_found`，看起來像安裝壞了。\n"
         ">\n"
-        "> Codex 環境請改以 Check 1（OAuth）與 Check 2（codex-call runtime）判斷就緒狀態。",
-        text,
-        flags=re.DOTALL,
+        "> Codex 環境以上方兩項檢查（OAuth、codex-call runtime）判斷就緒狀態。\n"
+        "> 下方的 Readiness Report 也因此只有兩列。\n"
     )
-    if text == before:
-        # 來源結構改了而特例沒跟上——寧可失敗也不要靜默產出一個帶
-        # Claude-only 環境變數的 Codex skill。
-        sys.stderr.write(
-            "FATAL: codex-setup special case did not match; source structure changed.\n"
-            "       Update the regex in scripts/generate-codex-skills.sh.\n"
-        )
-        sys.exit(3)
+
+    sub_exact(r"檢查 Codex OAuth token、codex-call wrapper、plugin manifest。",
+              "檢查 Codex OAuth token、codex-call wrapper。", 1,
+              "description mentions plugin manifest")
+
+    sub_exact(r"按順序執行以下三項檢查", "按順序執行以下兩項檢查", 1,
+              "execution-flow says three checks")
+
+    sub_exact(r"### Check 3: Plugin manifest self-check\n.*?(?=\n## Readiness Report 輸出)",
+              NOTICE, 1, "Check 3 section", flags=re.DOTALL)
+
+    sub_exact(r"三項檢查完成後", "兩項檢查完成後", 1,
+              "report intro says three checks")
+
+    sub_exact(r"\| Plugin manifest \| <Check 3 Status>[^\n]*\n", "", 1,
+              "report template row for Plugin manifest")
+
+    sub_exact(r"- 三項 Status 皆為 ✓", "- 兩項 Status 皆為 ✓", 1,
+              "summary rule says three checks")
+
+    sub_exact(r"\| Plugin manifest \| ✓ \|[^\n]*\n", "", 2,
+              "worked-example rows for Plugin manifest")
+
+    # Postcondition：整份契約真的收斂乾淨了才算數。逐條 sub_exact 只保證
+    # 「我想到的那幾處被改了」，這裡保證「沒有我沒想到的殘留」。
+    for token in ("CLAUDE_PLUGIN_ROOT", ".claude-plugin", "/plugin update",
+                  "三項", "<Check 3"):
+        if token in text:
+            fatal(f"Claude-only residue '{token}' still present after the codex-setup "
+                  f"special case. A new occurrence appeared in the source.")
+    if NOTICE.splitlines()[0] not in text:
+        fatal("codex-setup not-applicable notice missing from output.")
 
 # ── generated marker ─────────────────────────────────────────
 # 插在 frontmatter 之後、body 之前——frontmatter 前加註解會破壞 YAML 解析。
@@ -115,17 +266,19 @@ marker = (
     "     Drift is caught by tests/codex-skills-parity.sh -->\n"
 )
 
-parts = text.split("---\n", 2)
-if len(parts) >= 3 and parts[0] == "":
-    text = "---\n" + parts[1] + "---\n" + marker + parts[2]
-else:
-    sys.stderr.write(f"FATAL: {src_path} has no parseable frontmatter\n")
-    sys.exit(3)
+# 行錨定，不是 `text.split("---\n", 2)`。後者比對的是任意子字串，所以某個欄位
+# 的值只要以三個 dash 結尾（`description: foo---`），就會被當成 frontmatter 的
+# 結束位置，marker 插進 YAML 中間。用 \A 與行首錨點讓分隔線只能是「獨立一行」。
+m = re.match(r"\A---\n(.*?\n)---\n", text, flags=re.DOTALL)
+if not m:
+    fatal(f"{src_path} has no parseable frontmatter (expected leading '---' line).")
+
+text = "---\n" + m.group(1) + "---\n" + marker + text[m.end():]
 
 open(out_path, "w", encoding="utf-8").write(text)
 PY
 
   generated=$((generated + 1))
-done < <(find "$SOURCE_DIR" -mindepth 1 -maxdepth 1 -type d | sort)
+done
 
 echo "✓ generated $generated Codex skill mirror(s) → ${MIRROR_DIR#"$REPO_ROOT"/}"
