@@ -1,4 +1,4 @@
-<!-- SPECTRA:START v1.0.2 -->
+<!-- SPECTRA:START v1.3.0 -->
 
 # Spectra Instructions
 
@@ -6,24 +6,31 @@ This project uses Spectra for Spec-Driven Development(SDD). Specs live in `opens
 
 ## Use `$spectra-*` skills when:
 
-- A discussion needs structure before coding → `$spectra-discuss`
-- User wants to plan, propose, or design a change → `$spectra-propose`
-- Tasks are ready to implement → `$spectra-apply`
-- There's an in-progress change to continue → `$spectra-ingest`
-- User asks about specs or how something works → `$spectra-ask`
+- An explicitly requested Spectra decision needs structure → `$spectra-discuss`
+- User explicitly requests a Spectra change proposal → `$spectra-propose`
+- Continue tasks for an identified change → `$spectra-apply`
+- Update requirements or plans for an identified change → `$spectra-ingest`
+- Check implementation matches artifacts → `$spectra-verify`
+- Review implementation quality and logic issues → `$spectra-review`
+- Analyze artifact consistency before coding → `$spectra-analyze`
+- Audit security sharp edges → `$spectra-audit`
+- Check stale changes before resuming → `$spectra-drift`
+- Debug a concrete bug systematically → `$spectra-debug`
 - Implementation is done → `$spectra-archive`
 - Commit only files related to a specific change → `$spectra-commit`
 
+Explicit skill invocation takes precedence. Apply existing authorization within its unchanged scope.
+
 ## Workflow
 
-discuss? → propose → apply ⇄ ingest → archive
+discuss? → propose → apply ⇄ ingest → verify / review → archive
 
 - `discuss` is optional — skip if requirements are clear
-- Requirements change mid-work? `ingest` → resume `apply`
+- Requirements change mid-work? Plan mode (`/plan`) → `ingest` → resume `apply`
 
 ## Parked Changes
 
-Changes can be parked（暫存）— temporarily moved out of `openspec/changes/`. Parked changes won't appear in `spectra list` but can be found with `spectra list --parked`. To restore: `spectra unpark <name>`. The `$spectra-apply` and `$spectra-ingest` skills handle parked changes automatically.
+Changes can be parked（暫存）— temporarily moved out of `openspec/changes/`. Parked changes won't appear in `spectra list` but can be found with `spectra list --parked`. To restore: `spectra unpark <name>`. The `$spectra-apply` and `$spectra-ingest` skills disclose parking and restore when the named operation is already explicitly requested; respect a known refusal, otherwise ask for missing authorization.
 
 <!-- SPECTRA:END -->
 

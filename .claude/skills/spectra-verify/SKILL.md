@@ -1,9 +1,10 @@
 ---
 name: spectra-verify
-description: "Verify implementation matches artifacts"
+description: "Verify an identified Spectra change against its artifacts (specs, tasks, design). Use when an identified Spectra change needs task, requirement, and design conformance checked before archiving"
+argument-hint: "[change-name]"
 context: fork
 agent: Explore
-disallowedTools: [Edit, Write]
+disallowed-tools: [Edit, Write]
 license: MIT
 compatibility: Requires spectra CLI.
 metadata:
@@ -14,29 +15,15 @@ metadata:
 
 ## Claude fork context
 
-This generated Claude Code skill runs with `context: fork`. The rules in this section take precedence over the shared `verify` body below.
+This generated Claude Code skill runs with `context: fork` as a report-only workflow.
 
-When no change name is provided, run `spectra list --json` and consider only active changes with implementation tasks. Auto-select only when exactly one matching active change exists. If there are zero matching active changes or more than one matching active change, return the candidate list or empty-state message and ask the main thread to rerun `/spectra-verify <change-name>`. Do NOT ask an interactive selection question inside the fork.
+Run only the report core below. Return one consolidated report, then stop. Do not ask or wait for user input. Do not edit files, run rewriting formatters, stage, commit, or invoke a follow-up workflow. Missing decisions override any interactive report-core instruction: return the concrete context and missing input to the main thread, then stop. Recommendations may appear in the report, but the main thread decides what happens next.
 
 ---
 
-Verify that an implementation matches the change artifacts (specs, tasks, design).
+1. **Select the change**
 
-**Input**: Optionally specify a change name after `/spectra-verify` (e.g., `/spectra-verify add-auth`). If omitted, check if it can be inferred from conversation context. If vague or ambiguous you MUST prompt for available changes.
-
-**Prerequisites**: This skill requires the `spectra` CLI. If any `spectra` command fails with "command not found" or similar, report the error and STOP.
-
-**Steps**
-
-1. **If no change name provided, prompt for selection**
-
-   Run `spectra list --json` to get available changes. Use the **AskUserQuestion tool** to let the user select (if this tool is not available, ask as plain text and wait for the user's response).
-
-   Show changes that have implementation tasks (tasks artifact exists).
-   Include the schema used for each change if available.
-   Mark changes with incomplete tasks as "(In Progress)".
-
-   **IMPORTANT**: Do NOT guess or auto-select a change. Always let the user choose.
+   An explicit change-name argument wins. Otherwise use a unique confirmed context target. If neither is available, run `spectra list --json` and consider only active changes with implementation tasks. Auto-select only when exactly one matching active change exists. If there are zero matching active changes or more than one matching active change, return the candidate list or empty-state message and ask the main thread to rerun `/spectra-verify <change-name>`. Do NOT ask an interactive selection question inside the fork.
 
 2. **Check status to understand the schema**
 
@@ -51,84 +38,53 @@ Verify that an implementation matches the change artifacts (specs, tasks, design
 3. **Get the change directory and load artifacts**
 
    ```bash
-   spectra instructions apply --change "<name>" --json
+   spectra instructions apply --change "<name>" --json --compact
    ```
 
-   This returns the change directory and context files. Read all available artifacts from `contextFiles`.
+   Read every artifact path from `contextFiles`, including `tasks.md` at `contextFiles.tasks`, using the context validity rule below.
 
+   Run `spectra scope --change "<name>" --json` (add `--base` only when supplied). Retain snapshot_id, paths/patches, provenance and limitations, including base-to-HEAD and staged, unstaged and untracked content. Insufficient scope or non-inspectable files remain unverified; request missing evidence without broadening scope.
+
+   **Context validity**: if full required content remains loaded with matching version/content fingerprints, reuse without another identical file read. On file changes, when compaction removes needed content, or if identity is uncertain, reload affected content before editing or checking. Necessary rereads remain allowed. With matching identities for relevant source/tests/config/environment and recorded command/scope/result source, reuse valid results without rerunning the gate; missing or stale evidence remains unverified and needs affected checks.
 4. **Initialize verification report structure**
 
-   Create a report structure with three dimensions:
-   - **Completeness**: Track tasks and spec coverage
-   - **Correctness**: Track requirement implementation and scenario coverage
-   - **Coherence**: Track design adherence and pattern consistency
+   Track Completeness (tasks/specs), Correctness (implementation/coverage) and Coherence (design/patterns), with CRITICAL, WARNING or SUGGESTION findings.
 
-   Each dimension can have CRITICAL, WARNING, or SUGGESTION issues.
+   For each requirement keep separate fields:
+   | Where it is implemented | Scenarios with a test | Examples whose values appear in a test | What was run and the result |
+   | --- | --- | --- | --- |
+
+   Execution evidence records command, scope, relevant version or content fingerprints, and result source (current output or prior session record):
+   - **passed-current**: the command passed in this run against the relevant current content/environment.
+   - **passed-prior**: a recorded pass whose relevant source, tests, configuration and environment all match; cite that record and the identity comparison.
+   - **not-run**: no valid execution result. Static inspection is not an executed passing test. Stale or uncertain identity leaves execution unverified, labelled not-run.
+   - **blocked**: execution could not complete; report the command, attempted scope and concrete blocker.
+
+   Preserve exclusions and their grounds separately from execution. Use current session evidence for archive handoff without a persistent verification flag.
 
 5. **Verify Completeness**
 
    **Task Completion**:
-   - If tasks.md exists in contextFiles, read it
-   - Parse checkboxes: `- [ ]` (incomplete) vs `- [x]` (complete)
-   - Count complete vs total tasks
-   - If incomplete tasks exist:
-     - Add CRITICAL issue for each incomplete task
-     - Recommendation: "Complete task: <description>" or "Mark as done if already implemented"
+   Use `spectra list --json` task totals (`totalTasks`, `completedTasks`) for progress; tasks.md checkboxes are per-task truth. Each incomplete task is CRITICAL: recommend completing it or marking done only with verified implementation evidence.
 
    **Spec Coverage**:
-   - If delta specs exist in `openspec/changes/<name>/specs/`:
-     - Extract all requirements (marked with "### Requirement:")
-     - For each requirement:
-       - Search codebase for keywords related to the requirement
-       - Assess if implementation likely exists
-     - If requirements appear unimplemented:
-       - Add CRITICAL issue: "Requirement not found: <requirement name>"
-       - Recommendation: "Implement requirement X: <description>"
+   With delta specs in `openspec/changes/<name>/specs/`, fetch `spectra instructions --skill verify-spec-coverage --agent claude` once and run its Spec Coverage checks. Without delta specs, skip the fetch.
 
 6. **Verify Correctness**
 
-   **Requirement Implementation Mapping**:
-   - For each requirement from delta specs:
-     - Search codebase for implementation evidence
-     - If found, note file paths and line ranges
-     - Assess if implementation matches requirement intent
-     - If divergence detected:
-       - Add WARNING: "Implementation may diverge from spec: <details>"
-       - Recommendation: "Review <file>:<lines> against requirement X"
-
-   **Scenario Coverage**:
-   - For each scenario in delta specs (marked with "#### Scenario:"):
-     - Check if conditions are handled in code
-     - Check if tests exist covering the scenario
-     - If scenario appears uncovered:
-       - Add WARNING: "Scenario not covered: <scenario name>"
-       - Recommendation: "Add test or implementation for scenario: <description>"
-
-   **Example Traceability**:
-   - For each `##### Example:` in delta specs:
-     - Check if a test exists that uses the same input values from the example's GIVEN/WHEN/THEN
-     - If the example has a table, check if parameterized tests cover all rows
-     - If examples appear untested, add WARNING: "Spec example not covered by test: <example name>" with recommendation to add a test using the GIVEN/WHEN/THEN from the example
+   Run the fetched Requirement Implementation Mapping, Scenario Coverage and Example Traceability checks. Without delta specs, note the skipped checks.
 
 7. **Verify Coherence**
 
    **Design Adherence**:
-   - If design.md exists in contextFiles:
-     - Extract key decisions (look for sections like "Decision:", "Approach:", "Architecture:")
-     - Verify implementation follows those decisions
-     - If contradiction detected:
-       - Add WARNING: "Design decision not followed: <decision>"
-       - Recommendation: "Update implementation or revise design.md to match reality"
-   - If no design.md: Skip design adherence check, note "No design.md to verify against"
+   Compare design.md decisions with implementation. Divergence is WARNING: recommend the specific implementation correction or artifact revision. Without design.md, note the skipped check.
 
    **Code Pattern Consistency**:
-   - Review new code for consistency with project patterns
-   - Check file naming, directory structure, coding style
-   - If significant deviations found:
-     - Add SUGGESTION: "Code pattern deviation: <details>"
-     - Recommendation: "Consider following project pattern: <example>"
+   Check captured added/modified code for naming, directory and style consistency, retaining provenance and limitations. Significant deviations are SUGGESTION with a concrete project example.
 
 8. **Generate Verification Report**
+
+   Validate captured scope with `spectra scope --change "<name>" --check-snapshot "<snapshot_id>" --json` and the same supplied base. On failure, refresh scope and affected evidence; persistent instability remains unverified.
 
    **Summary Scorecard**:
 
@@ -136,55 +92,36 @@ Verify that an implementation matches the change artifacts (specs, tasks, design
    ## Verification Report: <change-name>
 
    ### Summary
-   | Dimension    | Status           |
-   |--------------|------------------|
-   | Completeness | X/Y tasks, N reqs|
-   | Correctness  | M/N reqs covered |
-   | Coherence    | Followed/Issues  |
+   | Dimension | Status |
+   | --- | --- |
+   | Completeness | X/Y tasks, N reqs |
+   | Correctness | M/N reqs covered |
+   | Coherence | Followed/Issues |
    ```
 
-   **Issues by Priority**:
-   1. **CRITICAL** (Must fix before archive):
-      - Incomplete tasks
-      - Missing requirement implementations
-      - Each with specific, actionable recommendation
-
-   2. **WARNING** (Should fix):
-      - Spec/design divergences
-      - Missing scenario coverage
-      - Each with specific recommendation
-
-   3. **SUGGESTION** (Nice to fix):
-      - Pattern inconsistencies
-      - Minor improvements
-      - Each with specific recommendation
+   Group issues by priority: CRITICAL (incomplete tasks/missing implementation), WARNING (divergence/coverage gaps), SUGGESTION (patterns/improvements). Every issue needs an actionable recommendation and file/line references.
 
    **Final Assessment**:
-   - If CRITICAL issues: "X critical issue(s) found. Fix before archiving."
-   - If only warnings: "No critical issues. Y warning(s) to consider. Ready for archive (with noted improvements)."
-   - If all clear: "All checks passed. Ready for archive."
+   - If CRITICAL issues: report them; recommend fixing and rerunning `/spectra-verify <change>` before archive.
+   - If only warnings: report warnings with evidence strength and unverified items.
+   - If all clear: report no conformance issues found within inspected scope, followed by execution states and any unverified items. Reserve claims of passing tests for valid execution evidence.
+   - With no Critical issues, recommend "Run `/spectra-archive <change>` when ready" with the evidence limitations; task completion alone supplies no execution proof.
 
-**Verification Heuristics**
+**Heuristics and output**: use objective checklists, label inferences, prioritize substantive inconsistencies; uncertainty favors lower severity. Check available artifacts only and state each skipped check and reason. Use a summary table, prioritized findings and `file.ts:123` references. No vague suggestions like "consider reviewing".
 
-- **Completeness**: Focus on objective checklist items (checkboxes, requirements list)
-- **Correctness**: Use keyword search, file path analysis, reasonable inference - don't require perfect certainty
-- **Coherence**: Look for glaring inconsistencies, don't nitpick style
-- **False Positives**: When uncertain, prefer SUGGESTION over WARNING, WARNING over CRITICAL
-- **Actionability**: Every issue must have a specific recommendation with file/line references where applicable
+## Write for the reader
 
-**Graceful Degradation**
+The reader is using Spectra for the first time: they know their own project and have not learned this workflow's vocabulary. Every user-visible message is written so that reader can act on it.
 
-- If only tasks.md exists: verify task completion only, skip spec/design checks
-- If tasks + specs exist: verify completeness and correctness, skip design
-- If full artifacts: verify all three dimensions
-- Always note which checks were skipped and why
+### Conversation language
 
-**Output Format**
+Use the active conversation language for user-visible analysis, questions, labels, and conclusion. Resolve it in this order: an explicit language instruction for subsequent user-visible output; the primary natural language of the current user request; the most recently established conversation language when the request is mixed or contains only technical identifiers. Keep established Traditional Chinese or English. User context selects it independently of the internal template and repository artifact locale; artifacts use the locale returned by `spectra instructions`.
 
-Use clear markdown with:
+### Plain wording
 
-- Table for summary scorecard
-- Grouped lists for issues (CRITICAL/WARNING/SUGGESTION)
-- Code references in format: `file.ts:123`
-- Specific, actionable recommendations
-- No vague suggestions like "consider reviewing"
+- Lead with what happened and what the reader does next; evidence and detail follow.
+- Keep a term only when the reader can see it on screen, type it in a command, or open it as a file (change, spec, proposal, tasks, archive, CLI output such as Critical). Explain it in one clause the first time it appears.
+- Every other term belongs to this workflow, so say what it means for the reader: "scenario coverage" becomes "which spec scenarios have a test"; RED becomes "the new test failed before the change, as intended".
+- Write headings, table columns, and labels as plain descriptions in the conversation language; section names in this template stay internal.
+- Commands, paths, identifiers, and required handoff lines stay verbatim.
+- Emphasis, grouping, and pointing are carried by the words and the structure alone: a heading, a list, a table cell, bold text, or the sentence itself.
