@@ -19,3 +19,12 @@ Git blob, size, and SHA-256 are recorded in
 This snapshot inherits upstream known issues #28 and #35 and uses an unstable
 ChatGPT backend surface. Its inclusion does not make that runtime a stable
 public API.
+
+## SAM 2.1 model (`facebook/sam2.1-hiera-large`)
+
+The tracking step of `/codex-pro:codex-visual-xval` uses Meta's SAM 2.1. This package does
+**not** redistribute the model weights or code: `skills/codex-visual-xval/scripts/sam_env.sh`
+downloads them from Hugging Face into the user's own cache, and only after the user agrees.
+According to the Hugging Face model page metadata, the model is licensed Apache-2.0 (checked
+2026-10-07). torch, torchvision, transformers, numpy and pillow are installed from PyPI by uv
+into `~/.codex-pro/sam-env/`, each under its own license.

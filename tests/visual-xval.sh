@@ -275,4 +275,60 @@ else
   fail "numpy is available for the SAM geometry tests"
 fi
 
+# ── sam_env.sh: consent before a ~1 GB download, pinned versions, no half-installed env ──
+assert_file "$SCRIPTS/sam_env.sh" "sam_env.sh exists"
+mkdir -p "$WORK/stubbin" "$WORK/home"
+cat > "$WORK/stubbin/uv" <<'STUB'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >> "$UV_LOG"
+case "$1" in
+  venv)
+    dir="${@: -1}"; mkdir -p "$dir/bin"
+    printf '#!/bin/sh\nexit 0\n' > "$dir/bin/python"; chmod +x "$dir/bin/python" ;;
+  pip) exit "${UV_PIP_STATUS:-0}" ;;
+esac
+STUB
+chmod +x "$WORK/stubbin/uv"
+run_env() {   # run_env <args...> — isolated HOME, stub uv first on PATH
+  RUN_STATUS=0
+  RUN_OUT=$(HOME="$WORK/home" UV_LOG="$WORK/uv.log" PATH="$WORK/stubbin:$PATH" \
+    bash "$SCRIPTS/sam_env.sh" "$@" 2>&1) || RUN_STATUS=$?
+}
+SAM_ENV="$WORK/home/.codex-pro/sam-env"
+
+run_env --check
+assert_eq "1" "$RUN_STATUS" "--check without an environment exits 1"
+assert_contains "$RUN_OUT" "not_installed" "--check without an environment reports not_installed"
+
+run_env install
+assert_eq "3" "$RUN_STATUS" "install without --yes exits 3 (consent required)"
+assert_contains "$RUN_OUT" "856 MB" "install without --yes states the measured model size"
+assert_contains "$RUN_OUT" "--yes" "install without --yes says how to consent"
+assert_no_file "$SAM_ENV" "install without --yes creates nothing"
+assert_no_file "$WORK/uv.log" "install without --yes never calls uv"
+
+run_env install --yes
+assert_eq "0" "$RUN_STATUS" "install --yes with a working uv exits 0"
+uv_calls=$(cat "$WORK/uv.log" 2>/dev/null)
+assert_contains "$uv_calls" "venv --python 3.13 $SAM_ENV" "the environment is created under ~/.codex-pro/sam-env"
+for pin in torch==2.14.1 torchvision==0.29.1 transformers==5.19.0 numpy==2.5.3 pillow==10.4.0; do
+  assert_contains "$uv_calls" "$pin" "install pins $pin"
+done
+run_env --check
+assert_eq "0" "$RUN_STATUS" "--check after install exits 0"
+assert_contains "$RUN_OUT" "installed" "--check after install reports installed"
+
+rm -rf "$WORK/home/.codex-pro" "$WORK/uv.log"
+RUN_STATUS=0
+RUN_OUT=$(HOME="$WORK/home" UV_LOG="$WORK/uv.log" UV_PIP_STATUS=1 PATH="$WORK/stubbin:$PATH" \
+  bash "$SCRIPTS/sam_env.sh" install --yes 2>&1) || RUN_STATUS=$?
+assert_eq "1" "$RUN_STATUS" "a failed package install exits 1"
+assert_contains "$RUN_OUT" "error=install_failed" "a failed package install is reported"
+assert_no_file "$SAM_ENV" "a failed install leaves no half-installed environment"
+
+mkdir -p "$SAM_ENV" && printf 'user data\n' > "$SAM_ENV/keep.txt"
+run_env install --yes
+assert_eq "2" "$RUN_STATUS" "install refuses to touch an existing directory it did not create"
+assert_file "$SAM_ENV/keep.txt" "the unknown directory is left alone"
+
 report_summary "visual-xval"

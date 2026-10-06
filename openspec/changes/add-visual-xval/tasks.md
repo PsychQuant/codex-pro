@@ -33,7 +33,7 @@
   - 以兩邊一致的影格為錨點，每段一致影格重新錨定；影格存 CPU 記憶體。
   - 兩物件遮罩 IoU > 0.5 的格標為 invalid；輸出逐格位置與 invalid 標記的 JSON。
   - 驗證：用合成遮罩（不下載模型）測試塌陷偵測——IoU 0.7 判 invalid、0.1 判 valid；用一支短片的人工 smoke 步驟寫進 `tests/e2e-checklist.md`。
-- [ ] 3.4 實作 SAM 環境腳本 `sam_env.sh`。
+- [x] 3.4 實作 SAM 環境腳本 `sam_env.sh`。
   - 在 `~/.codex-pro/sam-env/` 用 uv 建 venv，鎖定 transformers 5.19 以上與相容的 torch。
   - 安裝前顯示預估下載量，使用者明確同意才安裝；`--check` 回報 installed 或 not_installed。
   - 確認 SAM 2.1 的授權並寫進兩份 `THIRD_PARTY_NOTICES.md`。

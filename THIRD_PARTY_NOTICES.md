@@ -21,3 +21,11 @@ repository 根層檔案才具備授權聲明。
 
 此 snapshot 會繼承上游已知問題 #28 與 #35，且使用未承諾穩定的 ChatGPT backend
 介面；納入本 repository 不代表該 runtime 已成為穩定的公開 API。
+
+## SAM 2.1 模型（`facebook/sam2.1-hiera-large`）
+
+`/codex-pro:codex-visual-xval` 的追蹤步驟使用 Meta 的 SAM 2.1。codex-pro **不重新散布**
+模型權重或其程式碼：`plugins/codex-pro/skills/codex-visual-xval/scripts/sam_env.sh`
+在使用者同意後，才從 Hugging Face 下載到使用者自己的快取。依 Hugging Face 模型頁的
+metadata，該模型的授權為 Apache-2.0（2026-10-07 查核）。torch、torchvision、
+transformers、numpy、pillow 由 uv 從 PyPI 安裝到 `~/.codex-pro/sam-env/`，各依其授權。
