@@ -6,7 +6,7 @@ codex-pro 分發一份來自
 [`PsychQuant/parallel-ai-agents`](https://github.com/PsychQuant/parallel-ai-agents)
 的 `codex-call` 原始碼 snapshot：
 
-- 上游 commit：`6fc6883ef1d655f5f782a97accc0a5adacc76226`
+- 上游 commit：`19564c1567a6110f8ebbafe0ae404984c0ef8745`
 - 上游路徑：`plugins/parallel-ai-agents/bin/codex-call`
 - Copyright (c) 2026 Che Cheng
 - 授權：MIT

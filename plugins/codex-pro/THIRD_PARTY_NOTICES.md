@@ -6,7 +6,7 @@ This Claude plugin package includes a source snapshot at
 `runtime/codex-call` from
 [`PsychQuant/parallel-ai-agents`](https://github.com/PsychQuant/parallel-ai-agents):
 
-- Upstream commit: `6fc6883ef1d655f5f782a97accc0a5adacc76226`
+- Upstream commit: `19564c1567a6110f8ebbafe0ae404984c0ef8745`
 - Upstream path: `plugins/parallel-ai-agents/bin/codex-call`
 - Copyright (c) 2026 Che Cheng
 - License: MIT

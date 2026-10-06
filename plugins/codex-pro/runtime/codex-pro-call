@@ -3,7 +3,7 @@
 
 set -uo pipefail
 
-EXPECTED_SHA256="fa80364b2159f3df4f2d9a27c885a7b50e510bf52933abaa79564945bedb6af0"
+EXPECTED_SHA256="50ab7eb4296ca1b1cccf3b0707a0bd5f6ffe0acce14a9ef4bd31a0caf1a9098d"
 
 if ! SCRIPT_DIR="$(cd "$(dirname "$0")" 2>/dev/null && pwd -P)"; then
   printf 'error=runtime_missing path=unresolved\n' >&2

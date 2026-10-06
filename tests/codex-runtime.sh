@@ -10,17 +10,43 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 # shellcheck disable=SC1091
 source "$SCRIPT_DIR/lib/assert.sh"
 
-PINNED_COMMIT="6fc6883ef1d655f5f782a97accc0a5adacc76226"
-PINNED_BLOB="c2418f5c0a0a3d092859d6252d2910c460dee981"
-PINNED_BYTES="25329"
-PINNED_SHA256="fa80364b2159f3df4f2d9a27c885a7b50e510bf52933abaa79564945bedb6af0"
-PINNED_SOURCE_PATH="plugins/parallel-ai-agents/bin/codex-call"
-PINNED_RAW_URL="https://raw.githubusercontent.com/PsychQuant/parallel-ai-agents/$PINNED_COMMIT/$PINNED_SOURCE_PATH"
-
 SOURCE_RUNTIME="$REPO_ROOT/plugins/codex-pro/runtime/codex-call"
 SOURCE_WRAPPER="$REPO_ROOT/plugins/codex-pro/runtime/codex-pro-call"
 SOURCE_PROVENANCE="$REPO_ROOT/plugins/codex-pro/references/codex-call-provenance.json"
 TEST_MODE="${1:-full}"
+PINNED_SOURCE_PATH="plugins/parallel-ai-agents/bin/codex-call"
+
+# The provenance JSON is the single authoritative record of the vendored runtime
+# (#23): every pinned value below is read from it, and the checks hold the three
+# snapshots, the wrapper digest and the notices to that one record. Each value is
+# shape-checked first — an empty or malformed value would make "contains" checks
+# vacuously pass, so it is replaced by a sentinel that can never match.
+PROVENANCE_SENTINEL="INVALID-PROVENANCE-VALUE"
+read_provenance_field() {
+  local field="$1" pattern="$2" value
+  value=$(python3 - "$SOURCE_PROVENANCE" "$field" 2>/dev/null <<'PY'
+import json
+import sys
+
+with open(sys.argv[1], encoding="utf-8") as handle:
+    print(json.load(handle).get(sys.argv[2], ""))
+PY
+  ) || value=""
+  if printf '%s' "$value" | grep -Eq "^${pattern}\$"; then
+    pass "provenance field '$field' is well-formed"
+    printf '%s' "$value" > "$PROVENANCE_FIELD_OUT"
+  else
+    fail "provenance field '$field' is well-formed (value='$value')"
+    printf '%s' "$PROVENANCE_SENTINEL" > "$PROVENANCE_FIELD_OUT"
+  fi
+}
+PROVENANCE_FIELD_OUT=$(mktemp)
+trap 'rm -f "$PROVENANCE_FIELD_OUT"' EXIT
+read_provenance_field commit '[0-9a-f]{40}';  PINNED_COMMIT=$(<"$PROVENANCE_FIELD_OUT")
+read_provenance_field blob '[0-9a-f]{40}';    PINNED_BLOB=$(<"$PROVENANCE_FIELD_OUT")
+read_provenance_field bytes '[1-9][0-9]*';    PINNED_BYTES=$(<"$PROVENANCE_FIELD_OUT")
+read_provenance_field sha256 '[0-9a-f]{64}';  PINNED_SHA256=$(<"$PROVENANCE_FIELD_OUT")
+PINNED_RAW_URL="https://raw.githubusercontent.com/PsychQuant/parallel-ai-agents/$PINNED_COMMIT/$PINNED_SOURCE_PATH"
 
 case "$TEST_MODE" in
   full|--source-only|--smoke) ;;
@@ -122,6 +148,36 @@ PY
     *'/main/'*|*'ref=main'*) fail "provenance does not use mutable main" ;;
     *) pass "provenance does not use mutable main" ;;
   esac
+fi
+
+# ── Provenance agreement (#23) ───────────────────────────────────
+# Wrapper digest agrees with provenance: every wrapper copy's EXPECTED_SHA256
+# must equal the record — not merely contain it somewhere in the file.
+for wrapper_path in "${wrapper_paths[@]}"; do
+  [ -r "$wrapper_path" ] || continue
+  wrapper_digest=$(sed -n 's/^EXPECTED_SHA256="\([0-9a-f]*\)"$/\1/p' "$wrapper_path")
+  assert_eq "$PINNED_SHA256" "$wrapper_digest" \
+    "wrapper digest agrees with provenance: ${wrapper_path#"$REPO_ROOT"/}"
+done
+
+# Vendored runtime accepts images: the help text of every snapshot lists --image.
+# Statically for every copy; by running --help on the source copy when the
+# pinned Swift toolchain is present (the wrapper refuses other platforms anyway).
+runtime_paths=("$SOURCE_RUNTIME")
+[ "$TEST_MODE" = "--source-only" ] || runtime_paths+=("$REPO_ROOT/bin/codex-call" "$REPO_ROOT/.codex/bin/codex-call")
+for runtime_path in "${runtime_paths[@]}"; do
+  [ -r "$runtime_path" ] || continue
+  if grep -q -- '--image FILE' "$runtime_path"; then
+    pass "vendored runtime help text lists --image: ${runtime_path#"$REPO_ROOT"/}"
+  else
+    fail "vendored runtime help text lists --image: ${runtime_path#"$REPO_ROOT"/}"
+  fi
+done
+if [ "$(uname -s)" = "Darwin" ] && [ -x /usr/bin/swift ] && [ -x "$SOURCE_RUNTIME" ]; then
+  help_status=0
+  help_output=$("$SOURCE_RUNTIME" --help 2>&1) || help_status=$?
+  assert_eq "0" "$help_status" "vendored runtime --help exits 0"
+  assert_contains "$help_output" "--image FILE" "vendored runtime --help lists --image"
 fi
 
 assert_file "$REPO_ROOT/THIRD_PARTY_NOTICES.md" "third-party notice exists"

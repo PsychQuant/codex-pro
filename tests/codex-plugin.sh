@@ -350,11 +350,16 @@ emit(
     bool(repository_license) and claude_package_license == repository_license,
     "Claude package carries the complete repository MIT license text",
 )
+# The pinned commit comes from the provenance record, the single source of truth (#23).
+pinned_commit = json.loads(
+    load_text(claude_plugin_root / "references" / "codex-call-provenance.json", "runtime provenance")
+    or "{}"
+).get("commit") or "MISSING-PROVENANCE-COMMIT"
 missing_notice_tokens = [
     token
     for token in (
         "runtime/codex-call",
-        "6fc6883ef1d655f5f782a97accc0a5adacc76226",
+        pinned_commit,
         "Copyright (c) 2026 Che Cheng",
         "[LICENSE](LICENSE)",
     )
