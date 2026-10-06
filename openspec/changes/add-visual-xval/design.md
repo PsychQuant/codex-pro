@@ -97,7 +97,7 @@ Claude 的逐格答案先寫到 `.codex-pro/visual-xval-<timestamp>/claude.json`
 
 ### 裁決規則
 
-每個分歧的結果只有三種：`resolved_claude`、`resolved_codex`、`unverifiable`。只有第三種證據（放大後兩邊重答一致、SAM 有效格的量測、違反物理約束）能裁決；沒有有效證據就是 `unverifiable`。不用多數決，也不讓任何一方看到另一方的答案後改答。
+每個分歧的結果只有三種：`resolved_claude`、`resolved_codex`、`unverifiable`。SAM 的量測值離門檻不到 1%（寬度百分比，可用詞彙表的 `sam_margin_pct` 改）時不算證據：實測（2026-10-07，12 格腹腔鏡影格）SAM 量出的兩尖端距離與標註相差中位 0.28%、最大 0.91%，曾有一格兩者正好跨在 5% 門檻兩側。多項證據互相矛盾時判 `unverifiable`。只有第三種證據（放大後兩邊重答一致、SAM 有效格的量測、違反物理約束）能裁決；沒有有效證據就是 `unverifiable`。不用多數決，也不讓任何一方看到另一方的答案後改答。
 
 ### 重新 vendor 接受上游漂移
 

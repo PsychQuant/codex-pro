@@ -150,7 +150,7 @@ def compare(vocab: dict, claude: dict[str, dict], codex: dict[str, dict], aspect
                     disagreements.append({
                         "frame": frame, "kind": "position", "class": cls,
                         "claude": [a["x_pct"], a["y_pct"]], "codex": [b["x_pct"], b["y_pct"]],
-                        "distance_pct": round(gap, 2), "threshold_pct": threshold})
+                        "distance_pct": round(gap, 2), "threshold_pct": threshold, "aspect": aspect})
         for name in vocab.get("relations", {}):
             if mine["relations"][name] != theirs["relations"][name]:
                 disagreements.append({"frame": frame, "kind": "relation", "relation": name,

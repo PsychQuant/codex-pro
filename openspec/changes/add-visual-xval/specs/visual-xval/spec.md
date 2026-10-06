@@ -94,7 +94,12 @@ The skill SHALL include a SAM 2.1 tracking step, using model `facebook/sam2.1-hi
 
 ### Requirement: Adjudication without majority vote
 
-Each disagreement SHALL end as exactly one of `resolved_claude`, `resolved_codex`, or `unverifiable`. Only third evidence SHALL settle a disagreement: matching answers from the zoom round, a measurement from a valid SAM frame, or a violated physical constraint from the vocabulary. No request to either model SHALL contain the other model's claims, and an answer already recorded SHALL NOT be replaced by a later answer from the same model. Without valid third evidence, the disagreement SHALL be `unverifiable`.
+Each disagreement SHALL end as exactly one of `resolved_claude`, `resolved_codex`, or `unverifiable`. Only third evidence SHALL settle a disagreement: matching answers from the zoom round, a measurement from a valid SAM frame, or a violated physical constraint from the vocabulary. A SAM measurement SHALL count as evidence only when it lies farther from the relevant threshold than the SAM margin, which defaults to 1 percent of image width and can be set by `sam_margin_pct` in the vocabulary file; a measurement within the margin is not evidence. When the available pieces of evidence point to different sides, the disagreement SHALL be `unverifiable`. No request to either model SHALL contain the other model's claims, and an answer already recorded SHALL NOT be replaced by a later answer from the same model. Without valid third evidence, the disagreement SHALL be `unverifiable`.
+
+#### Scenario: A measurement within the SAM margin is not evidence
+
+- **WHEN** a relation mismatch on `tips_together` (defined as distance_pct < 5) has only one piece of evidence, a valid SAM frame measuring the tips 5.18% of the image width apart, and the SAM margin is 1
+- **THEN** the measurement is not used and the disagreement is `unverifiable`
 
 #### Scenario: Disagreement without valid evidence stays unverifiable
 
@@ -104,7 +109,7 @@ Each disagreement SHALL end as exactly one of `resolved_claude`, `resolved_codex
 ##### Example: SAM settles a relation mismatch
 
 - **GIVEN** a relation mismatch on `tips_together` defined as distance_pct < 5, Claude says true and Codex says false
-- **WHEN** a valid SAM frame measures the two tips 4.3% of the image width apart
+- **WHEN** a valid SAM frame measures the two tips 3.5% of the image width apart, farther from the threshold than the default margin of 1
 - **THEN** the disagreement is `resolved_claude` with the SAM measurement recorded as evidence
 
 ### Requirement: Structured result file

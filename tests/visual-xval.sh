@@ -100,6 +100,8 @@ run_py compare_claims.py compare "$WORK/vocab.json" "$WORK/claude.json" "$WORK/c
 kinds=$(json_get "$RUN_OUT" '" ".join(sorted("%s:%s" % (x["frame"], x["kind"]) for x in d["disagreements"]))')
 assert_contains "$kinds" "f02.png:count" "a different instrument count is a count mismatch"
 assert_contains "$kinds" "f03.png:position" "a tip moved beyond the threshold is a position mismatch"
+assert_eq "1.0" "$(json_get "$RUN_OUT" '[x["aspect"] for x in d["disagreements"] if x["kind"] == "position"][0]')" \
+  "a position disagreement carries the aspect ratio used for its distance"
 case "$kinds" in
   *f04.png*) fail "points listed in another order are paired by distance (got: $kinds)" ;;
   *) pass "points listed in another order are paired by distance" ;;
@@ -330,5 +332,66 @@ mkdir -p "$SAM_ENV" && printf 'user data\n' > "$SAM_ENV/keep.txt"
 run_env install --yes
 assert_eq "2" "$RUN_STATUS" "install refuses to touch an existing directory it did not create"
 assert_file "$SAM_ENV/keep.txt" "the unknown directory is left alone"
+
+# ── adjudicate.py: third evidence only, no majority vote ─────────
+assert_file "$SCRIPTS/adjudicate.py" "adjudicate.py exists"
+python3 - "$WORK" <<'PY'
+import json, sys
+w = sys.argv[1]
+vocab = json.load(open(f"{w}/vocab.json")); vocab["max_count"] = {"INST": 2}
+json.dump(vocab, open(f"{w}/vocab_limits.json", "w"))
+rel = {"id": "d1", "frame": "f08.png", "kind": "relation", "relation": "tips_together",
+       "definition": "distance_pct < 5", "claude": True, "codex": False}
+cnt = {"id": "d2", "frame": "f02.png", "kind": "count", "class": "INST", "claude": 3, "codex": 2}
+cnt_low = {"id": "d3", "frame": "f03.png", "kind": "count", "class": "INST", "claude": 2, "codex": 1}
+json.dump({"n_frames": 12, "agreement_rate": 0.75, "frames": {}, "disagreements": [rel, cnt, cnt_low]},
+          open(f"{w}/disputes.json", "w"))
+def track(dist, invalid=False, objects=2):
+    obj = {"area": 900, "centroid_pct": [50, 50], "tip_pct": [50, 50], "entry_pct": [10, 90]}
+    return {"sam_status": "ok", "frames": {
+        "f08.png": {"invalid": invalid, "max_iou": 0.7 if invalid else 0.0, "distance_pct": dist,
+                    "objects": {"1": obj, "2": obj}},
+        "f03.png": {"invalid": False, "max_iou": 0.0, "distance_pct": 20.0,
+                    "objects": {str(k): obj for k in range(1, objects + 1)}}}}
+json.dump(track(3.5), open(f"{w}/track_35.json", "w"))
+json.dump(track(5.18), open(f"{w}/track_518.json", "w"))
+json.dump(track(3.5, invalid=True), open(f"{w}/track_collapsed.json", "w"))
+json.dump(track(8.0, objects=1), open(f"{w}/track_8_one_object.json", "w"))
+json.dump({"d1": {"claude": True, "codex": True}}, open(f"{w}/zoom_claude.json", "w"))
+json.dump({"d1": {"claude": False, "codex": False}}, open(f"{w}/zoom_codex.json", "w"))
+PY
+verdict() {   # verdict <id> — from RUN_OUT
+  json_get "$RUN_OUT" "[a['verdict'] for a in d['adjudications'] if a['id'] == '$1'][0]"
+}
+
+run_py adjudicate.py "$WORK/vocab_limits.json" "$WORK/disputes.json" --sam "$WORK/track_35.json"
+assert_eq "0" "$RUN_STATUS" "adjudicate exits 0"
+assert_eq "resolved_claude" "$(verdict d1)" "spec example: SAM measures 3.5% (threshold 5, margin 1) -> resolved_claude"
+assert_contains "$(json_get "$RUN_OUT" "[a['evidence'] for a in d['adjudications'] if a['id'] == 'd1'][0]")" "3.5" \
+  "the SAM measurement is recorded as evidence"
+assert_eq "resolved_codex" "$(verdict d2)" "a count above the vocabulary's maximum loses (3 instruments vs max 2)"
+
+run_py adjudicate.py "$WORK/vocab_limits.json" "$WORK/disputes.json" --sam "$WORK/track_518.json"
+assert_eq "unverifiable" "$(verdict d1)" "a measurement within the SAM margin (5.18 vs 5) is not evidence"
+
+run_py adjudicate.py "$WORK/vocab_limits.json" "$WORK/disputes.json" --sam "$WORK/track_collapsed.json"
+assert_eq "unverifiable" "$(verdict d1)" "a collapsed SAM frame is not evidence"
+
+run_py adjudicate.py "$WORK/vocab_limits.json" "$WORK/disputes.json"
+assert_eq "unverifiable" "$(verdict d1)" "without any third evidence the disagreement is unverifiable"
+
+run_py adjudicate.py "$WORK/vocab_limits.json" "$WORK/disputes.json" --zoom "$WORK/zoom_codex.json"
+assert_eq "resolved_codex" "$(verdict d1)" "matching zoom-round answers that agree with Codex resolve to Codex"
+
+run_py adjudicate.py "$WORK/vocab_limits.json" "$WORK/disputes.json" --zoom "$WORK/zoom_codex.json" --sam "$WORK/track_35.json"
+assert_eq "unverifiable" "$(verdict d1)" "zoom round and SAM pointing to different sides is unverifiable"
+
+run_py adjudicate.py "$WORK/vocab_limits.json" "$WORK/disputes.json" --sam "$WORK/track_35.json"
+assert_eq "resolved_claude" "$(verdict d3)" "SAM tracking two objects confirms the higher count (2 vs 1)"
+run_py adjudicate.py "$WORK/vocab_limits.json" "$WORK/disputes.json" --sam "$WORK/track_8_one_object.json"
+assert_eq "unverifiable" "$(verdict d3)" "SAM seeing fewer objects cannot refute the higher count (it only tracks anchored objects)"
+# d1: 8.0% is beyond 5 ± 1, so "not together" -> Codex; d2: 3 > max 2 -> Codex; d3: unverifiable
+assert_eq "0 2 1" "$(json_get "$RUN_OUT" '"%d %d %d" % (d["counts"]["resolved_claude"], d["counts"]["resolved_codex"], d["counts"]["unverifiable"])')" \
+  "the summary counts every verdict once"
 
 report_summary "visual-xval"

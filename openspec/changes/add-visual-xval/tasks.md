@@ -38,7 +38,7 @@
   - 安裝前顯示預估下載量，使用者明確同意才安裝；`--check` 回報 installed 或 not_installed。
   - 確認 SAM 2.1 的授權並寫進兩份 `THIRD_PARTY_NOTICES.md`。
   - 驗證：以 stub 的 uv 測試拒絕安裝時回 not_installed 且沒有建立任何檔案。
-- [ ] 3.5 依「裁決規則」實作 Adjudication without majority vote 的裁決腳本。
+- [x] 3.5 依「裁決規則」實作 Adjudication without majority vote 的裁決腳本。
   - 輸入比對結果、放大輪答案、SAM 輸出，每個分歧輸出 `resolved_claude`、`resolved_codex`、`unverifiable` 之一，附上證據。
   - 驗證：fixture 測試——SAM 有效格量到 4.3% → `resolved_claude`；只有 invalid 格 → `unverifiable`；輸入中不存在讓任一方看到對方答案的路徑。
   - [after: 3.1, 3.3]
