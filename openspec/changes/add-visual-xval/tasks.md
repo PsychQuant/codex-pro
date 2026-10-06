@@ -23,13 +23,13 @@
 
 ## 3. 腳本（可單獨執行與測試）
 
-- [ ] 3.1 實作 Claim schema and closed vocabulary 的驗證與 Deterministic comparison 比對腳本 `compare_claims.py`（依「主張的 JSON schema 與量化門檻」），放在 `plugins/codex-pro/skills/codex-visual-xval/scripts/`。
+- [x] 3.1 實作 Claim schema and closed vocabulary 的驗證與 Deterministic comparison 比對腳本 `compare_claims.py`（依「主張的 JSON schema 與量化門檻」），放在 `plugins/codex-pro/skills/codex-visual-xval/scripts/`。
   - Claim schema and closed vocabulary：關係詞沒有量化定義時回報 `target_invalid`；不在清單的物體記為 `other`。
   - Deterministic comparison：同類物體依最近距離配對，分數量不同、位置不同（超過 `position_threshold_pct`）、關係不同三類，算出 `agreement_rate`。
   - 驗證：fixture 測試涵蓋三類分歧；spec 的 f08 例子 12 格中 1 格分歧時一致率為 11/12；缺門檻的關係詞回 `target_invalid`。
-- [ ] 3.2 依「Claude 答案先封存」實作 Sealed Claude answers：寫入答案檔，記錄 SHA-256 與時間；比對前重算，不符時 `seal_broken: true`。
+- [x] 3.2 依「Claude 答案先封存」實作 Sealed Claude answers：寫入答案檔，記錄 SHA-256 與時間；比對前重算，不符時 `seal_broken: true`。
   - 驗證：未改檔時兩次 digest 相同且 `seal_broken: false`；改一個字元後為 `true`。
-- [ ] 3.3 依「內建 SAM 2.1，多錨點，偵測塌陷」實作 Built-in SAM evidence 的追蹤腳本 `sam_track.py`。
+- [x] 3.3 依「內建 SAM 2.1，多錨點，偵測塌陷」實作 Built-in SAM evidence 的追蹤腳本 `sam_track.py`。
   - 以兩邊一致的影格為錨點，每段一致影格重新錨定；影格存 CPU 記憶體。
   - 兩物件遮罩 IoU > 0.5 的格標為 invalid；輸出逐格位置與 invalid 標記的 JSON。
   - 驗證：用合成遮罩（不下載模型）測試塌陷偵測——IoU 0.7 判 invalid、0.1 判 valid；用一支短片的人工 smoke 步驟寫進 `tests/e2e-checklist.md`。

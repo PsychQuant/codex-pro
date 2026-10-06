@@ -60,6 +60,7 @@ else
     result
     cancel
     config
+    visual-xval
   )
 fi
 

@@ -187,6 +187,23 @@ bash tests/e2e.sh --skill adversarial-review --scenario with-profile
 
 - [ ] **Sub-plugin dev-test**：開另一個 Claude Code session 用 `claude --plugin-dir <repo>/plugins/codex-pro`（從你 clone 的 codex-pro 目錄）。預期：載入後 `/codex-pro:codex-setup` 與 `/codex-pro:codex-batch` 都可觸發，行為與 marketplace install 路徑一致。
 
+## E. Visual cross-validation：SAM 2.1 真實影格 smoke（手動）
+
+`tests/visual-xval.sh` 只用合成遮罩測幾何，不下載模型。發布前用真實影格跑一次
+`sam_track.py track`，確認遮罩、尖端與距離真的對得上：
+
+- [ ] `~/.codex-pro/sam-env/` 已由 `sam_env.sh install --yes` 建好（約 1 GB，首次下載模型 856 MB）
+- [ ] 準備一段**同一支影片、依時間排序**的 8–12 張影格（例如腹腔鏡訓練片每 5 秒一格），以及兩份
+      claim JSON（可以兩份相同，再改一格的關係判斷製造一個分歧，讓錨點切成兩段）
+- [ ] `compare_claims.py compare` → `sam_track.py anchors --class INST` → 用 sam-env 的 python 跑
+      `sam_track.py track`，`sam_status` 為 `ok`
+- [ ] 把 `tip_pct` 畫回影格親眼看：尖端落在器械夾口，不是桿身入口、也不是沿縫線跑到另一支器械
+- [ ] 尖端與標註位置的誤差：2026-10-07 的基準是 23/24 個尖端 ≤ 1.2%（寬度百分比），1 個貼著視野
+      邊緣的被正確回報為 null。明顯變差就先查 `THREAD_RADIUS_AT_960` 與 `view_region`
+
+這一段踩過的坑（都已修，留著是為了重跑時知道要看什麼）：transformers 會清空傳入的 `obj_ids`
+list（每格都沒有物件）；黑色桿身被當成視野外（尖端跑到入口）；遮罩黏著縫線（尖端沿線跑走）。
+
 ## Post-test cleanup checklist
 
 - [ ] B 段使用的 disposable account／VM 沒有污染日常 Codex home
