@@ -23,7 +23,9 @@ MODEL_REVISION="665f8e2ad61cf5f53d65644ff27c8ee525124610"   # must match sam_tra
 # The weights live inside the environment, so the consent covers where they go and
 # removing the environment removes them too.
 export HF_HOME="$ENV_DIR/hf"
-ESTIMATE="約 1 GB：模型權重 856 MB（2026-10-07 實測），torch 等套件約 0.1–0.2 GB（估計，依平台而異）"
+# Only the files the tracking loads are downloaded: the repository also holds an 898 MB .pt
+# checkpoint that transformers never reads (#23 verify round 2, R8).
+ESTIMATE="約 1 GB：模型權重 model.safetensors 898 MB（856 MiB，2026-10-07 實測；同一 repo 另有一個用不到的 .pt 檔，不下載），torch 等套件約 0.1–0.2 GB（估計，依平台而異）"
 
 check() {
   if [ -x "$ENV_DIR/bin/python" ] \
@@ -67,7 +69,7 @@ install() {
   if uv venv --python "$PYTHON_VERSION" "$ENV_DIR" \
       && touch "$MARKER" \
       && uv pip install --python "$ENV_DIR/bin/python" "${PINS[@]}" \
-      && "$ENV_DIR/bin/python" -I -c "from huggingface_hub import snapshot_download; snapshot_download('$MODEL_ID', revision='$MODEL_REVISION')"; then
+      && "$ENV_DIR/bin/python" -I -c "from huggingface_hub import snapshot_download; snapshot_download('$MODEL_ID', revision='$MODEL_REVISION', allow_patterns=['*.json', 'model.safetensors'])"; then
     check
     exit $?
   fi

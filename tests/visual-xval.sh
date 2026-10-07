@@ -442,7 +442,7 @@ assert_contains "$RUN_OUT" "not_installed" "--check without an environment repor
 
 run_env install
 assert_eq "3" "$RUN_STATUS" "install without --yes exits 3 (consent required)"
-assert_contains "$RUN_OUT" "856 MB" "install without --yes states the measured model size"
+assert_contains "$RUN_OUT" "898 MB" "install without --yes states the measured model size"
 assert_contains "$RUN_OUT" "sam-env/hf" "the consent text says where the model weights go"
 assert_contains "$RUN_OUT" "--yes" "install without --yes says how to consent"
 assert_no_file "$SAM_ENV" "install without --yes creates nothing"
@@ -458,6 +458,8 @@ done
 py_calls=$(cat "$WORK/py.log" 2>/dev/null)
 assert_contains "$py_calls" "HF_HOME=$SAM_ENV/hf" "the model weights are downloaded into the environment, not the global cache"
 assert_contains "$py_calls" "revision='665f8e2ad61cf5f53d65644ff27c8ee525124610'" "the model download is pinned to a revision"
+assert_contains "$py_calls" "allow_patterns=['*.json', 'model.safetensors']" \
+  "only the files the tracking loads are downloaded, not the unused .pt checkpoint (#23 verify round 2, R8)"
 case "$py_calls" in
   *" -c "*) case "$py_calls" in *"-I -c "*) pass "every inline python runs isolated (-I)";; *) fail "every inline python runs isolated (-I)";; esac ;;
   *) fail "every inline python runs isolated (-I) (no inline python recorded)" ;;

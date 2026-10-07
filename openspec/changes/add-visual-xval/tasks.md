@@ -182,7 +182,7 @@
   - 原始檔名與中性檔名衝突時拒絕對照。
   - 驗證：附加尾段的 JPEG 複本不含尾段；PNG 方向 6 被轉正；封存後改詞彙表被拒；plan 指向 run 目錄外的檔案被拒。
   - [after: 7.4]
-- [ ] 7.6 SAM 下載與出貨路徑（R8、S16）。
+- [x] 7.6 SAM 下載與出貨路徑（R8、S16）。
   - `snapshot_download` 只取需要的檔案；同意文字依實際大小更新。
   - 以暫時的 HOME 讓 `~/.codex-pro/sam-env` 指向既有環境，從 `xval.py sam` 跑完出貨路徑。
   - 驗證：stub 測試確認 allow_patterns；出貨路徑 smoke 的紀錄寫進 e2e-checklist §E。

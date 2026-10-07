@@ -192,7 +192,7 @@ bash tests/e2e.sh --skill adversarial-review --scenario with-profile
 `tests/visual-xval.sh` 只用合成遮罩測幾何，不下載模型。發布前用真實影格跑一次
 `sam_track.py track`，確認遮罩、尖端與距離真的對得上：
 
-- [ ] `~/.codex-pro/sam-env/` 已由 `sam_env.sh install --yes` 建好（約 1 GB，首次下載模型 856 MB）
+- [ ] `~/.codex-pro/sam-env/` 已由 `sam_env.sh install --yes` 建好（約 1 GB，首次下載模型權重 898 MB，只取 model.safetensors）
 - [ ] 準備一段**同一支影片、依時間排序**的 8–12 張影格（例如腹腔鏡訓練片每 5 秒一格），以及兩份
       claim JSON（可以兩份相同，再改一格的關係判斷製造一個分歧，讓錨點切成兩段）
 - [ ] `compare_claims.py compare` → `sam_track.py anchors --class INST --order <影格順序.json>` → 用 sam-env 的
@@ -206,6 +206,13 @@ bash tests/e2e.sh --skill adversarial-review --scenario with-profile
 紀錄：2026-10-07 第二輪（verify 修正後）在同一組 12 張影格重跑，revision `665f8e2` 以本機檔案載入，
 `class: INST`，12 格尖端距離與第一輪完全相同（最大位移 0），兩支器械的 object score 全部為正
 （5.87–17.65），無塌陷格。這次用的是既有環境加上全域 HF 快取，不是 `sam_env.sh` 新裝的環境。
+
+出貨路徑紀錄：2026-10-07 第三輪修正（task 7.6）。以暫時的 HOME 讓 `~/.codex-pro/sam-env` 指向既有環境、
+`sam-env/hf/hub` 指向既有模型快取（沒有下載），從 `xval.py` 跑完 `init --sequence` → 封存 → `compare` → `sam` →
+`adjudicate` → `result`：`sam_env.sh --check` 通過（鎖定 revision、只用本機檔案、`-I`），`sam_status: ok`，12 格追蹤、
+0 格塌陷，錨點 f01、f07；f06 的關係分歧（Claude false、Codex true）由 SAM 量到兩尖端相距 16.09% 裁決為
+`resolved_claude`。這組影格是真實的訓練影片影格，所以**沒有執行 `ask`**：Codex 的答案取自先前的 smoke，
+請求紀錄是手動補上的，沒有任何影格送出本機。
 
 這一段踩過的坑（都已修，留著是為了重跑時知道要看什麼）：transformers 會清空傳入的 `obj_ids`
 list（每格都沒有物件）；黑色桿身被當成視野外（尖端跑到入口）；遮罩黏著縫線（尖端沿線跑走）。
