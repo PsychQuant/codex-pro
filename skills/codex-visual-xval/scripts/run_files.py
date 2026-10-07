@@ -65,14 +65,31 @@ def neutral_names(run: str) -> list[str]:
     return sorted(load(os.path.join(run, "frames.json"), {}))
 
 
+def safe_digest(path: str) -> str | None:
+    """A file's digest, or None when it is missing: a missing file is a broken record, not a crash
+    reported as the skill's own fault (#23 verify round 5, N2)."""
+    try:
+        return sealing.digest(path)
+    except OSError:
+        return None
+
+
 def inputs_digest(run: str) -> str:
     """One digest over the vocabulary, frames.json and every frame copy (#23 verify round 2, S2)."""
     import hashlib
     h = hashlib.sha256()
     # Only the frames the run lists: a file Finder adds (.DS_Store) is not an input (round 3, L2).
     for name in ["vocab.json", "frames.json"] + [os.path.join("frames", n) for n in neutral_names(run)]:
-        h.update(name.encode() + b"\0" + sealing.digest(os.path.join(run, name)).encode() + b"\n")
+        h.update(name.encode() + b"\0" + (safe_digest(os.path.join(run, name)) or "missing").encode() + b"\n")
     return h.hexdigest()
+
+
+def checked_inputs(run: str) -> None:
+    """Every step after sealing reads the vocabulary and the frames as sealed: max_count, track_point
+    and sam_margin_pct decide verdicts (#23 verify round 5, V8)."""
+    sealed = (load(os.path.join(run, "seal.json"), {}) or {}).get("inputs_sha256")
+    if not sealed or sealed != inputs_digest(run):
+        raise Stop("target_invalid", "the vocabulary or the image copies changed after Claude's answers were sealed")
 
 
 def seal_intact(run: str, zoom: bool) -> bool:
@@ -96,7 +113,7 @@ def zoom_record_intact(run: str, plan: dict) -> bool:
     """The plan, the question file, the crops and the comparison they came from, as `crops` wrote them."""
     record = load(os.path.join(run, "zoom_record.json"), {})
     crops = record.get("crops_sha256") or {}
-    return (record.get("plan_sha256") == sealing.digest(os.path.join(run, "zoom_plan.json"))
-            and record.get("prompt_sha256") == sealing.digest(os.path.join(run, "zoom_prompt.md"))
-            and record.get("comparison_sha256") == sealing.digest(os.path.join(run, "comparison.json"))
-            and all(crops.get(e["crop"]) == sealing.digest(os.path.join(run, e["crop"])) for e in plan.values()))
+    return (record.get("plan_sha256") == safe_digest(os.path.join(run, "zoom_plan.json"))
+            and record.get("prompt_sha256") == safe_digest(os.path.join(run, "zoom_prompt.md"))
+            and record.get("comparison_sha256") == safe_digest(os.path.join(run, "comparison.json"))
+            and all(crops.get(e["crop"]) == safe_digest(os.path.join(run, e["crop"])) for e in plan.values()))

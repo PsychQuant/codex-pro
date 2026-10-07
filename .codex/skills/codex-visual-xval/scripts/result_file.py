@@ -70,6 +70,10 @@ def sanitize(text: str) -> str:
     text = re.sub(r"[\x00-\x1f\x7f]", "", text)
     for root, name in local_roots():
         text = text.replace(root, name)
+    # Any other path keeps only its last part; a URL is left alone, since its slashes follow ':' or '/'
+    # or a word (round 5, V4). Our own messages already name files only.
+    text = re.sub(r"(?<![\w.:/$~])~?/(?:[^\s'\"\],)/]+/)+([^\s'\"\],)/]+)", r"…/\1", text)
+    text = re.sub(r"(?<![\w.:/])(?:~|\$TMPDIR)/(?:[^\s'\"\],)/]+/)*([^\s'\"\],)/]+)", r"…/\1", text)
     return text[:500]
 
 

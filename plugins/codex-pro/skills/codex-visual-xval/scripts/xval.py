@@ -45,7 +45,13 @@ def _older_python(argv):
         print(__doc__, file=sys.stderr)
         sys.exit(64)
     if command != "result":
-        if os.path.isdir(run):
+        def is_run(path):   # only a run directory is written into (round 5, V5); 3.9-compatible
+            try:
+                with open(os.path.join(path, ".gitignore"), encoding="utf-8") as fh:
+                    return fh.readline().strip() == "# copies of the images given to /codex-pro:codex-visual-xval"
+            except OSError:
+                return False
+        if is_run(run):
             with open(os.path.join(run, "error.json"), "w", encoding="utf-8") as fh:
                 json.dump({"error": "runtime_unavailable", "detail": detail, "step": command}, fh)
             with open(os.path.join(run, "errors.jsonl"), "a", encoding="utf-8") as fh:   # the history (round 4, M10)
@@ -88,7 +94,7 @@ import adjudicate as adjudication  # noqa: E402
 import compare_claims  # noqa: E402
 import media  # noqa: E402
 import result_file  # noqa: E402
-from run_files import (Stop, RUN_MARK, checked_comparison, dump, inputs_digest, is_run_dir, load,  # noqa: E402
+from run_files import (Stop, RUN_MARK, checked_comparison, checked_inputs, dump, inputs_digest, is_run_dir, load,  # noqa: E402
                        neutral_names, now_iso, run_dir, seal_intact, zoom_record_intact)
 from codex_errors import classify, login_problem  # noqa: E402
 from zoom_round import (class_lines, crop_box, dispute_points, enlargement, position_pads, question,  # noqa: E402
@@ -141,7 +147,8 @@ def init(run: str, vocab_path: str, images: list[str], sequence: bool, first_sid
                    "so split them into several runs")
     missing = [p for p in images if not os.path.isfile(p)]
     if missing:
-        raise Stop("target_invalid", f"not a readable file: {missing}")
+        # file names only: a local directory can name a person or a client (round 5, V4)
+        raise Stop("target_invalid", f"not a readable file: {[os.path.basename(p) for p in missing]}")
     os.makedirs(os.path.join(run, "frames"), exist_ok=True)
     frames = {}
     for n, src in enumerate(images, 1):
@@ -157,7 +164,9 @@ def init(run: str, vocab_path: str, images: list[str], sequence: bool, first_sid
         "started_at": datetime.datetime.now().astimezone().isoformat(timespec="seconds"),
         "sequence": sequence, "n_images": len(images), "order": list(frames),
         # who gave the first side's answers: in the native Codex bundle it is the Codex host model (round 2, F1)
-        "first_side_model": first_side})
+        "first_side_model": first_side,
+        # the inputs as init wrote them, checked when the answers are sealed (round 5, N1)
+        "inputs_sha256": inputs_digest(run)})
     print(json.dumps({"ok": True, "frames": sorted(frames)}))
 
 
@@ -198,6 +207,8 @@ def seal_answers(run: str, zoom: bool) -> None:
             raise Stop(stop.error, f"{stop.detail}; the zoom round is not used and the run continues", record=False)
     elif not os.path.isfile(answers):
         raise Stop("target_invalid", f"Claude's answers are missing: {os.path.basename(answers)}")
+    if not zoom and load(os.path.join(run, "meta.json"), {}).get("inputs_sha256") not in (None, inputs_digest(run)):
+        raise Stop("target_invalid", "the image copies or the vocabulary changed after init; start a new run")   # N1
     if not zoom:
         map_source_names(run, answers)
         vocab = load(os.path.join(run, "vocab.json"))
@@ -293,7 +304,8 @@ def profile(run: str) -> dict:
             raise Stop("target_invalid", f"{data['invalid']}; nothing was sent")
         if isinstance(data, dict):   # name the field (round 4, M10)
             bad = [k for k in ("model", "effort") if not (isinstance(data.get(k), str) and data[k])]
-            bad += [] if isinstance(data.get("max_time"), int) and data.get("max_time", 0) > 0 else ["max_time"]
+            t = data.get("max_time")   # a bool is not a time (round 5, N7)
+            bad += [] if isinstance(t, int) and not isinstance(t, bool) and t > 0 else ["max_time"]
             raise Stop("target_invalid", f"profile.json has no valid {', '.join(bad)} (Step 4.1 writes it); nothing was sent")
         raise Stop("target_invalid", "no resolved profile in the run directory (Step 4.1 writes profile.json); nothing was sent")
     return data
@@ -500,6 +512,7 @@ def crops(run: str) -> None:
     if load(os.path.join(run, "zoom_seal.json")) or load(os.path.join(run, "zoom_rejected.json")):
         raise Stop("target_invalid", "Claude's zoom answers are already sealed or dropped; the crops are not made again",
                    record=False)
+    checked_inputs(run)   # V8
     comparison = checked_comparison(run)
     vocab = load(os.path.join(run, "vocab.json"))
     claude = compare_claims.by_frame(compare_claims.claims_list(load(os.path.join(run, "claude.json"))), vocab)
@@ -578,9 +591,13 @@ def sam(run: str) -> None:
     if not vocab.get("key_points"):
         return record("not_applicable", "no class has a key point, so there is nothing to track")
     cls = vocab.get("track_class") or next(iter(vocab["key_points"]))
+    checked_inputs(run)   # V8
     comparison = checked_comparison(run)
+    # Positions and relations need the tip to be the key point; counts do not (round 5, V6).
+    tip = vocab.get("track_point") == "tip"
     usable = [d for d in comparison["disagreements"]
-              if (d["kind"] in ("count", "position") and d.get("class") == cls) or d.get("between") == [cls, cls]]
+              if (d["kind"] == "count" and d.get("class") == cls)
+              or (tip and ((d["kind"] == "position" and d.get("class") == cls) or d.get("between") == [cls, cls]))]
     if not usable:
         return record("not_applicable", f"no disagreement SAM could settle (it tracks {cls})")
     frames = load(os.path.join(run, "frames.json"), {})
@@ -646,6 +663,7 @@ def adjudicate(run: str) -> None:
         dump(os.path.join(run, "adjudication.json"), {"counts": {}, "adjudications": [], "note": "no comparison"})
         print(json.dumps({"counts": {}, "note": "no comparison"}))
         return
+    checked_inputs(run)   # V8
     comparison = checked_comparison(run)
     zoom, zoom_status = zoom_evidence(run)
     sam_state = load(os.path.join(run, "sam.json"), {})
@@ -674,6 +692,9 @@ def main(argv: list[str]) -> None:
     step = (f"ask --round {option(argv, '--round')}" if command == "ask"
             else "seal --zoom" if command == "seal" and "--zoom" in argv else command)
     try:
+        if command not in ("init", "confirm-privacy", "result") and not is_run_dir(run):
+            # no step but init creates a directory or writes into one that is not a run (round 5, V5)
+            raise Stop("target_invalid", f"{os.path.basename(os.path.abspath(run))} is not a run directory", record=False)
         if command == "confirm-privacy":
             confirm_privacy(run)
         elif command == "init":
@@ -711,7 +732,10 @@ def stop_run(run: str, command: str, error: str, detail: str, record_error: bool
     # an error (round 3). No other step creates a directory, and nothing is written into a directory
     # that is not a run, such as a mistyped --run or a project root (round 4, U5).
     if command == "init" and not os.path.exists(run):
-        run_dir(run)
+        try:
+            run_dir(run)
+        except (OSError, Stop):   # it cannot be created: answer anyway (round 5, N3)
+            pass
     if is_run_dir(run):
         if record_error:
             dump(os.path.join(run, "error.json"), record)

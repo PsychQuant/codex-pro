@@ -125,7 +125,8 @@ cat > "$WORK/vocab.json" <<'JSON'
   "max_count": {"INST": 2},
   "key_points": {"INST": "the tip of the jaws"},
   "relations": {"tips_together": {"between": ["INST", "INST"], "definition": "distance_pct < 5"}},
-  "position_threshold_pct": 5
+  "position_threshold_pct": 5,
+  "track_point": "tip"
 }
 JSON
 
@@ -524,7 +525,7 @@ python3 - "$WORK" <<'PY'
 import json, sys
 w = sys.argv[1]
 vocab = json.load(open(f"{w}/vocab.json")); vocab["max_count"] = {"INST": 2}
-json.dump(vocab, open(f"{w}/vocab_notip.json", "w"))
+json.dump({k: v for k, v in vocab.items() if k != "track_point"}, open(f"{w}/vocab_notip.json", "w"))
 vocab["track_point"] = "tip"   # SAM's tip is the instrument's key point (#23 verify round 4, U4)
 json.dump(vocab, open(f"{w}/vocab_limits.json", "w"))
 rel = {"id": "d1", "frame": "f08.png", "kind": "relation", "relation": "tips_together", "between": ["INST", "INST"],
@@ -1052,7 +1053,11 @@ esac
 rm -rf "$WORK/runpath2"; mkdir -p "$WORK/home/My Docs"
 xval init --run "$WORK/runpath2" --vocab "$WORK/vocab.json" "$WORK/home/My Docs/gone 2026.png"
 ( cd "$WORK/project" && HOME="$WORK/home" python3 "$SCRIPTS/xval.py" result --run "$WORK/runpath2" --out "$WORK/runpath2_result.md" >/dev/null 2>&1 )
-assert_contains "$(cat "$WORK/runpath2_result.md" 2>/dev/null)" "~/My Docs/gone 2026.png" "a path under home with spaces keeps only the part below home"
+assert_contains "$(cat "$WORK/runpath2_result.md" 2>/dev/null)" "gone 2026.png" "a path with spaces keeps its file name"
+case "$(cat "$WORK/runpath2_result.md" 2>/dev/null)" in
+  *"My Docs"*) fail "and loses its directories, also under home (V4)" ;;
+  *) pass "and loses its directories, also under home (V4)" ;;
+esac
 case "$(cat "$WORK/runpath2_result.md" 2>/dev/null)" in
   *"$WORK"*) fail "a path with spaces does not leak its local root" ;;
   *) pass "a path with spaces does not leak its local root" ;;
@@ -1084,6 +1089,28 @@ assert_no_file "$WORK/runm4/frames.json" "the second set of images is not copied
 xval init --run "$WORK/runr3m" --vocab "$WORK/vocab.json" --first-side "$(printf 'a\nb')" "$WORK/fill.jpg"
 assert_contains "$RUN_OUT" "already" "an initialised run refuses init before checking its arguments (M1)"
 assert_no_file "$WORK/runr3m/error.json" "so the refusal is not the run's error"
+
+# Round 5 (N1): a frame replaced between init and sealing is caught at sealing.
+new_run "$WORK/runn1" 2>/dev/null; rm -rf "$WORK/runn1"
+xval init --run "$WORK/runn1" --vocab "$WORK/vocab.json" --first-side claude-test "$WORK"/imgs/*.png
+cp "$WORK/imgs/shot_2026-09-11_1002.png" "$WORK/runn1/frames/f01.png"
+cp "$WORK/claude_marked.json" "$WORK/runn1/claude.json"
+xval seal --run "$WORK/runn1"
+assert_contains "$RUN_OUT" '"error": "target_invalid"' "an image copy replaced after init is refused at sealing (N1)"
+assert_no_file "$WORK/runn1/seal.json" "and nothing is sealed"
+# Round 5 (N3): a run directory that cannot be created still gives a JSON answer.
+: > "$WORK/afile"
+xval init --run "$WORK/afile/run" --vocab "$WORK/vocab.json" "$WORK/plain.jpg"
+assert_contains "$RUN_OUT" '"error"' "init under a file answers with an error, not a crash (N3)"
+# Round 5 (V4): error details name files only.
+rm -rf "$WORK/runv4"
+xval init --run "$WORK/runv4" --vocab "$WORK/vocab.json" "/Volumes/ClientData/case42/scan.png"
+( cd "$WORK/project" && HOME="$WORK/home" python3 "$SCRIPTS/xval.py" result --run "$WORK/runv4" --out "$WORK/runv4_result.md" >/dev/null 2>&1 )
+assert_contains "$(cat "$WORK/runv4_result.md" 2>/dev/null)" "scan.png" "the detail still names the unreadable file"
+case "$(cat "$WORK/runv4_result.md" 2>/dev/null)" in
+  *ClientData*|*case42*) fail "a path outside home and the temporary directory loses its directories (V4)" ;;
+  *) pass "a path outside home and the temporary directory loses its directories (V4)" ;;
+esac
 
 rm -rf "$WORK/run13"; cp "$WORK/imgs/shot_2026-09-11_1001.png" "$WORK/thirteenth.png"
 xval init --run "$WORK/run13" --vocab "$WORK/vocab.json" "$WORK"/imgs/*.png "$WORK/thirteenth.png"
@@ -1198,6 +1225,9 @@ assert_no_file "$WORK/mock.log" "nothing is sent with an invalid max_time"
 new_run "$WORK/run4n"; printf '{"model": "", "effort": "high", "max_time": 30, "profile_source": "default"}\n' > "$WORK/run4n/profile.json"
 xval ask --run "$WORK/run4n" --round 1
 assert_contains "$RUN_OUT" "model" "a profile with an empty model names that field (M10)"
+printf '{"model": "m", "effort": "high", "max_time": true, "profile_source": "default"}\n' > "$WORK/run4n/profile.json"
+xval ask --run "$WORK/run4n" --round 1
+assert_contains "$RUN_OUT" "max_time" "a max_time of true is named as the invalid field (N7)"
 new_run "$WORK/run4u"; cp "$WORK/imgs/shot_2026-09-11_1002.png" "$WORK/run4u/frames/f01.png"
 xval ask --run "$WORK/run4u" --round 1
 assert_contains "$RUN_OUT" '"error": "target_invalid"' "an image copy replaced after sealing is not sent (U6)"
@@ -1391,7 +1421,7 @@ new_run "$WORK/run4c"
 RUN_OUT=$(HOME="$WORK/home" MOCK_REPLY="$WORK/codex_reply.md" MOCK_LOG="$WORK/mock.log" MOCK_PROMPTS="$WORK/prompts.txt" \
   PATH="$WORK/stubbin:$PATH" python3 "$SCRIPTS/xval.py" ask --run "$WORK/run4c" --round 1 2>&1)
 xval compare --run "$WORK/run4c"
-printf '{' > "$WORK/run4c/frames.json"
+printf '{' > "$WORK/run4c/claude.json"   # frames.json is now checked against the seal first (round 5, V8)
 xval crops --run "$WORK/run4c"
 assert_eq "5" "$RUN_STATUS" "an unexpected exception stops the run with exit 5, not a traceback"
 assert_contains "$RUN_OUT" '"error": "internal_error"' "an unexpected exception is internal_error"
@@ -1583,13 +1613,40 @@ assert_eq "True" "$(json_get "$(cat "$WORK/run5p/adjudication.json" 2>/dev/null)
 rm -rf "$WORK/run5s"; cp -R "$WORK/run5" "$WORK/run5s"
 python3 - "$WORK/run5s/vocab.json" <<'PY'
 import json, sys
-v = json.load(open(sys.argv[1]))
-for k in ("key_points", "relations", "track_class"):
-    v.pop(k, None)
-json.dump(v, open(sys.argv[1], "w"))
+v = json.load(open(sys.argv[1])); v["max_count"] = {"INST": 1}; json.dump(v, open(sys.argv[1], "w"))
 PY
-xval sam --run "$WORK/run5s"
-assert_contains "$RUN_OUT" '"sam_status": "not_applicable"' "SAM that could not be used does not ask for the download first (L7)"
+xval adjudicate --run "$WORK/run5s"
+assert_contains "$RUN_OUT" '"error": "target_invalid"' "a vocabulary edited after comparing is not used to adjudicate (V8)"
+xval crops --run "$WORK/run5s"
+assert_contains "$RUN_OUT" "already" "crops still refuses as already done first"
+# Round 5 (V6): without track_point: tip, SAM could settle only counts, so a run with no count disagreement
+# of the tracked class does not ask for the download.
+rm -rf "$WORK/run5v"
+xval init --run "$WORK/run5v" --vocab "$WORK/vocab_notip.json" --first-side claude-test "$WORK"/imgs/*.png
+xval confirm-privacy --run "$WORK/run5v"; profile_in "$WORK/run5v"
+cp "$WORK/claude_marked.json" "$WORK/run5v/claude.json"
+printf '%s\n' "$WORK/stubbin/codex-call" > "$WORK/run5v/runtime.txt"; : > "$WORK/run5v/runtime_error.txt"
+xval seal --run "$WORK/run5v"
+ask_with "$WORK/codex_reply.md" "$WORK/run5v" 1
+xval compare --run "$WORK/run5v"
+python3 - "$WORK/run5v/meta.json" <<'PY'
+import json, sys
+m = json.load(open(sys.argv[1])); m["sequence"] = True; json.dump(m, open(sys.argv[1], "w"))
+PY
+xval sam --run "$WORK/run5v"
+assert_contains "$RUN_OUT" '"sam_status": "not_applicable"' "SAM that could settle nothing without track_point does not ask for the download (V6)"
+# Round 5 (V5, N2): no step but init writes into a directory that is not a run; a missing file is a broken record.
+for cmd in compare crops sam adjudicate; do
+  xval "$cmd" --run "$WORK/userproj"
+  assert_contains "$RUN_OUT" "not a run directory" "$cmd refuses a directory that is not a run (V5)"
+done
+assert_eq "node_modules/
+.env" "$(cat "$WORK/userproj/.gitignore")" "and leaves the project's files alone"
+assert_eq ".gitignore" "$(ls -A "$WORK/userproj")" "and writes nothing into it"
+rm -rf "$WORK/run5m"; cp -R "$WORK/run5" "$WORK/run5m"; rm -f "$WORK/run5m/crops/z01.png"
+xval adjudicate --run "$WORK/run5m"
+assert_eq "True" "$(json_get "$(cat "$WORK/run5m/adjudication.json" 2>/dev/null)" 'd.get("zoom_plan_broken")')" \
+  "a missing crop is a broken zoom record, not an internal error (N2)"
 
 # Round 4: the crops, the comparison the zoom plan was made from, and SAM's output are bound (M6).
 rm -rf "$WORK/run5q"; cp -R "$WORK/run5" "$WORK/run5q"; cp "$WORK/run5q/crops/z01.png" "$WORK/z01_saved.png"
