@@ -299,21 +299,6 @@ def profile(run: str) -> dict:
     return data
 
 
-def own_words(message: str, run: str) -> str:
-    """A schema error about Codex's reply, keeping only the run's own words: a frame name or class
-    the reply invented is text an image could have put there, and it would reach Claude's output
-    as it was written (#23 verify round 5, N12)."""
-    vocab = load(os.path.join(run, "vocab.json"), {}) or {}
-    allowed = (set(neutral_names(run)) | set(vocab.get("classes", {})) | set(vocab.get("relations", {}))
-               | {"other", "objects", "points", "relations", "frame", "claims", "other_description"})
-    head, sep, rest = message.partition(": ")
-    if sep and head not in allowed:
-        head = "a claim"
-    text = rest if sep else message
-    text = re.sub(r"'([^']*)'", lambda m: m.group(0) if m.group(1) in allowed else "'…'", text)
-    return f"{head}: {text}" if sep else text
-
-
 def withdraw_request(run: str, rnd: str) -> None:
     records = load(os.path.join(run, "requests.json"), {})
     records.pop(rnd, None)
@@ -427,7 +412,11 @@ def ask(run: str, argv: list[str]) -> None:
         try:
             codex = compare_claims.by_frame(compare_claims.claims_list(data), vocab)
         except (compare_claims.SchemaError, TypeError) as exc:
-            raise Stop("parse_failed", f"Codex reply: {own_words(str(exc), run)}")
+            # Nothing from the reply is quoted: a frame or class name in it is text an image could have
+            # put there, and filtering it was bypassed (#23 verify round 5, N12; the background review
+            # after 598b1a4). The reply as given is in codex_round1.md for the user to read.
+            raise Stop("parse_failed", "Codex's reply does not match the claim schema (it is kept as codex_round1.md "
+                       "in the run directory)")
         if sorted(codex) != names:
             raise Stop("parse_failed", "Codex reply does not answer every image")
         dump(os.path.join(run, "codex.json"), data if isinstance(data, dict) else {"claims": data})
