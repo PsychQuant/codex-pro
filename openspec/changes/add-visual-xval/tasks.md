@@ -295,7 +295,7 @@
   - [after: 11.1]
 - [x] 11.3 比對之後核對答案檔；輸入納入 meta.json；sam、adjudicate、result 先核對；frames.json 型別錯誤；原解析度複本限定在 run 內（W2、Q8、Q9）。
   - [after: 11.2]
-- [ ] 11.4 寫入目錄的封閉清單、登入檢查看帳號家目錄、prompt 先寫、init 建不起目錄的類別、深層巢狀的回覆、compare_claims 不引用 Codex 的名稱（Q1、Q4、Q6、Q7、Q8、Q14）。
+- [x] 11.4 寫入目錄的封閉清單、登入檢查看帳號家目錄、prompt 先寫、init 建不起目錄的類別、深層巢狀的回覆、compare_claims 不引用 Codex 的名稱（Q1、Q4、Q6、Q7、Q8、Q14）。
   - [after: 11.3]
 - [ ] 11.5 損毀或截斷的圖拒收；SAM 塌陷格與量不到距離列為沒用上；JPEG 只壓縮一次的測試（Q10、Q12、Q13）。
   - [after: 11.4]

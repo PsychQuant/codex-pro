@@ -18,6 +18,7 @@ width, using the frame's aspect ratio when --frames gives it (default 1.0).
 import itertools
 import json
 import math
+import os
 import re
 import sys
 from typing import Any
@@ -234,7 +235,7 @@ def main(argv: list[str]) -> None:
         try:
             problems = vocab_problems(load_json(argv[1]))
         except (OSError, ValueError) as exc:
-            fail("target_invalid", f"vocabulary unreadable: {exc}", 2)
+            fail("target_invalid", f"vocabulary unreadable: {os.path.basename(argv[1])}", 2)   # W1
         if problems:
             fail("target_invalid", "; ".join(problems), 2)
         print(json.dumps({"ok": True}))
@@ -244,7 +245,7 @@ def main(argv: list[str]) -> None:
         try:
             vocab = load_json(argv[1])
         except (OSError, ValueError) as exc:
-            fail("target_invalid", f"vocabulary unreadable: {exc}", 2)
+            fail("target_invalid", f"vocabulary unreadable: {os.path.basename(argv[1])}", 2)   # W1
         problems = vocab_problems(vocab)
         if problems:
             fail("target_invalid", "; ".join(problems), 2)
@@ -256,12 +257,14 @@ def main(argv: list[str]) -> None:
             fail("target_invalid", "Claude claims: no frames", 2)
         try:
             codex = by_frame(claims_list(load_json(argv[3])), vocab)
-        except (OSError, ValueError, SchemaError) as exc:
-            fail("parse_failed", f"Codex claims: {exc}", 3)
+        except (OSError, ValueError, SchemaError, RecursionError):
+            # nothing from Codex's claims is quoted: a name in them is text an image could have put there
+            # (#23 verify round 5, N12; round 6, Q14)
+            fail("parse_failed", "Codex claims do not match the claim schema", 3)
         if set(codex) != set(claude):
-            missing = sorted(set(claude) - set(codex))
-            extra = sorted(set(codex) - set(claude))
-            fail("parse_failed", f"Codex claims cover other frames (missing={missing}, extra={extra})", 3)
+            missing = sorted(set(claude) - set(codex))   # Claude's own frame names
+            extra = len(set(codex) - set(claude))
+            fail("parse_failed", f"Codex claims cover other frames (missing={missing}, {extra} not given)", 3)
         print(json.dumps(compare(vocab, claude, codex, frame_aspects(frames_path)), ensure_ascii=False, indent=1))
         return
     print(__doc__, file=sys.stderr)

@@ -13,7 +13,7 @@ from typing import Any
 
 import compare_claims
 import seal as sealing
-from run_files import answers_changed, inputs_digest
+from run_files import answers_changed, inputs_digest, is_run_dir
 
 
 def load(path: str, default: Any = None) -> Any:
@@ -91,7 +91,20 @@ def describe(item: dict) -> str:
 
 
 def result(run: str, argv: list[str]) -> None:
-    error = load(os.path.join(run, "error.json"))
+    if not is_run_dir(run):
+        # Nothing in a directory that is not a run is read: its files are not a run's, and an error.json
+        # placed there would read as this run's outcome (#23 verify round 6, Q1). The file is still
+        # written, from an empty directory, so the run ends with a result as always.
+        with tempfile.TemporaryDirectory() as empty:
+            write_result(empty, argv, {"error": "target_invalid", "step": "result",
+                                       "detail": f"{os.path.basename(os.path.abspath(run))} is not a run directory, "
+                                                 "so nothing in it was read"})
+        return
+    write_result(run, argv, None)
+
+
+def write_result(run: str, argv: list[str], stopped: dict | None) -> None:
+    error = stopped or load(os.path.join(run, "error.json"))
     comparison = load(os.path.join(run, "comparison.json"))
     adjudicated = load(os.path.join(run, "adjudication.json"), {})
     seal_record = load(os.path.join(run, "seal.json"), {})
@@ -235,8 +248,10 @@ def result(run: str, argv: list[str]) -> None:
     elif not first.lower().startswith("claude"):
         lines.append(f"- The first side's answers came from `{first}`, not a Claude model. Both sides may then come from "
                      "one model family, whose errors are not independent, so agreement says less than it would across families.")
-    os.makedirs(".codex-pro", exist_ok=True)
-    out = option(argv, "--out") or os.path.join(".codex-pro", f"visual-xval-{now.astimezone(datetime.timezone.utc).strftime('%Y%m%dT%H%M%SZ')}.md")
+    out = option(argv, "--out")
+    if not out:   # .codex-pro is created only for the default location (round 6, Q1)
+        os.makedirs(".codex-pro", exist_ok=True)
+        out = os.path.join(".codex-pro", f"visual-xval-{now.astimezone(datetime.timezone.utc).strftime('%Y%m%dT%H%M%SZ')}.md")
     with open(out, "w", encoding="utf-8") as fh:
         fh.write("\n".join(lines) + "\n")
     print(json.dumps({"result": out, "error": fm.get("error")}))

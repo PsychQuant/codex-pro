@@ -59,6 +59,15 @@ def run_dir(run: str) -> None:
             fh.write(RUN_MARK + "\n*\n")
 
 
+def adopt_run_dir(run: str) -> None:
+    """Take over an existing empty directory as the run directory, creating none: SKILL Step 1 creates
+    it, so a mistyped --run is refused instead of becoming a new directory tree (#23 verify round 6, Q1)."""
+    if not os.path.isdir(run):
+        raise Stop("target_invalid", f"{os.path.basename(os.path.abspath(run))} does not exist; create the run directory "
+                   "first (SKILL Step 1)", record=False)
+    run_dir(run)
+
+
 def failure(exc: BaseException) -> str:
     """What went wrong, without local directories: an OSError names its file by name only, and a
     failed tool reports its exit status, not its command line, which holds full paths (#23 verify

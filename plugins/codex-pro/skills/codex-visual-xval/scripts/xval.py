@@ -44,13 +44,13 @@ def _older_python(argv):
     if not run:
         print(__doc__, file=sys.stderr)
         sys.exit(64)
+    def is_run(path):   # only a run directory is written into or read (round 5, V5; round 6, Q1); 3.9-compatible
+        try:
+            with open(os.path.join(path, ".gitignore"), encoding="utf-8") as fh:
+                return fh.readline().strip() == "# copies of the images given to /codex-pro:codex-visual-xval"
+        except OSError:
+            return False
     if command != "result":
-        def is_run(path):   # only a run directory is written into (round 5, V5); 3.9-compatible
-            try:
-                with open(os.path.join(path, ".gitignore"), encoding="utf-8") as fh:
-                    return fh.readline().strip() == "# copies of the images given to /codex-pro:codex-visual-xval"
-            except OSError:
-                return False
         if is_run(run):
             with open(os.path.join(run, "error.json"), "w", encoding="utf-8") as fh:
                 json.dump({"error": "runtime_unavailable", "detail": detail, "step": command}, fh)
@@ -59,6 +59,8 @@ def _older_python(argv):
         print(json.dumps({"error": "runtime_unavailable", "detail": detail}))
         sys.exit(5)
     def read(name, default):
+        if not is_run(run):
+            return default
         try:
             with open(os.path.join(run, name), encoding="utf-8") as fh:
                 return json.load(fh)
@@ -78,9 +80,10 @@ def _older_python(argv):
              "## SAM evidence", "", "Status: `not_run`.", "", "## Seal", "", "Not checked: the run stopped first.", "",
              "## Limitations", "", "- Agreement between the two models does not establish that either is correct; "
              "only a human reference can."]
-    out = argv[argv.index("--out") + 1] if "--out" in argv and argv.index("--out") + 1 < len(argv) else os.path.join(
-        ".codex-pro", "visual-xval-%s.md" % now.astimezone(datetime.timezone.utc).strftime("%Y%m%dT%H%M%SZ"))
-    os.makedirs(os.path.dirname(out) or ".", exist_ok=True)
+    out = argv[argv.index("--out") + 1] if "--out" in argv and argv.index("--out") + 1 < len(argv) else None
+    if out is None:   # .codex-pro is created only for the default location (round 6, Q1)
+        os.makedirs(".codex-pro", exist_ok=True)
+        out = os.path.join(".codex-pro", "visual-xval-%s.md" % now.astimezone(datetime.timezone.utc).strftime("%Y%m%dT%H%M%SZ"))
     with open(out, "w", encoding="utf-8") as fh:
         fh.write("\n".join(lines) + "\n")
     print(json.dumps({"result": out, "error": "runtime_unavailable"}))
@@ -94,7 +97,8 @@ import adjudicate as adjudication  # noqa: E402
 import compare_claims  # noqa: E402
 import media  # noqa: E402
 import result_file  # noqa: E402
-from run_files import (Stop, RUN_MARK, checked_comparison, checked_inputs, dump, failure, inputs_digest, is_run_dir, load,  # noqa: E402
+from run_files import (Stop, RUN_MARK, adopt_run_dir, checked_comparison, checked_inputs, dump, failure, inputs_digest,  # noqa: E402
+                       is_run_dir, load,
                        neutral_names, now_iso, run_dir, seal_intact, zoom_record_intact)
 from codex_errors import classify, login_problem  # noqa: E402
 from zoom_round import (class_lines, crop_box, dispute_points, enlargement, position_pads, question,  # noqa: E402
@@ -129,7 +133,11 @@ def init(run: str, vocab_path: str, images: list[str], sequence: bool, first_sid
         # (round 3, L4; round 4, M4). Refused before anything else is checked (M1).
         raise Stop("target_invalid", "this run is already initialised, or an init attempt failed in it; "
                    "start a new run directory", record=False)
-    run_dir(run)
+    try:
+        run_dir(run)
+    except OSError as exc:   # a --run that cannot be a directory is the caller's input (round 6, Q7)
+        raise Stop("target_invalid", f"cannot create the run directory {os.path.basename(os.path.abspath(run))}: "
+                   f"{failure(exc)}")
     dump(os.path.join(run, "init_attempt.json"), {"at": now_iso()})
     if first_side and not FIRST_SIDE.fullmatch(first_side):
         # it goes into the result file's frontmatter, where a line break would add keys (round 3, L1)
@@ -180,7 +188,7 @@ def init(run: str, vocab_path: str, images: list[str], sequence: bool, first_sid
 
 
 def confirm_privacy(run: str) -> None:
-    run_dir(run)
+    adopt_run_dir(run)
     dump(os.path.join(run, "privacy.json"), {"confirmed_at": now_iso()})
     print(json.dumps({"ok": True}))
 
@@ -300,7 +308,7 @@ def extract_json(text: str) -> Any:
     for candidate in fenced + [text[text.find("{"): text.rfind("}") + 1] if "{" in text else ""]:
         try:
             return json.loads(candidate)
-        except ValueError:
+        except (ValueError, RecursionError):   # nested too deep is not JSON we can use either (round 6, Q8)
             continue
     return None
 
@@ -333,11 +341,14 @@ def call_codex(run: str, prompt: str, images: list[str], tag: str, argv: list[st
     settings = profile(run)
     path = runtime(run)
     rnd = "1" if tag == "round1" else tag
-    record_request(run, rnd, requested_at=now_iso(), requested_epoch=datetime.datetime.now().timestamp())
     prompt_file = os.path.join(run, f"prompt_{tag}.md")
     output = os.path.join(run, f"codex_{tag}.md")
-    with open(prompt_file, "w", encoding="utf-8") as fh:
-        fh.write(prompt)
+    try:   # ready before the request is recorded: a failure here sends nothing (round 6, Q6)
+        with open(prompt_file, "w", encoding="utf-8") as fh:
+            fh.write(prompt)
+    except OSError as exc:
+        raise Stop("runtime_unavailable", f"cannot write the prompt file: {failure(exc)}; nothing was sent")
+    record_request(run, rnd, requested_at=now_iso(), requested_epoch=datetime.datetime.now().timestamp())
     cmd = [path, "--output", output, "--model", settings["model"],
            "--effort", settings["effort"], "--max-time", str(settings["max_time"]),
            "--instructions", INSTRUCTIONS, "--prompt-file", prompt_file]
@@ -718,7 +729,7 @@ def main(argv: list[str]) -> None:
             else "seal --zoom" if command == "seal" and "--zoom" in argv else command)
     try:
         if command not in ("init", "confirm-privacy", "result") and not is_run_dir(run):
-            # no step but init creates a directory or writes into one that is not a run (round 5, V5)
+            # the steps that may write into a directory that is not a run are a closed list (round 6, Q1)
             raise Stop("target_invalid", f"{os.path.basename(os.path.abspath(run))} is not a run directory", record=False)
         if command == "confirm-privacy":
             confirm_privacy(run)

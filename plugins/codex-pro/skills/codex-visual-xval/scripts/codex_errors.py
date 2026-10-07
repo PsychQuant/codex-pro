@@ -10,6 +10,7 @@ a gap (round 3, T1; round 4, U1), and the narrowed list also counted a missing l
 """
 import json
 import os
+import pwd
 import re
 
 
@@ -36,10 +37,19 @@ def classify(stderr: str, status: int) -> tuple[str, str]:
     return "backend_error", detail if re.search(r"\bhttp \d{3}\b", low) else f"codex-call exit {status}: {detail}"
 
 
+def token_store() -> str:
+    """The token store codex-call reads: in the account's own home directory, whatever HOME says
+    (FileManager.homeDirectoryForCurrentUser), so the check looks at the same file (#23 verify round 6,
+    Q4). XVAL_TEST_TOKEN_HOME is for the test suite only, which has no real login to look at."""
+    home = os.environ.get("XVAL_TEST_TOKEN_HOME") or pwd.getpwuid(os.getuid()).pw_dir
+    return os.path.join(home, ".codex", "auth.json")
+
+
 def login_problem() -> str | None:
     """Whether Codex is logged in: the token store codex-call reads exists and holds its tokens. Only
-    the presence of the tokens is checked; nothing in the file is reported."""
-    path = os.path.join(os.path.expanduser("~"), ".codex", "auth.json")
+    the presence of the tokens is checked; nothing in the file is reported. A login whose refresh token
+    is no longer valid passes; codex-call then fails at the refresh and the round counts as sent."""
+    path = token_store()
     try:
         with open(path, encoding="utf-8") as fh:
             data = json.load(fh)
