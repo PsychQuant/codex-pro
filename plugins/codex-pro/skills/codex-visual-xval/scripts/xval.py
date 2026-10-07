@@ -102,7 +102,7 @@ def init(run: str, vocab_path: str, images: list[str], sequence: bool) -> None:
     dump(os.path.join(run, "vocab.json"), vocab)
     dump(os.path.join(run, "meta.json"), {
         "started_at": datetime.datetime.now().astimezone().isoformat(timespec="seconds"),
-        "sequence": sequence, "n_images": len(images)})
+        "sequence": sequence, "n_images": len(images), "order": list(frames)})
     print(json.dumps({"ok": True, "frames": sorted(frames)}))
 
 
@@ -118,6 +118,11 @@ def confirm_privacy(run: str) -> None:
 
 def neutral_names(run: str) -> list[str]:
     return sorted(load(os.path.join(run, "frames.json"), {}))
+
+
+def frame_order(run: str) -> list[str]:
+    """The order the images were given, which is the time order for --sequence."""
+    return load(os.path.join(run, "meta.json"), {}).get("order") or neutral_names(run)
 
 
 def seal_answers(run: str, zoom: bool) -> None:
@@ -482,16 +487,19 @@ def sam(run: str) -> None:
         return record("not_installed", check.stdout.strip())
     vocab = load(os.path.join(run, "vocab.json"))
     cls = vocab.get("track_class") or next(iter(vocab["classes"]))
+    frames = load(os.path.join(run, "frames.json"), {})
+    aspects = {n: f["height"] / f["width"] for n, f in frames.items() if f.get("width") and f.get("height")}
     plan = sam_track.anchors(load(os.path.join(run, "comparison.json")), load(os.path.join(run, "claude.json")),
-                             load(os.path.join(run, "codex.json")), cls)
+                             load(os.path.join(run, "codex.json")), cls, order=frame_order(run), aspects=aspects)
     dump(os.path.join(run, "anchors.json"), plan)
     if not plan["anchors"]:
         return record("no_anchor", f"no agreeing frame has a {cls} to anchor on")
     dump(os.path.join(run, "sam_frames.json"), [os.path.join(run, "frames", n) for n in neutral_names(run)])
-    python = os.path.expanduser("~/.codex-pro/sam-env/bin/python")
-    done = subprocess.run([python, os.path.join(HERE, "sam_track.py"), "track", "--frames",
-                           os.path.join(run, "sam_frames.json"), "--anchors", os.path.join(run, "anchors.json"),
-                           "--out", os.path.join(run, "track.json")], capture_output=True, text=True)
+    env_dir = os.path.expanduser("~/.codex-pro/sam-env")
+    done = subprocess.run([os.path.join(env_dir, "bin", "python"), "-I", os.path.join(HERE, "sam_track.py"), "track",
+                           "--frames", os.path.join(run, "sam_frames.json"), "--anchors", os.path.join(run, "anchors.json"),
+                           "--out", os.path.join(run, "track.json")], capture_output=True, text=True,
+                          env={**os.environ, "HF_HOME": os.path.join(env_dir, "hf")})
     if done.returncode != 0:
         return record("failed", (done.stdout + done.stderr).strip()[-500:])
     track = load(os.path.join(run, "track.json"), {})

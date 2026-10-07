@@ -111,13 +111,18 @@ def from_constraint(item: dict, vocab: dict) -> dict | None:
 
 
 def from_sam(item: dict, sam: dict, vocab: dict, margin: float) -> dict | None:
+    """SAM follows one class. Its measurements are evidence only about that class, and only
+    objects the model itself scores as present count (#23 verify B5, I6)."""
     frame = sam.get("frames", {}).get(item["frame"])
     if not frame or frame.get("invalid"):
         return None
+    tracked = sam.get("class")
+    present = [obj for obj in frame.get("objects", {}).values() if obj and obj.get("present", False)]
     if item["kind"] == "relation":
         parsed = DEFINITION.match(item.get("definition", ""))
         measured = frame.get("distance_pct")
-        if not parsed or parsed.group(1) != "distance_pct" or measured is None:
+        if (not parsed or parsed.group(1) != "distance_pct" or measured is None or len(present) != 2
+                or item.get("between") != [tracked, tracked]):
             return None
         op, threshold = parsed.group(2), float(parsed.group(3))
         if abs(measured - threshold) <= margin:
@@ -125,29 +130,21 @@ def from_sam(item: dict, sam: dict, vocab: dict, margin: float) -> dict | None:
         verdict = side_matching(OPS[op](measured, threshold), item)
         return verdict and {"source": "sam", "verdict": verdict,
                             "detail": f"distance_pct={measured} (threshold {threshold}, margin {margin})"}
+    if item.get("class") != tracked:
+        return None
     if item["kind"] == "count":
-        seen = sum(1 for obj in frame.get("objects", {}).values() if obj)
+        seen = len(present)
         higher = max(item["claude"], item["codex"])
         if seen == higher:
             verdict = side_matching(higher, item)
             return verdict and {"source": "sam", "verdict": verdict, "detail": f"SAM tracked {seen} objects"}
         return None
     if item["kind"] == "position":
-        tips = [obj["tip_pct"] for obj in frame.get("objects", {}).values() if obj and obj.get("tip_pct")]
+        tips = [obj["tip_pct"] for obj in present if obj.get("tip_pct")]
         threshold = float(item.get("threshold_pct", vocab.get("position_threshold_pct", 5)))
-        if not tips:
-            return None
-        aspect = float(item.get("aspect", 1.0))   # same distance definition as compare_claims.py
-        gap = lambda p, q: math.hypot(p[0] - q[0], (p[1] - q[1]) * aspect)
-        tip = min(tips, key=lambda t: min(gap(t, item["claude"]), gap(t, item["codex"])))
-        d_claude, d_codex = gap(tip, item["claude"]), gap(tip, item["codex"])
-        if d_claude <= threshold and d_codex > threshold + margin:
-            verdict = "resolved_claude"
-        elif d_codex <= threshold and d_claude > threshold + margin:
-            verdict = "resolved_codex"
-        else:
-            return None
-        return {"source": "sam", "verdict": verdict, "detail": f"SAM tip {tip}: {d_claude:.1f} from Claude, {d_codex:.1f} from Codex"}
+        settled = instance_verdict(tips, item, threshold, margin) if tips else None
+        return settled and {"source": "sam", "verdict": settled[0],
+                            "detail": f"the SAM tip of that object is at {settled[1]}"}
     return None
 
 

@@ -29,6 +29,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 COLLAPSE_IOU = 0.5
 MODEL_ID = "facebook/sam2.1-hiera-large"
+MODEL_REVISION = "665f8e2ad61cf5f53d65644ff27c8ee525124610"   # the revision tracking was verified with (2026-10-07)
 MIN_AREA_PX = 50
 
 
@@ -68,11 +69,15 @@ def agreeing_runs(order: list[str], agree: dict[str, bool]) -> list[list[str]]:
     return runs
 
 
-def anchors(comparison: dict, claude: dict, codex: dict, cls: str) -> dict:
+def anchors(comparison: dict, claude: dict, codex: dict, cls: str,
+            order: list | None = None, aspects: dict | None = None) -> dict:
+    """The time order is the order the images were given (`order`); the order of Claude's answer
+    list is not evidence of time (#23 verify I7)."""
     from compare_claims import claims_list, pair_points
     mine = {c["frame"]: c for c in claims_list(claude)}
     theirs = {c["frame"]: c for c in claims_list(codex)}
-    order = [c["frame"] for c in claims_list(claude)]
+    order = list(order) if order else sorted(mine)
+    aspects = aspects or {}
     agree = {frame: info["agree"] for frame, info in comparison["frames"].items()}
     result = []
     for run in agreeing_runs(order, agree):
@@ -80,7 +85,7 @@ def anchors(comparison: dict, claude: dict, codex: dict, cls: str) -> dict:
         a = [p for p in mine[frame].get("points", []) if p["class"] == cls]
         b = [p for p in theirs[frame].get("points", []) if p["class"] == cls]
         points = [[round((p["x_pct"] + q["x_pct"]) / 2, 2), round((p["y_pct"] + q["y_pct"]) / 2, 2)]
-                  for p, q in pair_points(a, b, 1.0)]
+                  for p, q in pair_points(a, b, aspects.get(frame, 1.0))]
         if points:
             result.append({"frame": frame, "run": run, "points": points})
     return {"class": cls, "order": order, "anchors": result}
@@ -206,8 +211,9 @@ def track(frames_path: str, anchors_path: str, out_path: str) -> None:
     images = {name: np.array(Image.open(by_name[name]).convert("RGB")) for name in order}
     height, width = next(iter(images.values())).shape[:2]
     device = "mps" if torch.backends.mps.is_available() else "cpu"
-    model = Sam2VideoModel.from_pretrained(MODEL_ID).to(device)
-    processor = Sam2VideoProcessor.from_pretrained(MODEL_ID)
+    # Only files already on disk: installing is a separate step the user consented to.
+    model = Sam2VideoModel.from_pretrained(MODEL_ID, revision=MODEL_REVISION, local_files_only=True).to(device)
+    processor = Sam2VideoProcessor.from_pretrained(MODEL_ID, revision=MODEL_REVISION, local_files_only=True)
 
     starts = [order.index(a["frame"]) for a in plan["anchors"]]
     results: dict[str, dict] = {}
@@ -226,10 +232,14 @@ def track(frames_path: str, anchors_path: str, out_path: str) -> None:
                                                   input_points=points, input_labels=[[[1] for _ in ids]])
         model(inference_session=session, frame_idx=local)
         masks: dict[int, Any] = {}
+        scores: dict[int, list] = {}
         for reverse in (False, True):
             for out in model.propagate_in_video_iterator(session, start_frame_idx=local, reverse=reverse):
                 m = processor.post_process_masks([out.pred_masks], original_sizes=[[height, width]], binarize=True)[0]
                 masks[out.frame_idx] = m[:, 0].cpu().numpy().astype(bool)
+                # The model's own judgement of whether each object is in the frame. A mask alone
+                # can drift onto a thread or the pad after the instrument has left (#23 verify I6).
+                scores[out.frame_idx] = [float(v) for v in out.object_score_logits.flatten().cpu().tolist()]
         for idx, per_object in masks.items():
             name = segment[idx]
             iou = 0.0
@@ -239,15 +249,22 @@ def track(frames_path: str, anchors_path: str, out_path: str) -> None:
                     union = np.logical_or(per_object[i], per_object[j]).sum()
                     iou = max(iou, float(inter / union) if union else 0.0)
             gray = images[name].mean(axis=2)
-            objects = {str(k): mask_geometry(per_object[k - 1], gray) for k in ids}
-            tips = [o["tip_pct"] for o in objects.values() if o and o["tip_pct"]]
+            objects = {}
+            for k in ids:
+                geometry = mask_geometry(per_object[k - 1], gray)
+                score = scores[idx][k - 1] if k - 1 < len(scores.get(idx, [])) else None
+                if geometry is not None:
+                    geometry.update(present=score is not None and score > 0, object_score=score)
+                objects[str(k)] = geometry
+            tips = [o["tip_pct"] for o in objects.values() if o and o["present"] and o["tip_pct"]]
             distance = None
             if len(tips) == 2:
                 distance = round(math.hypot(tips[0][0] - tips[1][0], (tips[0][1] - tips[1][1]) * height / width), 2)
             results[name] = {"anchor": anchor["frame"], "invalid": iou > COLLAPSE_IOU, "max_iou": round(iou, 3),
                              "objects": objects, "distance_pct": distance}
     with open(out_path, "w", encoding="utf-8") as fh:
-        json.dump({"sam_status": "ok", "model": MODEL_ID, "device": device, "frames": results,
+        json.dump({"sam_status": "ok", "model": MODEL_ID, "revision": MODEL_REVISION, "class": plan["class"],
+                   "device": device, "frames": results,
                    "invalid_frames": sorted(f for f, r in results.items() if r["invalid"])}, fh, indent=1)
     print(json.dumps({"sam_status": "ok", "frames": len(results)}))
 
@@ -266,7 +283,11 @@ def main(argv: list[str]) -> None:
         for path in argv[1:4]:
             with open(path, encoding="utf-8") as fh:
                 loaded.append(json.load(fh))
-        print(json.dumps(anchors(*loaded, option(argv, "--class")), ensure_ascii=False))
+        order = None
+        if option(argv, "--order"):
+            with open(option(argv, "--order"), encoding="utf-8") as fh:
+                order = json.load(fh)
+        print(json.dumps(anchors(*loaded, option(argv, "--class"), order=order), ensure_ascii=False))
         return
     if len(argv) == 2 and argv[0] == "tip-check":
         import numpy as np

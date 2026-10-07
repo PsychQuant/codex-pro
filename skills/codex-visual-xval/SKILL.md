@@ -246,7 +246,22 @@ python3 "$SKILL_DIR/scripts/xval.py" compare --run "$RUN"
 
 沒有分歧就跳到 Step 9。
 
-## Step 7: 放大輪
+## Step 7: SAM 證據
+
+SAM 排在放大輪之前：放大輪的請求失敗時，依 Step 5 會直接跳到 Step 9，排在後面的 SAM 證據就會被一起放棄，
+而 SAM 本來就不依賴 Codex。
+
+```bash
+python3 "$SKILL_DIR/scripts/xval.py" sam --run "$RUN"
+```
+
+- `not_applicable`：圖片不是同一支影片的連續影格（沒有 `--sequence`）。跳過。
+- `not_installed`：先跑 `bash "$SKILL_DIR/scripts/sam_env.sh" install`，把它印出的下載量（約 1 GB）告訴使用者，
+  **用 AskUserQuestion 取得同意**後才跑 `install --yes`，再重跑本步。使用者拒絕就照樣往下走，需要 SAM
+  的分歧會是 `unverifiable`。
+- `ok`：兩邊一致的影格當錨點，每段一致影格各自錨定；兩物件遮罩 IoU > 0.5 的格不當證據。
+
+## Step 8: 放大輪
 
 ```bash
 python3 "$SKILL_DIR/scripts/xval.py" crops --run "$RUN"
@@ -279,18 +294,6 @@ python3 "$SKILL_DIR/scripts/xval.py" ask --run "$RUN" --round zoom \
 
 **沒有 subagent 可用時，不要自己作答**：跳過 `seal --zoom` 與 `ask --round zoom`，分歧只靠 SAM 與
 `max_count` 裁決，結果檔會顯示沒有放大輪證據。
-
-## Step 8: SAM 證據
-
-```bash
-python3 "$SKILL_DIR/scripts/xval.py" sam --run "$RUN"
-```
-
-- `not_applicable`：圖片不是同一支影片的連續影格（沒有 `--sequence`）。跳過。
-- `not_installed`：先跑 `bash "$SKILL_DIR/scripts/sam_env.sh" install`，把它印出的下載量（約 1 GB）告訴使用者，
-  **用 AskUserQuestion 取得同意**後才跑 `install --yes`，再重跑本步。使用者拒絕就照樣往下走，需要 SAM
-  的分歧會是 `unverifiable`。
-- `ok`：兩邊一致的影格當錨點，每段一致影格各自錨定；兩物件遮罩 IoU > 0.5 的格不當證據。
 
 ## Step 9: 裁決與結果檔
 

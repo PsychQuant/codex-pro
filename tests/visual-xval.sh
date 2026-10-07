@@ -54,6 +54,7 @@ checks = {
     "result_path": ".codex-pro/visual-xval-" in body,
     "sam_consent": "AskUserQuestion" in body and "install --yes" in body,
     "zoom_blind": "不要讀 `$RUN/codex.json`" in body,
+    "sam_before_zoom": pos("## Step 7: SAM 證據") < pos("## Step 8: 放大輪"),
     "zoom_subagent": "- Agent" in fm and "zoom_prompt.md" in body and "subagent" in body,
     "limitations": "兩個模型一致不代表正確" in body,
 }
@@ -289,6 +290,15 @@ assert_eq "f01.png f09.png" "$(json_get "$RUN_OUT" '" ".join(a["frame"] for a in
   "every run of agreeing frames gets its own anchor (f08 splits the run)"
 assert_eq "[[40.0, 50.0], [60.0, 50.0]]" "$(json_get "$RUN_OUT" 'sorted(d["anchors"][0]["points"])')" \
   "anchor points are the agreed positions"
+python3 - "$WORK" <<'PY'
+import json, sys
+w = sys.argv[1]
+c = json.load(open(f"{w}/claude.json")); c["claims"].reverse(); json.dump(c, open(f"{w}/claude_reversed.json", "w"))
+json.dump([f"f{i:02d}.png" for i in range(1, 13)], open(f"{w}/order.json", "w"))
+PY
+run_py sam_track.py anchors "$WORK/comparison.json" "$WORK/claude_reversed.json" "$WORK/codex.json" --class INST --order "$WORK/order.json"
+assert_eq "f01.png f09.png" "$(json_get "$RUN_OUT" '" ".join(a["frame"] for a in d["anchors"])')" \
+  "the time order comes from the order the images were given, not from Claude's answer list (#23 verify I7)"
 
 mkdir -p "$WORK/fakemods/torch"
 printf 'raise ImportError("simulated: torch is not installed")\n' > "$WORK/fakemods/torch/__init__.py"
@@ -386,14 +396,15 @@ printf '%s\n' "$*" >> "$UV_LOG"
 case "$1" in
   venv)
     dir="${@: -1}"; mkdir -p "$dir/bin"
-    printf '#!/bin/sh\nexit 0\n' > "$dir/bin/python"; chmod +x "$dir/bin/python" ;;
+    printf '#!/bin/sh\nprintf "%%s HF_HOME=%%s\\n" "$*" "$HF_HOME" >> "${PY_LOG:-/dev/null}"\nexit 0\n' > "$dir/bin/python"
+    chmod +x "$dir/bin/python" ;;
   pip) exit "${UV_PIP_STATUS:-0}" ;;
 esac
 STUB
 chmod +x "$WORK/stubbin/uv"
 run_env() {   # run_env <args...> — isolated HOME, stub uv first on PATH
   RUN_STATUS=0
-  RUN_OUT=$(HOME="$WORK/home" UV_LOG="$WORK/uv.log" PATH="$WORK/stubbin:$PATH" \
+  RUN_OUT=$(HOME="$WORK/home" UV_LOG="$WORK/uv.log" PY_LOG="$WORK/py.log" PATH="$WORK/stubbin:$PATH" \
     bash "$SCRIPTS/sam_env.sh" "$@" 2>&1) || RUN_STATUS=$?
 }
 SAM_ENV="$WORK/home/.codex-pro/sam-env"
@@ -405,6 +416,7 @@ assert_contains "$RUN_OUT" "not_installed" "--check without an environment repor
 run_env install
 assert_eq "3" "$RUN_STATUS" "install without --yes exits 3 (consent required)"
 assert_contains "$RUN_OUT" "856 MB" "install without --yes states the measured model size"
+assert_contains "$RUN_OUT" "sam-env/hf" "the consent text says where the model weights go"
 assert_contains "$RUN_OUT" "--yes" "install without --yes says how to consent"
 assert_no_file "$SAM_ENV" "install without --yes creates nothing"
 assert_no_file "$WORK/uv.log" "install without --yes never calls uv"
@@ -416,6 +428,13 @@ assert_contains "$uv_calls" "venv --python 3.13 $SAM_ENV" "the environment is cr
 for pin in torch==2.14.1 torchvision==0.29.1 transformers==5.19.0 numpy==2.5.3 pillow==10.4.0; do
   assert_contains "$uv_calls" "$pin" "install pins $pin"
 done
+py_calls=$(cat "$WORK/py.log" 2>/dev/null)
+assert_contains "$py_calls" "HF_HOME=$SAM_ENV/hf" "the model weights are downloaded into the environment, not the global cache"
+assert_contains "$py_calls" "revision='665f8e2ad61cf5f53d65644ff27c8ee525124610'" "the model download is pinned to a revision"
+case "$py_calls" in
+  *" -c "*) case "$py_calls" in *"-I -c "*) pass "every inline python runs isolated (-I)";; *) fail "every inline python runs isolated (-I)";; esac ;;
+  *) fail "every inline python runs isolated (-I) (no inline python recorded)" ;;
+esac
 run_env --check
 assert_eq "0" "$RUN_STATUS" "--check after install exits 0"
 assert_contains "$RUN_OUT" "installed" "--check after install reports installed"
@@ -440,15 +459,15 @@ import json, sys
 w = sys.argv[1]
 vocab = json.load(open(f"{w}/vocab.json")); vocab["max_count"] = {"INST": 2}
 json.dump(vocab, open(f"{w}/vocab_limits.json", "w"))
-rel = {"id": "d1", "frame": "f08.png", "kind": "relation", "relation": "tips_together",
+rel = {"id": "d1", "frame": "f08.png", "kind": "relation", "relation": "tips_together", "between": ["INST", "INST"],
        "definition": "distance_pct < 5", "claude": True, "codex": False}
 cnt = {"id": "d2", "frame": "f02.png", "kind": "count", "class": "INST", "claude": 3, "codex": 2}
 cnt_low = {"id": "d3", "frame": "f03.png", "kind": "count", "class": "INST", "claude": 2, "codex": 1}
 json.dump({"n_frames": 12, "agreement_rate": 0.75, "frames": {}, "disagreements": [rel, cnt, cnt_low]},
           open(f"{w}/disputes.json", "w"))
 def track(dist, invalid=False, objects=2):
-    obj = {"area": 900, "centroid_pct": [50, 50], "tip_pct": [50, 50], "entry_pct": [10, 90]}
-    return {"sam_status": "ok", "frames": {
+    obj = {"area": 900, "centroid_pct": [50, 50], "tip_pct": [50, 50], "entry_pct": [10, 90], "present": True}
+    return {"sam_status": "ok", "class": "INST", "frames": {
         "f08.png": {"invalid": invalid, "max_iou": 0.7 if invalid else 0.0, "distance_pct": dist,
                     "objects": {"1": obj, "2": obj}},
         "f03.png": {"invalid": False, "max_iou": 0.0, "distance_pct": 20.0,
@@ -457,6 +476,22 @@ json.dump(track(3.5), open(f"{w}/track_35.json", "w"))
 json.dump(track(5.18), open(f"{w}/track_518.json", "w"))
 json.dump(track(3.5, invalid=True), open(f"{w}/track_collapsed.json", "w"))
 json.dump(track(8.0, objects=1), open(f"{w}/track_8_one_object.json", "w"))
+gone = track(3.5); gone["frames"]["f03.png"]["objects"]["2"]["present"] = False
+json.dump(gone, open(f"{w}/track_one_gone.json", "w"))
+# Disagreements SAM must not touch: another class, and a relation that is not between two tracked objects.
+other = [{"id": "d4", "frame": "f03.png", "kind": "count", "class": "THREAD", "claude": 1, "codex": 2},
+         {"id": "d5", "frame": "f08.png", "kind": "relation", "relation": "near_pad", "between": ["INST", "PAD"],
+          "definition": "distance_pct < 5", "claude": True, "codex": False}]
+json.dump({"disagreements": other}, open(f"{w}/disputes_other.json", "w"))
+# The verify DA case for SAM: B marked twice by one side; SAM tracked both instruments.
+doubled = {"id": "d10", "frame": "f04.png", "kind": "position", "class": "INST", "claude": [70, 50], "codex": [20, 50],
+           "claude_points": [[70, 50], [71, 51]], "codex_points": [[20, 50], [70.5, 50]],
+           "distance_pct": 50.0, "threshold_pct": 5, "aspect": 1.0}
+json.dump({"disagreements": [doubled]}, open(f"{w}/disputes_doubled.json", "w"))
+tip = lambda x, y: {"area": 900, "centroid_pct": [x, y], "tip_pct": [x, y], "entry_pct": [x, 99], "present": True}
+json.dump({"sam_status": "ok", "class": "INST", "frames": {"f04.png": {"invalid": False, "max_iou": 0.0,
+           "distance_pct": 49.2, "objects": {"1": tip(21, 50), "2": tip(70.2, 50.3)}}}},
+          open(f"{w}/track_doubled.json", "w"))
 json.dump({"d1": {"claude": True, "codex": True}}, open(f"{w}/zoom_claude.json", "w"))
 json.dump({"d1": {"claude": False, "codex": False}}, open(f"{w}/zoom_codex.json", "w"))
 PY
@@ -513,6 +548,14 @@ run_py adjudicate.py "$WORK/vocab_limits.json" "$WORK/disputes.json" --sam "$WOR
 assert_eq "resolved_claude" "$(verdict d3)" "SAM tracking two objects confirms the higher count (2 vs 1)"
 run_py adjudicate.py "$WORK/vocab_limits.json" "$WORK/disputes.json" --sam "$WORK/track_8_one_object.json"
 assert_eq "unverifiable" "$(verdict d3)" "SAM seeing fewer objects cannot refute the higher count (it only tracks anchored objects)"
+run_py adjudicate.py "$WORK/vocab_limits.json" "$WORK/disputes.json" --sam "$WORK/track_one_gone.json"
+assert_eq "unverifiable" "$(verdict d3)" "an object the model scores as absent is not counted (#23 verify I6)"
+run_py adjudicate.py "$WORK/vocab_limits.json" "$WORK/disputes_other.json" --sam "$WORK/track_35.json"
+assert_eq "unverifiable" "$(verdict d4)" "SAM tracking instruments does not settle a thread count (#23 verify B5)"
+assert_eq "unverifiable" "$(verdict d5)" "SAM does not settle a relation that is not between two tracked objects"
+run_py adjudicate.py "$WORK/vocab_limits.json" "$WORK/disputes_doubled.json" --sam "$WORK/track_doubled.json"
+assert_eq "resolved_codex" "$(verdict d10)" "SAM matches tips to objects: a doubled mark is not confirmed by the other instrument (#23 verify B6)"
+run_py adjudicate.py "$WORK/vocab_limits.json" "$WORK/disputes.json" --sam "$WORK/track_8_one_object.json"
 # d1: 8.0% is beyond 5 ± 1, so "not together" -> Codex; d2: 3 > max 2 -> Codex; d3: unverifiable
 assert_eq "0 2 1" "$(json_get "$RUN_OUT" '"%d %d %d" % (d["counts"]["resolved_claude"], d["counts"]["resolved_codex"], d["counts"]["unverifiable"])')" \
   "the summary counts every verdict once"

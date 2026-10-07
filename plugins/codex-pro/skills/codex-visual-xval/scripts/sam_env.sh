@@ -19,16 +19,20 @@ PYTHON_VERSION="3.13"
 # `import torch, transformers` and still could not run SAM.
 PINS=(torch==2.14.1 torchvision==0.29.1 transformers==5.19.0 numpy==2.5.3 pillow==10.4.0)
 MODEL_ID="facebook/sam2.1-hiera-large"
+MODEL_REVISION="665f8e2ad61cf5f53d65644ff27c8ee525124610"   # must match sam_track.py
+# The weights live inside the environment, so the consent covers where they go and
+# removing the environment removes them too.
+export HF_HOME="$ENV_DIR/hf"
 ESTIMATE="約 1 GB：模型權重 856 MB（2026-10-07 實測），torch 等套件約 0.1–0.2 GB（估計，依平台而異）"
 
 check() {
   if [ -x "$ENV_DIR/bin/python" ] \
-      && "$ENV_DIR/bin/python" -c "
+      && "$ENV_DIR/bin/python" -I -c "
 import numpy, PIL, torch, torchvision
 from huggingface_hub import try_to_load_from_cache
 from transformers import Sam2VideoModel, Sam2VideoProcessor
-Sam2VideoProcessor.from_pretrained('$MODEL_ID', local_files_only=True)
-assert isinstance(try_to_load_from_cache('$MODEL_ID', 'model.safetensors'), str)
+Sam2VideoProcessor.from_pretrained('$MODEL_ID', revision='$MODEL_REVISION', local_files_only=True)
+assert isinstance(try_to_load_from_cache('$MODEL_ID', 'model.safetensors', revision='$MODEL_REVISION'), str)
 " >/dev/null 2>&1; then
     echo "installed path=$ENV_DIR"
     return 0
@@ -39,7 +43,7 @@ assert isinstance(try_to_load_from_cache('$MODEL_ID', 'model.safetensors'), str)
 
 install() {
   if [ "${1:-}" != "--yes" ]; then
-    echo "consent_required: 安裝 SAM 2.1 環境到 ${ENV_DIR}，下載量${ESTIMATE}。"
+    echo "consent_required: 安裝 SAM 2.1 環境到 ${ENV_DIR}（模型權重也放在 ${HF_HOME}），下載量${ESTIMATE}。"
     echo "使用者同意後，執行：sam_env.sh install --yes"
     exit 3
   fi
@@ -63,7 +67,7 @@ install() {
   if uv venv --python "$PYTHON_VERSION" "$ENV_DIR" \
       && touch "$MARKER" \
       && uv pip install --python "$ENV_DIR/bin/python" "${PINS[@]}" \
-      && "$ENV_DIR/bin/python" -c "from huggingface_hub import snapshot_download; snapshot_download('$MODEL_ID')"; then
+      && "$ENV_DIR/bin/python" -I -c "from huggingface_hub import snapshot_download; snapshot_download('$MODEL_ID', revision='$MODEL_REVISION')"; then
     check
     exit $?
   fi
