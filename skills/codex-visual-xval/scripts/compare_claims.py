@@ -202,7 +202,10 @@ def compare(vocab: dict, claude: dict[str, dict], codex: dict[str, dict], aspect
                 disagreements.append({"frame": frame, "kind": "relation", "relation": name,
                                       "definition": vocab["relations"][name]["definition"],
                                       "between": vocab["relations"][name]["between"],
-                                      "claude": mine["relations"][name], "codex": theirs["relations"][name]})
+                                      "claude": mine["relations"][name], "codex": theirs["relations"][name],
+                                      # whether the evidence saw every object the sides agree on (#23 verify round 3, T4)
+                                      "counts": {cls: [mine["objects"].get(cls, 0), theirs["objects"].get(cls, 0)]
+                                                 for cls in sorted(set(vocab["relations"][name]["between"]))}})
     for number, item in enumerate(disagreements, 1):
         item["id"] = f"d{number}"
     disputed = {item["frame"] for item in disagreements}

@@ -493,7 +493,7 @@ w = sys.argv[1]
 vocab = json.load(open(f"{w}/vocab.json")); vocab["max_count"] = {"INST": 2}
 json.dump(vocab, open(f"{w}/vocab_limits.json", "w"))
 rel = {"id": "d1", "frame": "f08.png", "kind": "relation", "relation": "tips_together", "between": ["INST", "INST"],
-       "definition": "distance_pct < 5", "claude": True, "codex": False}
+       "definition": "distance_pct < 5", "claude": True, "codex": False, "counts": {"INST": [2, 2]}}
 cnt = {"id": "d2", "frame": "f02.png", "kind": "count", "class": "INST", "claude": 3, "codex": 2}
 cnt_low = {"id": "d3", "frame": "f03.png", "kind": "count", "class": "INST", "claude": 2, "codex": 1}
 json.dump({"n_frames": 12, "agreement_rate": 0.75, "frames": {}, "disagreements": [rel, cnt, cnt_low]},
@@ -554,10 +554,13 @@ assert_eq "unverifiable" "$(verdict d1)" "without any third evidence the disagre
 run_py adjudicate.py "$WORK/vocab_limits.json" "$WORK/disputes.json" --zoom "$WORK/zoom_codex.json"
 assert_eq "resolved_codex" "$(verdict d1)" "matching zoom-round answers that agree with Codex resolve to Codex"
 printf '{"d3": {"claude": 0, "codex": 0}}\n' > "$WORK/zoom_both_wrong.json"
-run_py adjudicate.py "$WORK/vocab_limits.json" "$WORK/disputes.json" --zoom "$WORK/zoom_both_wrong.json"
-assert_eq "unverifiable" "$(verdict d3)" "zoom answers that match neither side settle nothing"
-assert_contains "$(json_get "$RUN_OUT" "[a['note'] for a in d['adjudications'] if a['id'] == 'd3'][0]")" "refuted both" \
-  "zoom answers that agree with each other but match neither side are reported as refuting both"
+run_py adjudicate.py "$WORK/vocab_limits.json" "$WORK/disputes.json" --zoom "$WORK/zoom_both_wrong.json" --sam "$WORK/track_35.json"
+assert_eq "resolved_claude" "$(verdict d3)" \
+  "a zoom count below both answers refutes neither, so SAM's two present objects still settle 2 vs 1 (#23 verify round 3, T3)"
+case "$(json_get "$RUN_OUT" "[a['note'] for a in d['adjudications'] if a['id'] == 'd3'][0]")" in
+  *"refuted both"*) fail "a zoom count below both answers is not reported as refuting both" ;;
+  *) pass "a zoom count below both answers is not reported as refuting both" ;;
+esac
 
 python3 - "$WORK" <<'PY'
 import json, sys
@@ -611,10 +614,65 @@ run_py adjudicate.py "$WORK/vocab_limits.json" "$WORK/disputes.json" --zoom "$WO
 assert_eq "resolved_claude" "$(verdict d3)" "a zoom count equal to the higher answer confirms that side"
 printf '{"d2": {"claude": 1, "codex": 1}}\n' > "$WORK/zoom_refute_d2.json"
 run_py adjudicate.py "$WORK/vocab_limits.json" "$WORK/disputes.json" --zoom "$WORK/zoom_refute_d2.json"
-assert_eq "unverifiable" "$(verdict d2)" "a zoom round that refutes both is not overridden by the maximum count"
+assert_eq "unverifiable" "$(verdict d2)" "a zoom count below both answers confirms neither; the maximum only excludes Claude's 3"
 printf '{"d3": {"claude": 3, "codex": 3}}\n' > "$WORK/zoom_refute_d3.json"
 run_py adjudicate.py "$WORK/vocab_limits.json" "$WORK/disputes.json" --zoom "$WORK/zoom_refute_d3.json" --sam "$WORK/track_35.json"
 assert_eq "unverifiable" "$(verdict d3)" "a zoom round that refutes both is not overridden by SAM"
+# Round 3: evidence proves only what it can (T3, T4, T5, L5). Counts: what is seen is a lower bound,
+# max_count an upper bound. Positions: evidence can refute both. Relations: a distance measured on
+# some of the objects is an upper bound, usable both ways only when the objects are all accounted for.
+printf '{"d2": {"claude": 2, "codex": 2}}\n' > "$WORK/zoom_d2_two.json"
+run_py adjudicate.py "$WORK/vocab_limits.json" "$WORK/disputes.json" --zoom "$WORK/zoom_d2_two.json"
+assert_eq "resolved_codex" "$(verdict d2)" "3 vs 2, max 2, both zoom answers count 2: the bounds meet at 2 -> Codex (T5)"
+printf '{"d2": {"claude": 3, "codex": 3}}\n' > "$WORK/zoom_d2_three.json"
+run_py adjudicate.py "$WORK/vocab_limits.json" "$WORK/disputes.json" --zoom "$WORK/zoom_d2_three.json"
+assert_eq "unverifiable" "$(verdict d2)" "seeing 3 when the maximum is 2 is conflicting evidence"
+assert_contains "$(json_get "$RUN_OUT" "[a['note'] for a in d['adjudications'] if a['id'] == 'd2'][0]")" "conflicting" \
+  "the note says the evidence conflicts"
+python3 - "$WORK" <<'PY'
+import json, sys
+w = sys.argv[1]
+both_over = {"id": "d6", "frame": "f05.png", "kind": "count", "class": "INST", "claude": 4, "codex": 3}
+far = {"id": "d7", "frame": "f04.png", "kind": "position", "class": "INST", "claude": [50, 50], "codex": [60, 50],
+       "claude_points": [[50, 50]], "codex_points": [[60, 50]], "distance_pct": 10.0, "threshold_pct": 5, "aspect": 1.0}
+rel_open = {"id": "d8", "frame": "f08.png", "kind": "relation", "relation": "tips_together", "between": ["INST", "INST"],
+            "definition": "distance_pct < 5", "claude": True, "codex": False, "counts": {"INST": [3, 2]}}
+rel_more = dict(rel_open, id="d12", counts={"INST": [3, 3]})
+json.dump({"disagreements": [both_over, far, rel_open, rel_more]}, open(f"{w}/disputes_r3.json", "w"))
+tip = lambda x, y: {"area": 900, "centroid_pct": [x, y], "tip_pct": [x, y], "entry_pct": [x, 99], "present": True}
+def track(dist):
+    return {"sam_status": "ok", "class": "INST", "frames": {
+        "f04.png": {"invalid": False, "max_iou": 0.0, "distance_pct": None, "objects": {"1": tip(50.2, 50)}},
+        "f08.png": {"invalid": False, "max_iou": 0.0, "distance_pct": dist, "objects": {"1": tip(40, 50), "2": tip(70, 50)}}}}
+json.dump(track(30.0), open(f"{w}/track_r3_far.json", "w"))
+json.dump(track(3.5), open(f"{w}/track_r3_near.json", "w"))
+json.dump({"d7": {"claude": [[75, 50]], "codex": [[75.5, 50]]}}, open(f"{w}/zoom_r3_away.json", "w"))
+json.dump({"d7": {"claude": [], "codex": []}}, open(f"{w}/zoom_r3_none.json", "w"))
+json.dump({"d8": {"claude": False, "codex": False}, "d12": {"claude": False, "codex": False}}, open(f"{w}/zoom_r3_false.json", "w"))
+json.dump({"d8": {"claude": True, "codex": True}}, open(f"{w}/zoom_r3_true.json", "w"))
+PY
+run_py adjudicate.py "$WORK/vocab_limits.json" "$WORK/disputes_r3.json"
+assert_eq "unverifiable" "$(verdict d6)" "4 vs 3 with a maximum of 2 excludes both counts (L5)"
+assert_contains "$(json_get "$RUN_OUT" "[a['note'] for a in d['adjudications'] if a['id'] == 'd6'][0]")" "Claude, Codex" \
+  "both excluded counts are named"
+run_py adjudicate.py "$WORK/vocab_limits.json" "$WORK/disputes_r3.json" --zoom "$WORK/zoom_r3_away.json" --sam "$WORK/track_r3_far.json"
+assert_eq "unverifiable" "$(verdict d7)" "a zoom round that places the object away from both points refutes both, whatever SAM says (T3)"
+assert_contains "$(json_get "$RUN_OUT" "[a['note'] for a in d['adjudications'] if a['id'] == 'd7'][0]")" "refuted both" \
+  "the note says the zoom round refuted both"
+run_py adjudicate.py "$WORK/vocab_limits.json" "$WORK/disputes_r3.json" --zoom "$WORK/zoom_r3_none.json" --sam "$WORK/track_r3_far.json"
+assert_eq "unverifiable" "$(verdict d7)" "a zoom round that finds no instrument near either point refutes both"
+run_py adjudicate.py "$WORK/vocab_limits.json" "$WORK/disputes_r3.json" --sam "$WORK/track_r3_far.json"
+assert_eq "resolved_claude" "$(verdict d7)" "without the zoom round, the SAM tip at Claude's point settles it"
+assert_eq "unverifiable" "$(verdict d8)" "30% between two tracked tips cannot show apart when the counts differ (T4)"
+assert_eq "unverifiable" "$(verdict d12)" "nor when the sides agree on 3 but SAM tracked only 2"
+run_py adjudicate.py "$WORK/vocab_limits.json" "$WORK/disputes_r3.json" --sam "$WORK/track_r3_near.json"
+assert_eq "resolved_claude" "$(verdict d8)" "3.5% between two tracked tips shows together even when objects may be missing"
+run_py adjudicate.py "$WORK/vocab_limits.json" "$WORK/disputes_r3.json" --zoom "$WORK/zoom_r3_false.json"
+assert_eq "unverifiable" "$(verdict d8)" "a crop answering 'not together' cannot show it for the frame when the counts differ"
+assert_eq "resolved_codex" "$(verdict d12)" "with the counts agreed, every marked point is in the crop, so 'not together' holds"
+run_py adjudicate.py "$WORK/vocab_limits.json" "$WORK/disputes_r3.json" --zoom "$WORK/zoom_r3_true.json"
+assert_eq "resolved_claude" "$(verdict d8)" "a crop answering 'together' shows it for the frame"
+
 python3 - "$WORK" <<'PY'
 import json, sys
 w = sys.argv[1]
@@ -1096,6 +1154,8 @@ assert_eq "1" "$(json_get "$RUN_OUT" 'd["n_disagreements"]')" "compare reports t
 assert_eq "d1 f08.png relation tips_together" \
   "$(json_get "$RUN_OUT" '" ".join(str(d["disputes"][0][k]) for k in ("id", "frame", "kind", "relation"))')" \
   "compare names the disputed frame, kind and relation"
+assert_eq "{'INST': [2, 2]}" "$(json_get "$(cat "$WORK/run5/comparison.json" 2>/dev/null)" 'd["disagreements"][0].get("counts")')" \
+  "a relation disagreement records both sides' counts of the related classes (#23 verify round 3, T4)"
 case "$RUN_OUT" in
   *'"claude"'*|*'"codex"'*|*x_pct*) fail "compare prints no answer values" ;;
   *) pass "compare prints no answer values" ;;
