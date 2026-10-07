@@ -319,6 +319,6 @@
 - [x] 12.5 文件：寫入目錄清單、sam 的情境、SKILL Step 4.2 的放大輪檢查、design 的措辭、CHANGELOG 與 #89 的「body」（Y5、Y10）。
   - 驗證：`bash tests/run.sh` 只剩 #24。
   - [after: 12.4]
-- [ ] 12.6 真實後端端到端（第七次）。
+- [x] 12.6 真實後端端到端（第七次）。
   - 驗證：紀錄寫進 e2e-checklist §F。
   - [after: 12.5]

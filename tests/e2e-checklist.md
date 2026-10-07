@@ -298,6 +298,15 @@ f01 是 3000×1875 的大圖，驗證原解析度複本；送出前的登入檢�
   f02 關係 → `resolved_codex`，f01 關係的 false 不採用 → `unverifiable`。
 - 結果檔沒有出現原圖資料夾的名稱，沒有「changed after」的警示；複本與裁切圖都不含 EXIF 或文字區塊。
 
+第七次紀錄：2026-10-08，codex-pro `2a541b7`（第七輪 verify 的修正之後），同一個 runtime 與 profile。
+f01 是 PIL 寫出的 3000×1875 PNG，f02 是 PIL 寫出的 JPEG（品質 92），驗證新的結構檢查接受一般編碼器的輸出。
+
+- init 接受兩張圖（PNG 的壓縮串流結束並通過 checksum、JPEG 有結尾標記），f01 另有原解析度複本。
+- 植入與第五、六次相同的兩個錯誤；第一輪 8.9 秒，分歧三筆，全是植入的錯誤。
+- 放大輪 6.1 秒，Codex 收到的題目檔與 subagent 作答的那份逐字相同；裁決與第六次相同（兩筆 `resolved_codex`，
+  「不近」不採用）。adjudicate 寫出 `adjudication_record.json`；結果檔重算所有紀錄，沒有誤報改動，error 為空。
+- 複本與裁切圖都不含 EXIF 或文字區塊；結果檔沒有出現原圖資料夾的名稱。
+
 ## Post-test cleanup checklist
 
 - [ ] B 段使用的 disposable account／VM 沒有污染日常 Codex home
