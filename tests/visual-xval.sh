@@ -737,6 +737,37 @@ PY
 assert_contains "$meta_check" "leaks=none" "the copies carry no capture time and no EXIF block"
 assert_contains "$meta_check" "size=120x200" "an EXIF orientation is applied to the pixels before it is removed"
 assert_eq "" "$(git -C "$WORK/gitproj" status --porcelain)" "the run directory does not show up in git status"
+# Round 2: data appended after the JPEG image, PNG orientation, and the file header decide the format (R7, S14).
+python3 - "$WORK" <<'PY'
+import struct, subprocess, sys, zlib
+w = sys.argv[1]
+data = open(f"{w}/plain.jpg", "rb").read()
+trailer_jpeg = b"\xff\xd8\xff\xe1\x00\x14Exif\x00\x00GPSSECRET-2\xff\xd9"
+open(f"{w}/trailer.jpg", "wb").write(data + trailer_jpeg + b"ftypmp42 GPSSECRET-motion")
+open(f"{w}/jpeg_named.png", "wb").write(data)
+# PNG with an eXIf chunk saying orientation 6 (rotate 90 clockwise)
+tiff = b"MM\x00\x2a\x00\x00\x00\x08" + struct.pack(">H", 1) + struct.pack(">HHI", 0x0112, 3, 1) + struct.pack(">HH", 6, 0) + struct.pack(">I", 0)
+png = open(f"{w}/imgs/shot_2026-09-11_1001.png", "rb").read()
+chunk = struct.pack(">I", len(tiff)) + b"eXIf" + tiff + struct.pack(">I", zlib.crc32(b"eXIf" + tiff) & 0xffffffff)
+open(f"{w}/rotated.png", "wb").write(png[:33] + chunk + png[33:])
+PY
+rm -rf "$WORK/runr7"
+xval init --run "$WORK/runr7" --vocab "$WORK/vocab.json" "$WORK/trailer.jpg" "$WORK/rotated.png" "$WORK/jpeg_named.png"
+assert_eq "0" "$RUN_STATUS" "init accepts an appended trailer, an oriented PNG and a JPEG named .png"
+r7=$(python3 - "$WORK/runr7" <<'PY'
+import json, os, sys
+run = sys.argv[1]; frames = json.load(open(f"{run}/frames.json"))
+f1 = open(f"{run}/frames/f01.jpg", "rb").read()
+f2 = frames.get("f02.png", {})
+print("trailer=%s png_size=%sx%s png_exif=%s third=%s" % ("GPSSECRET" in f1.decode("latin-1"), f2.get("width"), f2.get("height"),
+      b"eXIf" in open(f"{run}/frames/f02.png", "rb").read(), sorted(frames)[2]))
+PY
+)
+assert_contains "$r7" "trailer=False" "data appended after the JPEG image (a second image, a motion-photo trailer) is removed"
+assert_contains "$r7" "png_size=120x200" "a PNG's EXIF orientation is applied before the metadata is removed"
+assert_contains "$r7" "png_exif=False" "the PNG copy carries no eXIf chunk"
+assert_contains "$r7" "third=f03.jpg" "the format comes from the file header, not the extension"
+
 rm -rf "$WORK/run13"; cp "$WORK/imgs/shot_2026-09-11_1001.png" "$WORK/thirteenth.png"
 xval init --run "$WORK/run13" --vocab "$WORK/vocab.json" "$WORK"/imgs/*.png "$WORK/thirteenth.png"
 assert_contains "$RUN_OUT" '"error": "target_invalid"' "a run with 13 images is refused"
@@ -767,6 +798,18 @@ assert_eq "f01.png" "$(python3 -c 'import json,sys; print(json.load(open(sys.arg
   "the original file names are replaced by the neutral names before sealing"
 assert_file "$WORK/runmap/claude_source.json" "the answers as given are kept beside the mapped ones"
 
+rm -rf "$WORK/runswap" "$WORK/swap"; mkdir -p "$WORK/swap"
+cp "$WORK/imgs/shot_2026-09-11_1001.png" "$WORK/swap/f02.png"; cp "$WORK/imgs/shot_2026-09-11_1002.png" "$WORK/swap/f01.png"
+xval init --run "$WORK/runswap" --vocab "$WORK/vocab.json" "$WORK/swap/f02.png" "$WORK/swap/f01.png"
+python3 - "$WORK" <<'PY'
+import json, sys
+w = sys.argv[1]; c = json.load(open(f"{w}/claude_marked.json"))
+c["claims"] = c["claims"][:2]; c["claims"][0]["frame"] = "f01.png"; c["claims"][1]["frame"] = "f02.png"
+json.dump(c, open(f"{w}/runswap/claude.json", "w"))
+PY
+xval seal --run "$WORK/runswap"
+assert_contains "$RUN_OUT" '"error": "target_invalid"' "frame names that are both original and neutral names in another order are refused (S10)"
+
 # The request waits for the privacy confirmation and for an intact seal (#23 verify B1, I2).
 rm -rf "$WORK/run0" "$WORK/mock.log"
 xval init --run "$WORK/run0" --vocab "$WORK/vocab.json" "$WORK"/imgs/*.png
@@ -794,6 +837,8 @@ seal_before=$(cat "$WORK/run0/seal.json")
 xval seal --run "$WORK/run0"
 assert_eq "5" "$RUN_STATUS" "a second seal is refused"
 assert_eq "$seal_before" "$(cat "$WORK/run0/seal.json")" "a refused second seal leaves the first seal unchanged"
+xval init --run "$WORK/run0" --vocab "$WORK/vocab.json" "$WORK"/imgs/*.png
+assert_contains "$RUN_OUT" '"error": "target_invalid"' "a sealed run cannot be initialised again (S2)"
 rm -f "$WORK/mock.log"
 
 # The profile is read from the run directory; without it nothing is sent (#23 verify B11).
@@ -991,6 +1036,13 @@ case "$RUN_OUT" in
   *) pass "compare prints no answer values" ;;
 esac
 assert_file "$WORK/run5/comparison.json" "the full comparison is kept in the run directory"
+rm -rf "$WORK/run5v"; cp -R "$WORK/run5" "$WORK/run5v"
+python3 - "$WORK/run5v/vocab.json" <<'PY'
+import json, sys
+v = json.load(open(sys.argv[1])); v["position_threshold_pct"] = 50; json.dump(v, open(sys.argv[1], "w"))
+PY
+xval compare --run "$WORK/run5v"
+assert_contains "$RUN_OUT" '"error": "target_invalid"' "a vocabulary edited after sealing stops the comparison (S2)"
 
 xval crops --run "$WORK/run5"
 assert_eq "0" "$RUN_STATUS" "crops exits 0"
@@ -1004,6 +1056,7 @@ cp "$WORK/run5/zoom_plan.json" "$WORK/zoom_plan_before.json"
 assert_file "$WORK/run5/zoom_prompt.md" "crops writes the zoom question file both sides answer from"
 qfile=$(cat "$WORK/run5/zoom_prompt.md" 2>/dev/null)
 assert_contains "$qfile" "z01.png" "the question file names each crop"
+assert_contains "$qfile" "attached in this order: z01.png" "the question file states the order the crops are attached in (S4)"
 case "$qfile" in
   *41.37*|*'"claims"'*|*'"d1"'*) fail "the question file carries no earlier answers and no dispute ids" ;;
   *) pass "the question file carries no earlier answers and no dispute ids" ;;
@@ -1020,6 +1073,17 @@ assert_eq "0" "$RUN_STATUS" "the zoom round exits 0"
 assert_eq "1" "$(grep -o -- '--image ' "$WORK/mock.log" | wc -l | tr -d ' ')" "the zoom round sends only the one crop"
 assert_contains "$(cat "$WORK/mock.log")" "crops/z01.png" "the zoom round sends the crop, not the full frame"
 zoom_prompt=$(cat "$WORK/prompts.txt" 2>/dev/null)
+rm -rf "$WORK/run5z"; cp -R "$WORK/run5" "$WORK/run5z"
+python3 - "$WORK/run5z" <<'PY'
+import json, sys
+run = sys.argv[1]
+r = json.load(open(f"{run}/requests.json")); r.pop("zoom", None); json.dump(r, open(f"{run}/requests.json", "w"))
+p = json.load(open(f"{run}/zoom_plan.json")); p["d1"]["crop"] = "../../vocab.json"; json.dump(p, open(f"{run}/zoom_plan.json", "w"))
+PY
+rm -f "$WORK/mock.log"
+ask_with "$WORK/zoom_reply.md" "$WORK/run5z" zoom
+assert_contains "$RUN_OUT" '"error": "target_invalid"' "a zoom plan changed after crops, or pointing outside the run, is refused (S3)"
+assert_no_file "$WORK/mock.log" "nothing is sent from a changed zoom plan"
 assert_eq "$qfile" "$zoom_prompt" "Codex's zoom request carries exactly the question file Claude's side answered from"
 assert_contains "$zoom_prompt" "INST: laparoscopic instrument" "the zoom prompt carries the class definitions"
 case "$zoom_prompt" in
@@ -1109,6 +1173,30 @@ assert_contains "$RUN_OUT" "f05.png" "crops names the disagreements that got no 
 ( mkdir -p "$WORK/project" && cd "$WORK/project" && python3 "$SCRIPTS/xval.py" result --run "$WORK/run9c" --out "$WORK/run9c_result.md" >/dev/null 2>&1 )
 assert_contains "$(cat "$WORK/run9c_result.md" 2>/dev/null)" "no zoom question: the crop would cover the whole image" \
   "the result file says which disagreements got no zoom question, and why"
+
+# The enlargement keeps the crop's longer side within 2048 px and the question states it (S15).
+rm -rf "$WORK/runbig" "$WORK/big"; mkdir -p "$WORK/big"
+sips -z 2000 3000 "$WORK/dot.png" --out "$WORK/big/a.png" >/dev/null; sips -z 2000 3000 "$WORK/dot.png" --out "$WORK/big/b.png" >/dev/null
+xval init --run "$WORK/runbig" --vocab "$WORK/vocab.json" "$WORK/big/a.png" "$WORK/big/b.png"
+xval confirm-privacy --run "$WORK/runbig"; profile_in "$WORK/runbig"
+python3 - "$WORK" <<'PY'
+import json, sys
+w = sys.argv[1]
+def claim(frame, together):
+    return {"frame": frame, "objects": {"INST": 2}, "points": [{"class": "INST", "x_pct": 30, "y_pct": 50},
+            {"class": "INST", "x_pct": 70, "y_pct": 50}], "relations": {"tips_together": together}}
+json.dump({"claims": [claim("f01.png", True), claim("f02.png", False)]}, open(f"{w}/runbig/claude.json", "w"))
+open(f"{w}/big_reply.md", "w").write("```json\n" + json.dumps({"claims": [claim("f01.png", False), claim("f02.png", False)]}) + "\n```\n")
+PY
+printf '%s\n' "$WORK/stubbin/codex-call" > "$WORK/runbig/runtime.txt"; : > "$WORK/runbig/runtime_error.txt"
+xval seal --run "$WORK/runbig"
+ask_with "$WORK/big_reply.md" "$WORK/runbig" 1
+xval compare --run "$WORK/runbig"
+xval crops --run "$WORK/runbig"
+big_w=$(sips -g pixelWidth "$WORK/runbig/crops/z01.png" 2>/dev/null | awk '/pixelWidth/{print $2}')
+assert_eq "yes" "$([ -n "$big_w" ] && [ "$big_w" -le 2048 ] && echo yes || echo "no ($big_w)")" \
+  "a crop is enlarged no further than a longer side of 2048 px (S15)"
+assert_contains "$(cat "$WORK/runbig/zoom_prompt.md" 2>/dev/null)" "enlarged 1.06x" "the question states the actual enlargement"
 
 new_run "$WORK/run6"
 ask_with "$WORK/codex_reply.md" "$WORK/run6" 1

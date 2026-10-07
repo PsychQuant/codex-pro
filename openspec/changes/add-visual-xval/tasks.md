@@ -174,7 +174,7 @@
   - Step 4.1 的 max_time 不合法時不寫 profile.json 並說明原因。
   - 驗證：HTTP 500 為 backend_error；rate_limit 後重跑 ask，結果檔仍是 rate_limit；改動 codex_round1.md 被結果檔指出。
   - [after: 7.3]
-- [ ] 7.5 輸入與放大輪檔案（R7、S2、S3、S4、S10、S14、S15）。
+- [x] 7.5 輸入與放大輪檔案（R7、S2、S3、S4、S10、S14、S15）。
   - JPEG 截到第一個 EOI，去掉附加在後面的圖片或影片；PNG 與 WebP 的 EXIF 方向先轉正再清除；格式依檔頭判斷。
   - 封存同時記錄詞彙表與影格的雜湊，比對前核對；已封存或已送出的 run 不得重跑 init。
   - 放大輪的 plan 與題目檔記錄雜湊，送出前核對；裁切圖必須在 run 目錄內。

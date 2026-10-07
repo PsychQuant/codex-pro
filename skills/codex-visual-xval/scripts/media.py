@@ -5,13 +5,16 @@ The copies are what both models see, so they must carry nothing the neutral file
 meant to hide. Re-encoding with sips was measured (2026-10-07) to keep the EXIF block and the
 capture time, so metadata is removed here at the byte level, segment by segment:
 
-  JPEG  APP1-APP15 except ICC colour profiles (APP2 "ICC_PROFILE") and Adobe (APP14), and comments
+  JPEG  APP1-APP15 except ICC colour profiles (APP2 "ICC_PROFILE") and Adobe (APP14), and comments,
+        also between progressive scans; everything after the image's end (EOI) is cut off, since
+        a second image or a motion-photo video appended there carries its own EXIF and GPS
   PNG   eXIf, tEXt, iTXt, zTXt, tIME
   WebP  EXIF and XMP chunks, and the VP8X flags that announce them
   GIF   converted to PNG first, then treated as PNG
 
-A JPEG's EXIF orientation is read before the block is removed and applied to the pixels with
-sips, so both models see the image the right way up and in the same coordinates.
+The format is read from the file header, not the extension. An EXIF orientation (JPEG APP1, PNG
+eXIf, WebP EXIF) is read before the metadata is removed and applied to the pixels with sips, so
+both models see the image the right way up and in the same coordinates.
 """
 import os
 import re
@@ -63,26 +66,90 @@ def _jpeg_segments(data: bytes):
     raise MediaError("JPEG without image data")
 
 
-def jpeg_orientation(data: bytes) -> int:
-    for marker, seg in _jpeg_segments(data)[0]:
-        if marker == 0xE1 and seg[4:10] == b"Exif\x00\x00":
-            tiff = seg[10:]
-            endian = ">" if tiff[:2] == b"MM" else "<"
-            ifd = struct.unpack(endian + "I", tiff[4:8])[0]
-            for i in range(struct.unpack(endian + "H", tiff[ifd:ifd + 2])[0]):
-                entry = tiff[ifd + 2 + 12 * i: ifd + 14 + 12 * i]
-                if struct.unpack(endian + "H", entry[:2])[0] == 0x0112:
-                    return struct.unpack(endian + "H", entry[8:10])[0]
+def kind_of(data: bytes) -> str:
+    """The image format from its header (#23 verify round 2, S14)."""
+    if data[:3] == b"\xff\xd8\xff":
+        return "jpeg"
+    if data[:8] == PNG_SIGNATURE:
+        return "png"
+    if data[:4] == b"RIFF" and data[8:12] == b"WEBP":
+        return "webp"
+    if data[:6] in (b"GIF87a", b"GIF89a"):
+        return "gif"
+    raise MediaError("not a PNG, JPEG, WebP or GIF file (judged by its header)")
+
+
+def tiff_orientation(tiff: bytes) -> int:
+    if tiff[:6] == b"Exif\x00\x00":
+        tiff = tiff[6:]
+    try:
+        endian = ">" if tiff[:2] == b"MM" else "<"
+        ifd = struct.unpack(endian + "I", tiff[4:8])[0]
+        for i in range(struct.unpack(endian + "H", tiff[ifd:ifd + 2])[0]):
+            entry = tiff[ifd + 2 + 12 * i: ifd + 14 + 12 * i]
+            if struct.unpack(endian + "H", entry[:2])[0] == 0x0112:
+                return struct.unpack(endian + "H", entry[8:10])[0]
+    except struct.error:
+        pass
     return 1
+
+
+def orientation(data: bytes) -> int:
+    kind = kind_of(data)
+    if kind == "jpeg":
+        for marker, seg in _jpeg_segments(data)[0]:
+            if marker == 0xE1 and seg[4:10] == b"Exif\x00\x00":
+                return tiff_orientation(seg[10:])
+    elif kind == "png":
+        pos = 8
+        while pos + 8 <= len(data):
+            length, chunk = struct.unpack(">I", data[pos:pos + 4])[0], data[pos + 4:pos + 8]
+            if chunk == b"eXIf":
+                return tiff_orientation(data[pos + 8:pos + 8 + length])
+            if chunk == b"IEND":
+                break
+            pos += 12 + length
+    elif kind == "webp":
+        pos = 12
+        while pos + 8 <= len(data):
+            chunk, size = data[pos:pos + 4], struct.unpack("<I", data[pos + 4:pos + 8])[0]
+            if chunk == b"EXIF":
+                return tiff_orientation(data[pos + 8:pos + 8 + size])
+            pos += 8 + size + (size % 2)
+    return 1
+
+
+def _drop(marker: int, seg: bytes) -> bool:
+    return ((0xE1 <= marker <= 0xEF and marker not in JPEG_KEEP_APP
+             and not (marker == 0xE2 and seg[4:16] == b"ICC_PROFILE\x00")) or marker == 0xFE)
+
+
+def _scan_data(rest: bytes) -> bytes:
+    """The image data after the first SOS, up to and including EOI, without APPn or COM segments
+    between progressive scans. Inside entropy-coded data a 0xFF is followed by 0x00 (stuffing) or
+    RST0-7, so any other marker byte starts a segment or ends the image."""
+    out, pos = bytearray(), 0
+    while pos < len(rest):
+        byte = rest[pos]
+        if byte != 0xFF or pos + 1 >= len(rest):
+            out.append(byte); pos += 1; continue
+        marker = rest[pos + 1]
+        if marker == 0x00 or 0xD0 <= marker <= 0xD7 or marker == 0xFF:
+            out += rest[pos:pos + 2]; pos += 2; continue
+        if marker == 0xD9:
+            return bytes(out + b"\xff\xd9")   # end of image: anything appended after it is dropped
+        length = struct.unpack(">H", rest[pos + 2:pos + 4])[0]
+        seg = rest[pos:pos + 2 + length]
+        if not _drop(marker, seg):
+            out += seg
+        pos += 2 + length
+    return bytes(out)
 
 
 def strip_jpeg(data: bytes) -> bytes:
     segments, rest = _jpeg_segments(data)
-    kept = [seg for marker, seg in segments
-            if not ((0xE1 <= marker <= 0xEF and marker not in JPEG_KEEP_APP
-                     and not (marker == 0xE2 and seg[4:16] == b"ICC_PROFILE\x00"))
-                    or marker == 0xFE)]
-    return b"\xff\xd8" + b"".join(seg for seg in kept if seg != b"\xff\xd8") + rest
+    kept = [seg for marker, seg in segments if not _drop(marker, seg)]
+    return b"\xff\xd8" + b"".join(seg for seg in kept if seg != b"\xff\xd8") + _scan_data(rest)
 
 
 def strip_png(data: bytes) -> bytes:
@@ -119,28 +186,26 @@ def strip_webp(data: bytes) -> bytes:
 
 def prepare_copy(src: str, frames_dir: str, stem: str) -> str:
     """Write the run's copy of one image; returns its file name inside frames_dir."""
-    ext = os.path.splitext(src)[1].lower() or ".png"
-    if ext == ".gif":
-        name = f"{stem}.png"
-        subprocess.run(["sips", "-s", "format", "png", src, "--out", os.path.join(frames_dir, name)],
-                       capture_output=True, check=True)
-        src, ext = os.path.join(frames_dir, name), ".png"
-    strip = {".jpg": strip_jpeg, ".jpeg": strip_jpeg, ".png": strip_png, ".webp": strip_webp}.get(ext)
-    if strip is None:
-        raise MediaError(f"unsupported image type {ext}: use PNG, JPEG, WebP or GIF")
-    name = f"{stem}{'.jpg' if ext == '.jpeg' else ext}"
-    target = os.path.join(frames_dir, name)
     with open(src, "rb") as fh:
         data = fh.read()
-    with open(target, "wb") as fh:
-        fh.write(data)
+    kind = kind_of(data)
+    turn = orientation(data)
+    if kind == "gif" or (kind == "webp" and turn != 1):
+        # GIF, and a WebP that has to be turned, become PNG: sips writes PNG reliably.
+        target = os.path.join(frames_dir, f"{stem}.png")
+        subprocess.run(["sips", "-s", "format", "png", src, "--out", target], capture_output=True, check=True)
+        kind = "png"
+    else:
+        target = os.path.join(frames_dir, f"{stem}.{'jpg' if kind == 'jpeg' else kind}")
+        with open(target, "wb") as fh:
+            fh.write(data)
     # Turn upright first, strip last: sips writes an EXIF block of its own when it saves
     # (measured 2026-10-07), so anything stripped before a sips step comes back.
-    orientation = jpeg_orientation(data) if strip is strip_jpeg else 1
-    for step in ORIENTATION_STEPS.get(orientation, []):
+    for step in ORIENTATION_STEPS.get(turn, []):
         subprocess.run(["sips", *step, target, "--out", target], capture_output=True, check=True)
+    strip = {"jpeg": strip_jpeg, "png": strip_png, "webp": strip_webp}[kind]
     with open(target, "rb") as fh:
         cleaned = strip(fh.read())
     with open(target, "wb") as fh:
         fh.write(cleaned)
-    return name
+    return os.path.basename(target)
