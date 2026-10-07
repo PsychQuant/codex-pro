@@ -267,3 +267,22 @@
   - 由 sips 解碼後重新編碼（sRGB、長邊 ≤ 2048），再以白名單清除 sips 寫入的 metadata；送出的每個位元組都來自編碼器。
   - 驗證：ICC 與 Adobe 區段裡夾帶的資料不會出現在複本；長邊 3000 的圖複本為 2048；解不開的檔案拒收。
   - [after: 9.6]
+
+## 10. Verify 第五輪修正（#23 第五輪 report 的 V1–V9、N1–N12）
+
+- [x] 10.1 規格與 design 依使用者第五輪決定更新（design「第五輪：不靠字樣判斷送出，也不讓重新編碼拿走放大輪的細節」；Blind Codex judgment 一律當成已送出並在送出前自檢、Zoom round 從原解析度複本裁切與邊距、Sealed Claude answers 每一步核對輸入、Structured result file 只寫檔名、Privacy reminder before sending images 的 run 目錄與複本）。
+  - 驗證：`spectra validate` 與 `spectra analyze` 無 warning。
+- [ ] 10.2 送出判定：codex-call 失敗一律保留紀錄；呼叫前自檢登入、影格與 prompt（V1、V2、N12）。
+  - [after: 10.1]
+- [ ] 10.3 裁切與裁決：位置題邊距依高寬比換算；只有 `<`／`<=` 的關係題出放大題；SAM 位置證據的 margin 嚴格大於；沒用上的證據一律列出（V3、N4、N5、N10）。
+  - [after: 10.1]
+- [ ] 10.4 紀錄與輸入：只有 init 建立目錄；每一步核對輸入；init 寫下的輸入在封存時核對；雜湊核對遇到缺檔不當內部錯誤；結果檔只寫檔名；SAM 用不到時不要求安裝（V4、V5、V6、V8、N1、N2、N3、N7）。
+  - [after: 10.3]
+- [ ] 10.5 原解析度複本：長邊超過 2048 時 init 另寫一份原解析度的複本供裁切；轉正與編碼一次完成（V7、N8、N11）。
+  - [after: 10.4]
+- [ ] 10.6 文件：SKILL Step 5 的可否重送與 init、送出判定、exit 5；media.py、vocab-format、design 的殘留；結果檔不帶內部編號（V9、N6、N9）。
+  - 驗證：`bash tests/run.sh` 只剩 #24。
+  - [after: 10.5]
+- [ ] 10.7 真實後端端到端（第五次）。
+  - 驗證：紀錄寫進 e2e-checklist §F。
+  - [after: 10.6]
