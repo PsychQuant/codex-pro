@@ -753,6 +753,38 @@ from zoom_round import crop_box
 print(crop_box([(50, 50), (75, 50)], pad=21.0))
 PY
 assert_eq "[29.0, 29.0, 96.0, 71.0]" "$(cat "$WORK/pad.txt")" "a position crop can be padded to cover the threshold around each point (M8)"
+# Round 5: padding in width units (V3); only relations a crop can show get a zoom question (N10);
+# a SAM tip exactly one margin inside is not evidence (N4); unused SAM evidence is listed (N5).
+python3 -B - "$SCRIPTS" <<'PY' > "$WORK/pads5.txt"
+import sys
+sys.path.insert(0, sys.argv[1])
+from zoom_round import position_pads, zoom_skip_reason
+print(position_pads(20.0, 0.5625))
+print(zoom_skip_reason({"kind": "relation", "definition": "distance_pct > 30"}) or "asked")
+print(zoom_skip_reason({"kind": "relation", "definition": "distance_pct < 5"}) or "asked")
+PY
+assert_contains "$(sed -n 1p "$WORK/pads5.txt")" "(21.0, 37.33" "on a 16:9 frame the vertical pad covers the threshold in width units (V3)"
+assert_contains "$(sed -n 2p "$WORK/pads5.txt")" "only" "a relation of the form > gets no zoom question (N10)"
+assert_eq "asked" "$(sed -n 3p "$WORK/pads5.txt")" "a relation of the form < still gets one"
+python3 - "$WORK" <<'PY'
+import json, sys
+w = sys.argv[1]
+item = {"id": "d16", "frame": "f04.png", "kind": "position", "class": "INST", "claude": [50, 50], "codex": [61, 50],
+        "claude_points": [[50, 50]], "codex_points": [[61, 50]], "distance_pct": 11.0, "threshold_pct": 5, "aspect": 1.0}
+json.dump({"disagreements": [item]}, open(f"{w}/disputes_r5.json", "w"))
+tip = {"area": 900, "centroid_pct": [54, 50], "tip_pct": [54, 50], "entry_pct": [54, 99], "present": True}
+json.dump({"sam_status": "ok", "class": "INST", "frames": {"f04.png": {"invalid": False, "max_iou": 0.0, "distance_pct": None,
+           "objects": {"1": tip}}}}, open(f"{w}/track_r5_edge.json", "w"))
+json.dump({"sam_status": "ok", "class": "INST", "frames": {"f04.png": {"invalid": True, "max_iou": 0.8, "distance_pct": None,
+           "objects": {"1": tip}}}}, open(f"{w}/track_r5_invalid.json", "w"))
+PY
+run_py adjudicate.py "$WORK/vocab_limits.json" "$WORK/disputes_r5.json" --sam "$WORK/track_r5_edge.json"
+assert_eq "unverifiable" "$(verdict d16)" "a SAM tip exactly one margin inside the threshold is not evidence for positions either (N4)"
+assert_contains "$(json_get "$RUN_OUT" "[a['evidence'] for a in d['adjudications'] if a['id'] == 'd16'][0]")" "not used" \
+  "and it is listed as not used (N5)"
+run_py adjudicate.py "$WORK/vocab_limits.json" "$WORK/disputes_r5.json" --sam "$WORK/track_r5_invalid.json"
+assert_contains "$(json_get "$RUN_OUT" "[a['evidence'] for a in d['adjudications'] if a['id'] == 'd16'][0]")" "collapsed" \
+  "a collapsed SAM frame is listed with its reason (N5)"
 
 python3 - "$WORK" <<'PY'
 import json, sys

@@ -5,6 +5,7 @@ or writes the run directory; scripts/xval.py does that.
 """
 import math
 import os
+import re
 from typing import Any
 
 import compare_claims
@@ -54,14 +55,32 @@ def dispute_points(item: dict, claude: dict, codex: dict) -> list[tuple[float, f
 WHOLE_IMAGE_PCT = 95.0   # a crop this large on both axes is the whole picture again, not a closer look
 
 
-def crop_box(points: list[tuple[float, float]], pad: float = 12.0) -> list[float]:
-    """`pad` around the points: a position crop pads by at least the threshold, so an answer that
-    finds no object near a disputed point covers the whole threshold around it (round 4, M8)."""
+def position_pads(threshold_pct: float, aspect: float) -> tuple[float, float]:
+    """(x, y) padding of a position crop, in percent of width and of height. The threshold is in
+    percent of width, so the vertical pad is that divided by height/width: a 16:9 frame needs more
+    of its height to cover the same distance (#23 verify round 5, V3)."""
+    x = max(12.0, threshold_pct + 1.0)
+    return x, round(max(12.0, (threshold_pct + 1.0) / (aspect or 1.0)), 2)
+
+
+def zoom_skip_reason(item: dict) -> str | None:
+    """A relation whose answer the adjudication never uses gets no zoom question (round 5, N10)."""
+    if item["kind"] == "relation":
+        m = re.match(r"^\s*distance_pct\s*(<=|>=|<|>|==)", item.get("definition", ""))
+        if not m or m.group(1) not in ("<", "<="):
+            return "the zoom round can only show a pair close together, which does not settle this relation"
+    return None
+
+
+def crop_box(points: list[tuple[float, float]], pad: float = 12.0, pad_y: float | None = None) -> list[float]:
+    """`pad` around the points (`pad_y` vertically, if given): a position crop pads by at least the
+    threshold, so an answer that finds no object near a disputed point covers the whole threshold
+    around it (round 4, M8)."""
     if not points:
         return [0.0, 0.0, 100.0, 100.0]
-    minimum = 30.0
+    minimum, pad_y = 30.0, pad if pad_y is None else pad_y
     x0, x1 = min(p[0] for p in points) - pad, max(p[0] for p in points) + pad
-    y0, y1 = min(p[1] for p in points) - pad, max(p[1] for p in points) + pad
+    y0, y1 = min(p[1] for p in points) - pad_y, max(p[1] for p in points) + pad_y
     for lo, hi, axis in ((x0, x1, "x"), (y0, y1, "y")):
         if hi - lo < minimum:
             grow = (minimum - (hi - lo)) / 2

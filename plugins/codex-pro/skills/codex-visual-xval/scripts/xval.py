@@ -91,7 +91,8 @@ import result_file  # noqa: E402
 from run_files import (Stop, RUN_MARK, checked_comparison, dump, inputs_digest, is_run_dir, load,  # noqa: E402
                        neutral_names, now_iso, run_dir, seal_intact, zoom_record_intact)
 from codex_errors import classify, login_problem  # noqa: E402
-from zoom_round import (class_lines, crop_box, dispute_points, enlargement, question,  # noqa: E402
+from zoom_round import (class_lines, crop_box, dispute_points, enlargement, position_pads, question,  # noqa: E402
+                        zoom_skip_reason,
                         to_frame, valid_zoom_value, zoom_prompt, WHOLE_IMAGE_PCT)
 import sam_track  # noqa: E402
 import seal as sealing  # noqa: E402
@@ -520,16 +521,18 @@ def crops(run: str) -> None:
     n = 0
     for item in comparison["disagreements"]:
         points = dispute_points(item, claude, codex)
-        pad = max(12.0, float(item.get("threshold_pct", 0)) + 1.0) if item["kind"] == "position" else 12.0
-        box = crop_box(points, pad)
-        if not points:
-            skipped.append({"id": item["id"], "frame": item["frame"], "reason": "no key point to frame"})
+        info = frames[item["frame"]]
+        aspect = info["height"] / info["width"] if info.get("width") and info.get("height") else 1.0
+        pads = position_pads(float(item.get("threshold_pct", 0)), aspect) if item["kind"] == "position" else (12.0, 12.0)
+        box = crop_box(points, *pads)
+        reason = "no key point to frame" if not points else zoom_skip_reason(item)
+        if reason:
+            skipped.append({"id": item["id"], "frame": item["frame"], "reason": reason})
             continue
         if box[2] - box[0] >= WHOLE_IMAGE_PCT and box[3] - box[1] >= WHOLE_IMAGE_PCT:
             skipped.append({"id": item["id"], "frame": item["frame"], "reason": "the crop would cover the whole image"})
             continue
         n += 1
-        info = frames[item["frame"]]
         w, h = info.get("width"), info.get("height")
         if not w or not h:
             w, h = image_size(os.path.join(run, "frames", item["frame"]))

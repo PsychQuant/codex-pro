@@ -150,9 +150,11 @@ def instance_verdict(evidence: list, item: dict, limit: float, margin: float) ->
     d_claude, d_codex = gap(point, item["claude"]), gap(point, item["codex"])
     # The margin covers the measurement error on both sides: the winner must be clearly inside,
     # the loser clearly outside (#23 verify round 2, S11).
-    if d_claude <= limit - margin and d_codex > limit + margin:
+    # strictly inside by the margin when there is one (round 5, N4); the zoom round has none
+    inside = (lambda d: d < limit - margin) if margin > 0 else (lambda d: d <= limit)
+    if inside(d_claude) and d_codex > limit + margin:
         return "resolved_claude", point
-    if d_codex <= limit - margin and d_claude > limit + margin:
+    if inside(d_codex) and d_claude > limit + margin:
         return "resolved_codex", point
     if d_claude > limit + margin and d_codex > limit + margin:
         return "refuted_both", point
@@ -180,7 +182,9 @@ def position_evidence(item: dict, points: list, limit: float, margin: float, sou
         if not near(item["claude"]) and not near(item["codex"]):
             return {"source": source, "refutes_both": True,
                     "detail": f"no object of the class is near either point {where}"}
-    return None
+    # listed, so the result does not read as if this evidence never existed (round 5, N5)
+    return {"source": source, "detail": f"the objects found {where} do not place one object clearly at one disputed "
+                                        "point; not used"}
 
 
 def zoom_position(item: dict, answer: dict, limit: float) -> dict | None:
@@ -268,7 +272,13 @@ def other_evidence(item: dict, zoom: dict, sam: dict | None, vocab: dict, margin
     elif answer and item["kind"] == "relation":
         evidence.append(zoom_relation(item, answer))
     frame, tracked = sam_frame(item, sam), (sam or {}).get("class")
+    raw = (sam or {}).get("frames", {}).get(item["frame"])
+    if raw and raw.get("invalid") and (item.get("class") == tracked or item.get("between") == [tracked, tracked]):
+        evidence.append({"source": "sam", "detail": "SAM's masks collapsed in this frame; not used"})   # N5
     if frame and vocab.get("track_point") != "tip":   # SAM's point is the mask tip (round 4, U4)
+        if item.get("class") == tracked or item.get("between") == [tracked, tracked]:
+            evidence.append({"source": "sam", "detail": "the vocabulary does not declare track_point: tip, so SAM gives "
+                                                        "count evidence only; not used"})
         frame = None
     if frame and item["kind"] == "position" and item.get("class") == tracked:
         tips = [obj["tip_pct"] for obj in present(frame) if obj.get("tip_pct")]
