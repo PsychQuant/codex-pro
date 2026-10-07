@@ -980,6 +980,22 @@ case "$(cat "$WORK/runpath_result.md" 2>/dev/null)" in
   *"$WORK"*) fail "the result file's error detail carries no local path" ;;
   *) pass "the result file's error detail carries no local path" ;;
 esac
+# Round 4 (M3): the local roots are replaced as prefixes, so a path with spaces loses its root too and a
+# URL in a backend message is left alone.
+rm -rf "$WORK/runpath2"; mkdir -p "$WORK/home/My Docs"
+xval init --run "$WORK/runpath2" --vocab "$WORK/vocab.json" "$WORK/home/My Docs/gone 2026.png"
+( cd "$WORK/project" && HOME="$WORK/home" python3 "$SCRIPTS/xval.py" result --run "$WORK/runpath2" --out "$WORK/runpath2_result.md" >/dev/null 2>&1 )
+assert_contains "$(cat "$WORK/runpath2_result.md" 2>/dev/null)" "~/My Docs/gone 2026.png" "a path under home with spaces keeps only the part below home"
+case "$(cat "$WORK/runpath2_result.md" 2>/dev/null)" in
+  *"$WORK"*) fail "a path with spaces does not leak its local root" ;;
+  *) pass "a path with spaces does not leak its local root" ;;
+esac
+new_run "$WORK/runurl"
+RUN_OUT=$(HOME="$WORK/home" MOCK_STDERR="error: HTTP 500: see https://status.openai.com/incidents/abc for details" MOCK_STATUS=1 \
+  MOCK_LOG="$WORK/mock.log" MOCK_PROMPTS="$WORK/prompts.txt" PATH="$WORK/stubbin:$PATH" python3 "$SCRIPTS/xval.py" ask --run "$WORK/runurl" --round 1 2>&1)
+( cd "$WORK/project" && HOME="$WORK/home" python3 "$SCRIPTS/xval.py" result --run "$WORK/runurl" --out "$WORK/runurl_result.md" >/dev/null 2>&1 )
+assert_contains "$(cat "$WORK/runurl_result.md" 2>/dev/null)" "https://status.openai.com/incidents/abc" "a URL in a backend message is left intact"
+rm -f "$WORK/mock.log" "$WORK/prompts.txt"
 
 # Round 4: the run directory never takes over someone else's files (U5); a failed init also uses up
 # the run (M4); a refusal comes before any other check (M1).
@@ -1667,6 +1683,8 @@ assert_contains "$(cat "$result_file")" "sealed before they were read" \
   "the limitations say the zoom answers' sealing before reading depends on the skill being followed (L10)"
 assert_contains "$(cat "$result_file")" "could still make the true count higher" \
   "the limitations say what a count settled for one side does and does not show"
+assert_contains "$(cat "$result_file")" "agreed count" \
+  "the limitations say that SAM's two-way relation evidence treats the sides' agreed count as true (M11)"
 assert_contains "$(cat "$result_file")" "PAD, THREAD" \
   "the limitations name the classes compared by count only, whose count disagreements cannot be settled (T8)"
 

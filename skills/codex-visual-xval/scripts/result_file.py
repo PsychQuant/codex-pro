@@ -8,6 +8,7 @@ import datetime
 import json
 import os
 import re
+import tempfile
 from typing import Any
 
 import compare_claims
@@ -53,12 +54,23 @@ def neutral_names(run: str) -> list[str]:
 NATIVE_PREFLIGHT = {"runtime_unavailable", "package_corruption"}
 
 
+def local_roots() -> list[tuple[str, str]]:
+    """The machine's own directories, longest first: a home directory inside the temporary one is
+    replaced as home."""
+    home, tmp = os.path.expanduser("~").rstrip("/"), tempfile.gettempdir().rstrip("/")
+    roots = [(home, "~"), (tmp, "$TMPDIR"), ("/private" + tmp, "$TMPDIR")]
+    return sorted((r for r in roots if len(r[0]) > 1), key=lambda r: -len(r[0]))
+
+
 def sanitize(text: str) -> str:
-    """One line, no control characters, and no local paths: the home directory becomes `~` and any
-    other absolute path keeps only its last part (#23 verify round 3, L15)."""
+    """One line, no control characters, and no local roots. The roots are replaced as prefixes,
+    which also works for a path with spaces and leaves a URL alone; a pattern that guessed where a
+    path ended did neither (#23 verify round 3, L15; round 4, M3)."""
     text = re.sub(r"[\r\n\t]", " ", text)
-    text = re.sub(r"[\x00-\x1f\x7f]", "", text).replace(os.path.expanduser("~"), "~")
-    return re.sub(r"(?<![\w~.])/(?:[^\s'\"\],)/]+/)+([^\s'\"\],)/]+)", r"…/\1", text)[:500]
+    text = re.sub(r"[\x00-\x1f\x7f]", "", text)
+    for root, name in local_roots():
+        text = text.replace(root, name)
+    return text[:500]
 
 
 def describe(item: dict) -> str:
@@ -188,6 +200,11 @@ def result(run: str, argv: list[str]) -> None:
               "- Each round is asked once per run. A new run on the same images is a fresh attempt the program cannot "
               "link to this one, and it is no longer blind to what this run showed."]
     vocab = load(os.path.join(run, "vocab.json"), {}) or {}
+    lines.append("- A SAM distance settles a relation both ways only when SAM measured as many tips as both sides "
+                 "counted, which treats the agreed count as the true count; both sides can miss the same object (M11).")
+    if fm["sam_status"] == "ok" and vocab.get("track_point") != "tip":
+        lines.append("- The vocabulary does not declare `track_point: tip`, so SAM gave count evidence only: its point "
+                     "is the mask tip, which may not be the key point (U4).")
     count_only = sorted(set(vocab.get("classes", {})) - set(vocab.get("key_points", {})))
     if count_only:   # no zoom question and no SAM evidence for them (#23 verify round 3, T8)
         lines.append(f"- Classes without a key point ({', '.join(count_only)}) are compared by count only: a count "

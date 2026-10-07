@@ -255,7 +255,7 @@
   - [after: 9.3]
 - [x] 9.5 影格白名單的殘留：APP14 檢查 Adobe 簽章、JFIF 去掉縮圖、ANMF 只留影像子區塊、沒有 EOI 的 JPEG 拒收、裁切圖也清除 metadata（M5）。
   - [after: 9.4]
-- [ ] 9.6 結果檔：路徑過濾改為前綴替換（家目錄與暫存目錄），不再改壞 URL；Limitations 寫明雙方一致的數量被當成真值（M3、M11）。
+- [x] 9.6 結果檔：路徑過濾改為前綴替換（家目錄與暫存目錄），不再改壞 URL；Limitations 寫明雙方一致的數量被當成真值（M3、M11）。
   - [after: 9.5]
 - [ ] 9.7 文件：SKILL、design、vocab-format 的送出前錯誤列舉、拒絕順序與 exit 5、Step 5 的可否重送、`track_point`（M9、U4）。
   - 驗證：`bash tests/run.sh` 只剩 #24。
