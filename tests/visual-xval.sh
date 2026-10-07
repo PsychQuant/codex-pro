@@ -929,7 +929,7 @@ PY
 rm -rf "$WORK/runr3m"
 xval init --run "$WORK/runr3m" --vocab "$WORK/vocab.json" "$WORK/fill.jpg" "$WORK/appended.webp" "$WORK/c2pa.webp" "$WORK/c2pa.png"
 assert_eq "0" "$RUN_STATUS" "init accepts the fill-byte JPEG, the appended WebP and the C2PA images"
-for frame in f01.jpg f02.webp f03.webp f04.png; do
+for frame in f01.jpg f02.png f03.png f04.png; do
   assert_eq "0" "$(grep -c GPSSECRET "$WORK/runr3m/frames/$frame" 2>/dev/null || true)" "$frame carries none of the appended or extra data"
   assert_contains "$(sips -g pixelWidth "$WORK/runr3m/frames/$frame" 2>/dev/null)" "pixelWidth: " "$frame still decodes"
 done
@@ -962,14 +962,37 @@ PY
 rm -rf "$WORK/runr4m"
 xval init --run "$WORK/runr4m" --vocab "$WORK/vocab.json" "$WORK/app14.jpg" "$WORK/anim.webp"
 assert_eq "0" "$RUN_STATUS" "init accepts a JPEG with a foreign APP14 and a thumbnail, and an animated WebP"
-for frame in f01.jpg f02.webp; do
+for frame in f01.jpg f02.png; do
   assert_eq "0" "$(grep -c GPSSECRET "$WORK/runr4m/frames/$frame" 2>/dev/null || true)" "$frame carries none of the planted data (M5)"
 done
 assert_contains "$(sips -g pixelWidth "$WORK/runr4m/frames/f01.jpg" 2>/dev/null)" "pixelWidth: " "the JPEG without its thumbnail still decodes"
-assert_contains "$(sips -g pixelWidth "$WORK/runr4m/frames/f02.webp" 2>/dev/null)" "pixelWidth: 4" "the animated WebP without the unknown block still decodes"
+assert_contains "$(sips -g pixelWidth "$WORK/runr4m/frames/f02.png" 2>/dev/null)" "pixelWidth: 4" "the animated WebP becomes a 4-pixel PNG"
 rm -rf "$WORK/runr4e"
 xval init --run "$WORK/runr4e" --vocab "$WORK/vocab.json" "$WORK/no_eoi.jpg"
-assert_contains "$RUN_OUT" '"error": "target_invalid"' "a JPEG without an end-of-image marker is refused: its end cannot be found"
+assert_eq "0" "$(cat "$WORK"/runr4e/frames/* 2>/dev/null | grep -c 121.5654 || true)" \
+  "a JPEG without an end-of-image marker leaves nothing appended in its copy"
+# Round 4, background security review: the copies are decoded and encoded again before the allowlist,
+# so data hidden inside an allowed block (ICC profile, Adobe APP14) cannot ride along.
+python3 - "$WORK" <<'PY'
+import struct, sys
+w = sys.argv[1]
+d = open(f"{w}/plain.jpg", "rb").read()
+seg = lambda m, b: bytes([0xFF, m]) + struct.pack(">H", len(b) + 2) + b
+icc = seg(0xE2, b"ICC_PROFILE\x00\x01\x01" + b"GPSSECRET-ICC" * 4)
+adobe = seg(0xEE, b"Adobe" + b"\x00\x64\x00\x00\x00\x00\x01" + b"GPSSECRET-ADOBE")
+open(f"{w}/hidden.jpg", "wb").write(d[:2] + icc + adobe + d[2:])
+PY
+sips -z 200 3000 "$WORK/imgs/shot_2026-09-11_1001.png" --out "$WORK/wide.png" >/dev/null 2>&1
+rm -rf "$WORK/runr4h"
+xval init --run "$WORK/runr4h" --vocab "$WORK/vocab.json" "$WORK/hidden.jpg" "$WORK/wide.png"
+assert_eq "0" "$(grep -c GPSSECRET "$WORK/runr4h/frames/f01.jpg" 2>/dev/null || true)" \
+  "data hidden in an allowed ICC or Adobe block does not reach the copy (re-encoded)"
+assert_eq "2048" "$(json_get "$(cat "$WORK/runr4h/frames.json" 2>/dev/null)" 'd["f02.png"]["width"]')" \
+  "a copy is at most 2048 pixels on its longer side, what codex-call would send anyway"
+printf 'not an image after all' > "$WORK/broken.png"; printf '\x89PNG\r\n\x1a\n' | cat - "$WORK/broken.png" > "$WORK/broken2.png"
+rm -rf "$WORK/runr4b"
+xval init --run "$WORK/runr4b" --vocab "$WORK/vocab.json" "$WORK/broken2.png"
+assert_contains "$RUN_OUT" '"error": "target_invalid"' "a file that cannot be decoded is refused"
 
 # Every detail in the result file is free of local paths, not only SAM's (#23 verify round 3, L15).
 rm -rf "$WORK/runpath"
@@ -1598,7 +1621,8 @@ xval crops --run "$WORK/runbig"
 big_w=$(sips -g pixelWidth "$WORK/runbig/crops/z01.png" 2>/dev/null | awk '/pixelWidth/{print $2}')
 assert_eq "yes" "$([ -n "$big_w" ] && [ "$big_w" -le 2048 ] && echo yes || echo "no ($big_w)")" \
   "a crop is enlarged no further than a longer side of 2048 px (S15)"
-assert_contains "$(cat "$WORK/runbig/zoom_prompt.md" 2>/dev/null)" "z01.png (shown at 1.06x)" "the question file states the actual enlargement"
+big_scale=$(python3 -c 'import json,sys; print("%g" % json.load(open(sys.argv[1]))["d1"]["scale"])' "$WORK/runbig/zoom_plan.json" 2>/dev/null)
+assert_contains "$(cat "$WORK/runbig/zoom_prompt.md" 2>/dev/null)" "z01.png (shown at ${big_scale}x)" "the question file states the actual enlargement"
 
 new_run "$WORK/run6"
 ask_with "$WORK/codex_reply.md" "$WORK/run6" 1

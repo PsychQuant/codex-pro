@@ -267,7 +267,7 @@ Every run SHALL write `.codex-pro/visual-xval-<ISO8601-timestamp>.md`. Its front
 
 ### Requirement: Privacy reminder before sending images
 
-Before the first request in a run, the skill SHALL remind the user that the images will be sent to OpenAI and that content which must not leave the machine has to be masked first, and SHALL record the user's confirmation in the run directory; no request SHALL be sent without that record. The skill SHALL NOT decide on the user's behalf which content to mask. The copies made for a run SHALL keep only the segments or chunks the format needs to show the image, including its colour profile, so they carry no embedded metadata such as capture time, location, or content credentials, and SHALL end where the format says the image ends (the JPEG end-of-image marker after any fill bytes, the PNG `IEND` chunk, the length in the WebP RIFF header), so data appended after the image is dropped. They SHALL be turned upright from any EXIF orientation first, SHALL be read by their file header rather than their extension, and the run directory SHALL exclude itself from version control by a `.gitignore` written when the directory is created; an existing `.gitignore` SHALL NOT be overwritten, and a directory that already holds files other than the run's own SHALL NOT be used as a run directory.
+Before the first request in a run, the skill SHALL remind the user that the images will be sent to OpenAI and that content which must not leave the machine has to be masked first, and SHALL record the user's confirmation in the run directory; no request SHALL be sent without that record. The skill SHALL NOT decide on the user's behalf which content to mask. The copies made for a run SHALL be decoded and encoded again into new files, with colours converted to sRGB and the longer side at most 2048 pixels, so that no byte of the original image reaches either model, and a file that cannot be decoded SHALL be `target_invalid`. The new files SHALL then keep only the segments or chunks the format needs to show the image, so they carry no embedded metadata such as capture time, location, or content credentials, and SHALL end where the format says the image ends (the JPEG end-of-image marker after any fill bytes, the PNG `IEND` chunk, the length in the WebP RIFF header), so data appended after the image is dropped. They SHALL be turned upright from any EXIF orientation first, SHALL be read by their file header rather than their extension, and the run directory SHALL exclude itself from version control by a `.gitignore` written when the directory is created; an existing `.gitignore` SHALL NOT be overwritten, and a directory that already holds files other than the run's own SHALL NOT be used as a run directory.
 
 #### Scenario: Reminder precedes the first request
 
@@ -278,6 +278,11 @@ Before the first request in a run, the skill SHALL remind the user that the imag
 
 - **WHEN** a JPEG with an EXIF capture time is given
 - **THEN** the copy in the run directory has no EXIF capture time
+
+#### Scenario: Data hidden inside an allowed block does not reach the copy
+
+- **WHEN** a JPEG carries extra data inside its ICC profile segment and its Adobe segment
+- **THEN** the copy in the run directory contains none of that data
 
 #### Scenario: Data appended after the image is dropped
 
