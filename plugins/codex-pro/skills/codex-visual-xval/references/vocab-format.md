@@ -18,6 +18,7 @@
   "max_count": {"INST": 2},
   "key_points": {"INST": "夾口尖端"},
   "track_class": "INST",
+  "track_point": "tip",
   "sam_margin_pct": 1
 }
 ```
@@ -31,6 +32,7 @@
 | `position_threshold_pct` | 否 | 位置差超過多少（畫面寬度百分比）算分歧，預設 5 |
 | `max_count` | 否 | 類別 → 數量上限，也會寫進給兩個模型的 prompt。答案超過上限的一方在數量分歧裡被排除。單獨存在時只是排除法，不代表另一方的數量被確認；與放大輪或 SAM 看到的數量（下限）一起夾出答案時才裁決，例如 3 對 2、上限 2、放大輪兩邊都數到 2 → 判數 2 的一方 |
 | `track_class` | 否 | SAM 追蹤的類別，必須在 `key_points` 裡；預設為 `key_points` 的第一個。沒有任何關鍵點類別時 SAM 為 not_applicable |
+| `track_point` | 否 | 只接受 `"tip"`：宣告追蹤類別的關鍵點就是 SAM 量的遮罩尖端（離物件進入畫面處最遠的點），例如器械的夾口尖端。宣告了 SAM 才提供位置與關係證據；沒宣告時只提供數量證據，因為關鍵點若是圓心這類點，SAM 量的就是別的點 |
 | `sam_margin_pct` | 否 | SAM 量測值離門檻多近就不算證據，預設 1（實測 SAM 與標註的距離差最大 0.91%） |
 
 SAM 只追蹤 `track_class` 一個類別，所以 SAM 證據只用於這個類別的數量與位置分歧，以及 `between` 兩邊都是

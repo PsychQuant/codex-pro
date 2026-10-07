@@ -45,7 +45,8 @@ allowed-tools:
 6. `internal_error`：腳本內部的意外例外。照樣寫結果檔，detail 是例外類型與訊息
 7. `backend_error`：請求可能已經送出：後端回錯誤（例如 HTTP 500）、連線中斷，或 `codex-call` 沒說明原因（`HTTP 0`）。
    `codex-call` 在收到回應之前的失敗都只印 `HTTP 0`，看不出有沒有送出，所以一律當成已送出；這一輪已經用掉，不重送。
-   只有一份封閉列舉裡的送出前錯誤（圖片檢查、未知選項、讀不到 prompt 或 `auth.json`、refresh 鎖檔、refresh 被拒）才算沒送出
+   只有 `codex-call` 印出的第一行 `error:` 整行等於它自己送出前的訊息（圖片檢查、未知選項、讀不到 prompt、`auth.json` 格式不對、
+   refresh 鎖檔、refresh 沒拿到 token）時才算沒送出。token refresh 失敗印的 `HTTP <status>` 與請求本身的失敗相同，所以一律當成已送出
 
 ## Step 1: Parse arguments
 
@@ -94,8 +95,9 @@ python3 "$SKILL_DIR/scripts/xval.py" init --run "$RUN" --vocab <vocab.json> --fi
 `--first-side` 寫你自己的模型 ID（例如 `claude-opus-5-5`；在原生 Codex 版裡執行時就是 Codex 宿主模型的名稱）。
 結果檔會記錄它；第一方不是 Claude 時，兩方可能同屬一個模型家族，結果檔的 Limitations 會註明。
 
-`init` 寫進 run 目錄的是**處理過的複本**：依 EXIF 方向轉正，再去除 EXIF／XMP 等內嵌資料（拍攝時間、GPS），
-兩個模型看到的都是這份複本。run 目錄會寫入 `.gitignore`，影格複本不會被 `git add -A` 帶進版控。
+`init` 寫進 run 目錄的是**處理過的複本**：先由 sips 解碼後重新編碼成新檔（轉成 sRGB、長邊縮到 2048 以內；WebP 與 GIF
+寫成 PNG），再依 EXIF 方向轉正，最後去除 EXIF／XMP 等內嵌資料（拍攝時間、GPS）。原檔的位元組不會出現在複本裡，
+兩個模型看到的都是這份複本，像素也相同。解不開的檔案以 `target_invalid` 拒收。run 目錄會寫入 `.gitignore`，影格複本不會被 `git add -A` 帶進版控。
 
 Claude 依序用 Read 看 `$RUN/frames/f01.png`…，依詞彙表與 `references/claim-schema.md` 逐格作答，
 寫成 `$RUN/claude.json`（有 `--claude-answers` 就複製該檔）。**作答時不得看任何 Codex 的輸出。**
@@ -176,8 +178,15 @@ python3 "$SKILL_DIR/scripts/xval.py" ask --run "$RUN" --round 1
 
 ## Step 5: Handle exit code
 
-`xval.py` 任何一步以 exit 5 結束，代表 run 停止；stdout 與 `$RUN/error.json` 都有 `error` 與 `detail`。
-照下表回報，然後直接跳到 Step 9 寫結果檔：
+`xval.py` 任何一步以 exit 5 結束，代表這一步沒有完成；stdout 有 `error` 與 `detail`。兩種情況要分開：
+
+- **指令被拒**：這一步已經做過（同一輪再送、重封、重新 init、放大輪已不採用），或 `--run` 不是 run 目錄。
+  這不是 run 的錯誤，`$RUN/error.json` 不會改變，run 照原本的狀態繼續；只記在 `errors.jsonl`。
+- **run 停止**：`$RUN/error.json` 記下錯誤。照下表回報，然後直接跳到 Step 9 寫結果檔。
+
+「同一個 run 可以再送」只在確定沒送出時成立：送出前的輸入檢查（`target_invalid`）、`runtime_unsupported`、`runtime_unavailable`，
+以及 `auth.json` 格式不對的 `oauth_invalid`，修好之後在同一個 run 重跑同一步即可。其他失敗都可能已經送出，
+這一輪已經用掉，要重來就另開一個 run（新的 run 不再是盲答，結果檔的 Limitations 會寫明）：
 
 | 來源 | `error` 值 | 回報訊息 |
 |---|---|---|
@@ -205,6 +214,10 @@ python3 "$SKILL_DIR/scripts/xval.py" compare --run "$RUN"
 沒有分歧就跳到 Step 9。
 
 ## Step 7: SAM 證據
+
+
+SAM 量的是每個遮罩的**尖端**（離物件進入畫面處最遠的點）。詞彙表宣告 `track_point: tip`（追蹤類別的關鍵點就是尖端，
+例如器械的夾口尖端）時，SAM 才提供位置與關係證據；沒宣告時只提供數量證據。SAM 只看得到錨定的物件，不會推翻雙方。
 
 SAM 排在放大輪之前：放大輪的請求失敗時，依 Step 5 會直接跳到 Step 9，排在後面的 SAM 證據就會被一起放棄，
 而 SAM 本來就不依賴 Codex。
@@ -241,6 +254,8 @@ gives, to <RUN>/zoom_claude.json. Do not read any other file in <RUN>.
 ```
 
 `crops` 的輸出裡 `crops` 是空清單時（沒有任何放大題），跳過本步，直接到 Step 9。
+
+放大輪的關係題只用來證明「距離小於門檻」：兩邊都答 true 才算數；false 可能只是裁切區裡湊不出一對點，不當證據。
 
 subagent 結束後**立刻封存**，再把同一份題目檔送給 Codex。封存之前**不要讀** `zoom_claude.json`、**不要重跑**
 subagent、也不要替它修格式：你知道原答，看到不同的答案而重跑或修改，就是讓 Claude 這一側重抽到合意為止。

@@ -22,6 +22,8 @@ Issue: [#23](https://github.com/PsychQuant/codex-pro/issues/23)
 - 放大輪 Claude 一側由全新的 subagent 作答；它是否真的全新啟動、答案是否在被讀之前就封存，靠 skill 的流程，
   程式無法檢查。Codex 的放大輪請求不帶任何一方的答案。
 - 只比數量的類別（詞彙表沒有給關鍵點）沒有放大題、SAM 也不追蹤，它們的數量分歧無法裁決。
+- 放大輪的關係題只用來證明「距離小於門檻」；SAM 的位置與關係證據要詞彙表宣告 `track_point: tip` 才採用。
+- 影格複本由 sips 重新編碼（sRGB、長邊 ≤ 2048、JPEG 品質 95）後才清除 metadata，與原圖相比有一次有損壓縮。
 - `codex-call` 在收到回應之前的失敗都只印 `HTTP 0`，看不出有沒有送出，所以一律當成已送出；離線時這一輪會被鎖住，
   要另開一個 run（上游改進：PsychQuant/parallel-ai-agents#89）。
 - 兩個模型一致不代表正確；準度要靠人工標準答案。

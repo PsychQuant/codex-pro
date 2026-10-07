@@ -174,7 +174,7 @@ Claude 的逐格答案先寫到 run 目錄 `.codex-pro/visual-xval-run-<timestam
 
 第二輪的修法讓 `runtime_unavailable` 撤回請求紀錄，理由是「沒送出的請求不該記成送出」。但 `runtime_unavailable` 是分類的預設值，而 `codex-call` 在收到回應之前的任何失敗都只印 `HTTP 0: (no body)`：離線（確實沒送）與上傳完才斷線、逾時（已經送出）印的是同一行字。後端串流的 error 事件也沒有固定字樣。結果是圖片已經送出、紀錄卻被刪掉，同一輪可以再送一次（第三輪 T1）。這一輪的 verify，Codex 腿本身就是這樣失敗的。
 
-改成 fail-closed：只有一份封閉列舉裡的錯誤算「沒有送出」，其餘一律保留紀錄、記為 `backend_error`（或可辨認的 rate_limit、oauth_invalid、timeout）。列舉是 `codex-call` 在任何網路請求之前就會停下的那幾種：圖片檢查（`--image …`）、未知選項或不合法的 `--max-time`、讀不到或空白的 prompt、讀不到或缺欄位的 `auth.json`、token refresh 的鎖檔、refresh 沒拿到 token、refresh 被拒（`invalid_grant`）。不得依字面相似類推第九類。
+改成 fail-closed：只有一份封閉列舉裡的錯誤算「沒有送出」，其餘一律保留紀錄、記為 `backend_error`（或可辨認的 rate_limit、oauth_invalid、timeout）。列舉是 `codex-call` 在任何網路請求之前就會停下的那幾種：圖片檢查（`--image …`）、未知選項或不合法的 `--max-time`、讀不到或空白的 prompt、`auth.json` 不是物件或缺欄位、token refresh 的鎖檔、refresh 沒拿到 token。不得依字面相似類推其他類。第三輪原本還列了「refresh 被拒（`invalid_grant`）」，第四輪拿掉，見下方第四輪的段落。
 
 代價：離線時這一輪也會被鎖住，要另開一個 run。要精確分辨，得由 `codex-call` 印出原始錯誤碼與已送出的位元組數，這交給上游 PsychQuant/parallel-ai-agents#89（使用者選擇，2026-10-07）。
 

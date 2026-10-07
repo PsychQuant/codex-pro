@@ -62,6 +62,12 @@ checks = {
     "fail_closed": "HTTP 0" in body and "一律當成已送出" in body,
     "zoom_dropped": "放大輪未採用" in body,
     "count_only_unsettled": "只比數量" in body and "無法裁決" in body,
+    # round 4 (M9, U1, U4, background security review)
+    "closed_list_current": "refresh 被拒" not in body and "第一行" in body,
+    "track_point": "track_point: tip" in body,
+    "reencoded_copies": "重新編碼" in body,
+    "resend_rule": "同一個 run 可以再送" in body,
+    "refusal_exit": "已經做過" in body,
     "all_failures_anchor": "\n\n**所有 failure 仍寫 result file**" in body,
     "no_retry": "所有 failure 都不 retry" in body,
     "one_error_enum": len(re.findall(r"error: <[^>\n]+>", body)) == 1,
@@ -84,6 +90,10 @@ case "$(cat "$XVAL_DIR/references/vocab-format.md")" in
   *"其他分歧只能靠"*) fail "vocab-format no longer implies that the zoom round settles count-only classes (T8)" ;;
   *"無法裁決"*) pass "vocab-format no longer implies that the zoom round settles count-only classes (T8)" ;;
   *) fail "vocab-format no longer implies that the zoom round settles count-only classes (T8)" ;;
+esac
+case "$(cat "$XVAL_DIR/references/vocab-format.md")" in
+  *"track_point"*) pass "vocab-format documents track_point (U4)" ;;
+  *) fail "vocab-format documents track_point (U4)" ;;
 esac
 case "$(cat "$REPO_ROOT/README.md")" in
   *"Fail-fast 6 類"*) fail "the README does not count six failure classes (T9)" ;;

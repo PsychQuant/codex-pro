@@ -257,7 +257,7 @@
   - [after: 9.4]
 - [x] 9.6 結果檔：路徑過濾改為前綴替換（家目錄與暫存目錄），不再改壞 URL；Limitations 寫明雙方一致的數量被當成真值（M3、M11）。
   - [after: 9.5]
-- [ ] 9.7 文件：SKILL、design、vocab-format 的送出前錯誤列舉、拒絕順序與 exit 5、Step 5 的可否重送、`track_point`（M9、U4）。
+- [x] 9.7 文件：SKILL、design、vocab-format 的送出前錯誤列舉、拒絕順序與 exit 5、Step 5 的可否重送、`track_point`（M9、U4）。
   - 驗證：`bash tests/run.sh` 只剩 #24。
   - [after: 9.6]
 - [ ] 9.8 真實後端端到端（第四次）。
