@@ -288,29 +288,47 @@ def extract_json(text: str) -> Any:
     return None
 
 
-def classify(stderr: str, status: int) -> tuple[str, str]:
-    """codex-call reports a failure as one `error: <message>` line. Judge that line, and match
-    whole markers ("HTTP 429") rather than digits: an image path inside a run directory named
-    after its timestamp can contain "429" or "401" (#23 verify I1)."""
+# Failures codex-call reports before any network request: the only ones that leave a round unsent.
+# A closed list, matched on codex-call's own wording; no other failure may be inferred to be unsent
+# from its wording, because codex-call prints `HTTP 0: (no body)` for every failure before a response
+# arrives, an upload that finished before the connection dropped included (#23 verify round 3, T1).
+# A precise answer needs codex-call to report what it sent: PsychQuant/parallel-ai-agents#89.
+UNSENT = (
+    (r"^--image ", "target_invalid"),                       # the image checks
+    (r"^unknown option: ", "runtime_unavailable"),
+    (r"^--max-time must be a positive integer", "runtime_unavailable"),
+    (r"^cannot read prompt file: ", "runtime_unavailable"),
+    (r"^empty prompt$", "runtime_unavailable"),
+    (r"auth\.json", "oauth_invalid"),                       # reading the token store
+    (r"^(open lock failed|flock failed): ", "runtime_unavailable"),   # the token-refresh lock
+    (r"^(refresh response missing access_token|post-refresh: tokens missing)$", "oauth_invalid"),
+    (r"\binvalid_grant\b", "oauth_invalid"),                # the token endpoint refused the refresh
+)
+
+
+def classify(stderr: str, status: int) -> tuple[str, str, bool]:
+    """(error class, detail, sent). codex-call reports a failure as one `error: <message>` line.
+    Judge that line, and match whole markers ("HTTP 429") rather than digits: an image path inside a
+    run directory named after its timestamp can contain "429" or "401" (#23 verify I1)."""
     lines = re.findall(r"^error: (.*)$", stderr, re.MULTILINE)
     message = (lines[-1] if lines else stderr).strip()
     low = message.lower()
     detail = message[-500:]
-    if message.startswith("--image "):
-        return "target_invalid", detail          # checked before anything is sent
+    for pattern, error in UNSENT:
+        if re.search(pattern, message):
+            return error, detail, False
     if re.search(r"\bhttp 429\b", low) or "rate limit" in low or "usage limit" in low:
-        return "rate_limit", detail
-    if (re.search(r"\bhttp 40[13]\b", low) or "unauthorized" in low or "auth.json" in low
-            or "refresh_token" in low or "token refresh" in low):
-        return "oauth_invalid", detail
+        return "rate_limit", detail, True
+    if re.search(r"\bhttp 40[13]\b", low) or "unauthorized" in low or "refresh_token" in low or "token expired" in low:
+        return "oauth_invalid", detail, True
     if "timed out" in low or "timeout" in low:
-        return "timeout", detail
-    # The request was made and the backend or the connection failed. This used to fall into
-    # runtime_unavailable, which the skill describes as "nothing was sent" (#23 verify round 2, R5).
-    if re.search(r"\bhttp \d{3}\b", low) or any(w in low for w in ("network", "connection", "could not connect",
-                                                                   "hostname", "offline", "ssl", "stream")):
-        return "backend_error", detail
-    return "runtime_unavailable", f"codex-call exit {status}: {detail}"
+        return "timeout", detail, True
+    if re.match(r"http 0\b", low):
+        return "backend_error", (f"{detail} (no response arrived; codex-call does not say whether the request "
+                                 "was sent, so it is counted as sent)"), True
+    # The request may have been made and the backend or the connection failed. This is the default:
+    # a failure that is not known to come before sending is treated as sent (#23 verify round 3, T1).
+    return "backend_error", (detail if re.search(r"\bhttp \d{3}\b", low) else f"codex-call exit {status}: {detail}"), True
 
 
 def profile(run: str) -> dict:
@@ -322,6 +340,12 @@ def profile(run: str) -> dict:
     if not ok:
         raise Stop("target_invalid", "no resolved profile in the run directory (Step 4.1 writes profile.json); nothing was sent")
     return data
+
+
+def withdraw_request(run: str, rnd: str) -> None:
+    records = load(os.path.join(run, "requests.json"), {})
+    records.pop(rnd, None)
+    dump(os.path.join(run, "requests.json"), records)
 
 
 def call_codex(run: str, prompt: str, images: list[str], tag: str, argv: list[str]) -> str:
@@ -338,14 +362,15 @@ def call_codex(run: str, prompt: str, images: list[str], tag: str, argv: list[st
            "--instructions", INSTRUCTIONS, "--prompt-file", prompt_file]
     for image in images:
         cmd += ["--image", image]
-    done = subprocess.run(cmd, capture_output=True, text=True)   # foreground; the hard timeout is codex-call's
+    try:
+        done = subprocess.run(cmd, capture_output=True, text=True)   # foreground; the hard timeout is codex-call's
+    except OSError as exc:   # the runtime never started, so nothing was sent
+        withdraw_request(run, rnd)
+        raise Stop("runtime_unavailable", f"cannot run codex-call: {exc}")
     if done.returncode != 0:
-        error, detail = classify(done.stderr, done.returncode)
-        if error in ("target_invalid", "runtime_unavailable"):
-            # codex-call stopped before sending anything: the round is not used up (#23 verify round 2, S13)
-            records = load(os.path.join(run, "requests.json"), {})
-            records.pop(rnd, None)
-            dump(os.path.join(run, "requests.json"), records)
+        error, detail, sent = classify(done.stderr, done.returncode)
+        if not sent:   # codex-call stopped before any network request: the round is not used up (S13)
+            withdraw_request(run, rnd)
         raise Stop(error, detail)
     try:
         reply = open(output, encoding="utf-8").read()

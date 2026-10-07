@@ -205,12 +205,12 @@
   - design.md 補上第三輪的決定與理由，更正 Implementation Contract 與「放大 2 倍」。
   - native-plugin delta spec 不再把原生發行寫成 0.9.0 的功能。
   - 驗證：`spectra validate` 與 `spectra analyze` 無 warning。
-- [ ] 8.2 送出判定 fail-closed（T1、L11）。
+- [x] 8.2 送出判定 fail-closed（T1、L11）。
   - 只有封閉列舉裡的錯誤撤回請求紀錄；`HTTP 0`、串流 error 事件與無法辨認的錯誤保留紀錄、記為 `backend_error`。
   - token refresh 被拒（`invalid_grant`）與 auth.json 錯誤記為 `oauth_invalid` 並撤回紀錄。
   - 驗證：`HTTP 0: (no body)`、`Codex error`、伺服器過載都保留紀錄、第二次請求被拒；`invalid_grant`、讀不到 prompt 撤回紀錄。
   - [after: 8.1]
-- [ ] 8.3 影格複本只留顯示需要的區塊（T2、L14）。
+- [x] 8.3 影格複本只留顯示需要的區塊（T2、L14）。
   - JPEG 略過 marker 前的填充位元組；WebP 只讀到 RIFF 長度為止；PNG 與 WebP 改用白名單。
   - 驗證：EOI 前有填充位元組的 JPEG、後面接第二張圖的 WebP、帶 `caBX` 的 PNG 與帶 `C2PA` 的 WebP，複本都不含附加或額外的資料，且仍能解碼。
   - [after: 8.1]

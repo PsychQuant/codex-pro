@@ -778,6 +778,35 @@ assert_contains "$r7" "png_size=120x200" "a PNG's EXIF orientation is applied be
 assert_contains "$r7" "png_exif=False" "the PNG copy carries no eXIf chunk"
 assert_contains "$r7" "third=f03.jpg" "the format comes from the file header, not the extension"
 
+# Round 3: each format ends where it says it ends, and only the blocks needed to show the image are
+# kept (T2, L14): a fill byte before the JPEG end-of-image marker, data after the WebP RIFF length,
+# and C2PA content credentials (PNG caBX, WebP C2PA), which can hold EXIF and GPS.
+python3 - "$WORK" <<'PY'
+import base64, struct, sys, zlib
+w = sys.argv[1]
+data = open(f"{w}/plain.jpg", "rb").read()
+assert data.endswith(b"\xff\xd9")
+trailer = b"\xff\xd8\xff\xe1\x00\x14Exif\x00\x00GPSSECRET-2\xff\xd9" + b"ftypmp42 GPSSECRET-motion"
+open(f"{w}/fill.jpg", "wb").write(data[:-2] + b"\xff\xff\xd9" + trailer)
+tiny = base64.b64decode("UklGRh4AAABXRUJQVlA4TBEAAAAvA8AAAAdQjyLXo/+BiOh/AAA=")   # 4x4 lossless WebP
+vp8l = tiny[12:]
+chunk = lambda tag, body: tag + struct.pack("<I", len(body)) + body + (b"\x00" if len(body) % 2 else b"")
+riff = lambda body: b"RIFF" + struct.pack("<I", 4 + len(body)) + b"WEBP" + body
+vp8x = lambda flags: chunk(b"VP8X", bytes([flags, 0, 0, 0]) + (3).to_bytes(3, "little") * 2)
+open(f"{w}/appended.webp", "wb").write(tiny + riff(vp8x(0x08) + vp8l + chunk(b"EXIF", b"MM\x00*GPSSECRET-W2")))
+open(f"{w}/c2pa.webp", "wb").write(riff(vp8x(0) + vp8l + chunk(b"C2PA", b"GPSSECRET-C2PA-W")))
+png = open(f"{w}/imgs/shot_2026-09-11_1001.png", "rb").read()
+cabx = struct.pack(">I", 16) + b"caBX" + b"GPSSECRET-C2PA-P" + struct.pack(">I", zlib.crc32(b"caBX" + b"GPSSECRET-C2PA-P") & 0xffffffff)
+open(f"{w}/c2pa.png", "wb").write(png[:33] + cabx + png[33:])
+PY
+rm -rf "$WORK/runr3m"
+xval init --run "$WORK/runr3m" --vocab "$WORK/vocab.json" "$WORK/fill.jpg" "$WORK/appended.webp" "$WORK/c2pa.webp" "$WORK/c2pa.png"
+assert_eq "0" "$RUN_STATUS" "init accepts the fill-byte JPEG, the appended WebP and the C2PA images"
+for frame in f01.jpg f02.webp f03.webp f04.png; do
+  assert_eq "0" "$(grep -c GPSSECRET "$WORK/runr3m/frames/$frame" 2>/dev/null || true)" "$frame carries none of the appended or extra data"
+  assert_contains "$(sips -g pixelWidth "$WORK/runr3m/frames/$frame" 2>/dev/null)" "pixelWidth: " "$frame still decodes"
+done
+
 rm -rf "$WORK/run13"; cp "$WORK/imgs/shot_2026-09-11_1001.png" "$WORK/thirteenth.png"
 xval init --run "$WORK/run13" --vocab "$WORK/vocab.json" "$WORK"/imgs/*.png "$WORK/thirteenth.png"
 assert_contains "$RUN_OUT" '"error": "target_invalid"' "a run with 13 images is refused"
@@ -967,6 +996,32 @@ assert_eq "" "$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).
 RUN_OUT=$(HOME="$WORK/home" MOCK_REPLY="$WORK/codex_reply.md" MOCK_LOG="$WORK/mock.log" MOCK_PROMPTS="$WORK/prompts.txt" \
   PATH="$WORK/stubbin:$PATH" python3 "$SCRIPTS/xval.py" ask --run "$WORK/run4s" --round 1 2>&1)
 assert_contains "$RUN_OUT" '"ok": true' "after fixing the image the round can be sent"
+
+# Only a closed list of failures counts as unsent. codex-call prints `HTTP 0: (no body)` for every
+# failure before a response, sent or not, so anything off the list keeps the record and the
+# round stays used (#23 verify round 3, T1, L11).
+for case_ in "error: HTTP 0: (no body)|backend_error|kept" \
+             "error: Codex error|backend_error|kept" \
+             "error: Our servers are currently overloaded. Please try again later.|backend_error|kept" \
+             'error: HTTP 400: {"error":"invalid_grant","error_description":"expired"}|oauth_invalid|withdrawn' \
+             "error: auth.json missing tokens.access_token/refresh_token|oauth_invalid|withdrawn" \
+             "error: cannot read prompt file: gone|runtime_unavailable|withdrawn" \
+             "error: open lock failed: /Users/russell/.codex/.token-refresh.lock: Permission denied|runtime_unavailable|withdrawn"; do
+  message="${case_%%|*}"; rest="${case_#*|}"; class="${rest%%|*}"; state="${rest#*|}"
+  new_run "$WORK/run4t"
+  RUN_OUT=$(HOME="$WORK/home" MOCK_STDERR="$message" MOCK_STATUS=1 MOCK_LOG="$WORK/mock.log" MOCK_PROMPTS="$WORK/prompts.txt" \
+    PATH="$WORK/stubbin:$PATH" python3 "$SCRIPTS/xval.py" ask --run "$WORK/run4t" --round 1 2>&1)
+  assert_contains "$RUN_OUT" "\"error\": \"$class\"" "'$message' is classified as $class"
+  recorded=$(python3 -c 'import json,sys; print("kept" if json.load(open(sys.argv[1])).get("1") else "withdrawn")' "$WORK/run4t/requests.json" 2>/dev/null || echo withdrawn)
+  assert_eq "$state" "$recorded" "'$message': the round's request record is $state"
+  RUN_OUT=$(HOME="$WORK/home" MOCK_REPLY="$WORK/codex_reply.md" MOCK_LOG="$WORK/mock.log" MOCK_PROMPTS="$WORK/prompts.txt" \
+    PATH="$WORK/stubbin:$PATH" python3 "$SCRIPTS/xval.py" ask --run "$WORK/run4t" --round 1 2>&1)
+  if [ "$state" = kept ]; then
+    assert_eq "1" "$(wc -l < "$WORK/mock.log" | tr -d ' ')" "'$message': a second request in the round is not sent"
+  else
+    assert_contains "$RUN_OUT" '"ok": true' "'$message': nothing was sent, so the round can be sent"
+  fi
+done
 
 # A refused repeat does not replace the run's error (#23 verify round 2, R6).
 new_run "$WORK/run4r"
