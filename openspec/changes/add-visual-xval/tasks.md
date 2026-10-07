@@ -240,3 +240,26 @@
   - 合成圖涵蓋 max_count 與放大輪夾出答案的情境。
   - 驗證：紀錄寫進 e2e-checklist §F。
   - [after: 8.7]
+
+## 9. Verify 第四輪修正（#23 第四輪 report 的 U1–U6、M1–M11）
+
+- [x] 9.1 規格與 design 依使用者第四輪決定更新（Blind Codex judgment 的封閉列舉錨定、Adjudication without majority vote 的放大輪單向與 SAM 不推翻、Built-in SAM evidence 的 track_point、Sealed Claude answers 的送出前核對、Privacy reminder before sending images 的 run 目錄）。
+  - 驗證：`spectra validate` 與 `spectra analyze` 無 warning。
+- [ ] 9.2 送出判定只看 codex-call 自己的第一行、整行比對；`invalid_grant` 當成已送出（U1）。
+  - 驗證：後端訊息含 `auth.json` 或 `invalid_grant` 時紀錄保留；多行內容偽造的 `error:` 行不被採用。
+  - [after: 9.1]
+- [ ] 9.3 裁決：放大輪關係題只證明「近」；SAM 不推翻雙方；SAM 位置與關係證據需要 `track_point: tip`；SAM 關係的完整性數有尖端的物件；margin 嚴格大於；沒用上的 SAM 證據也列出；下限高於上限時點名被排除的一方；位置題的裁切邊距涵蓋門檻（U2、U3、U4、M2、M7、M8）。
+  - 驗證：spec 的新情境；第四輪 reviewer 的重現案例。
+  - [after: 9.1]
+- [ ] 9.4 紀錄與輸入保護：run 目錄不覆寫 `.gitignore`、不接管含其他檔案的目錄；第一輪送出前核對輸入與路徑；init 失敗也用掉這個 run；「已經做過」的檢查一律最先；放大計畫綁定比對結果、裁切圖與 SAM 輸出記錄雜湊；Python 3.9 的路徑寫錯誤歷史；profile 欄位錯誤具名（U5、U6、M1、M4、M6、M10）。
+  - [after: 9.3]
+- [ ] 9.5 影格白名單的殘留：APP14 檢查 Adobe 簽章、JFIF 去掉縮圖、ANMF 只留影像子區塊、沒有 EOI 的 JPEG 拒收、裁切圖也清除 metadata（M5）。
+  - [after: 9.4]
+- [ ] 9.6 結果檔：路徑過濾改為前綴替換（家目錄與暫存目錄），不再改壞 URL；Limitations 寫明雙方一致的數量被當成真值（M3、M11）。
+  - [after: 9.5]
+- [ ] 9.7 文件：SKILL、design、vocab-format 的送出前錯誤列舉、拒絕順序與 exit 5、Step 5 的可否重送、`track_point`（M9、U4）。
+  - 驗證：`bash tests/run.sh` 只剩 #24。
+  - [after: 9.6]
+- [ ] 9.8 真實後端端到端（第四次）。
+  - 驗證：紀錄寫進 e2e-checklist §F。
+  - [after: 9.7]
