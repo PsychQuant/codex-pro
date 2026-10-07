@@ -22,10 +22,14 @@ absent:
             object, and refutes both when that object is clearly away from both points, or when
             the zoom round finds no object near either point (T3)
   relation  a smallest distance measured on some of the objects is an upper bound on the frame's
-            smallest distance, so it proves `distance_pct < N` but not its opposite, unless the
-            evidence saw every object the two sides agree the frame holds (T4)
-Evidence that refutes both answers leaves the disagreement unverifiable whatever else is found;
-evidence that points to different sides does too.
+            smallest distance, so it proves `distance_pct < N` but not its opposite (T4). A zoom
+            answer is used only to show `<` true: a `false` can come from a crop in which no pair
+            was seen (round 4, U2). A SAM distance settles both ways only when SAM measured the tip
+            of every object the two sides agree the frame holds.
+SAM measures the tip of each mask, so its position and relation evidence is used only when the
+vocabulary declares `track_point: tip` (round 4, U4); it follows only the objects it was anchored
+on, so it never refutes both answers (U3). Evidence that refutes both answers leaves the
+disagreement unverifiable whatever else is found; evidence that points to different sides does too.
 """
 import json
 import math
@@ -103,7 +107,9 @@ def settle_count(item: dict, evidence: list[dict]) -> tuple[str, str]:
     if not evidence:
         return "unverifiable", "no third evidence"
     if low is not None and high is not None and low > high:
-        return "unverifiable", f"conflicting evidence: at least {low} seen, at most {high} allowed"
+        excluded = [NAME[s] for s in ("claude", "codex") if item[s] < low or item[s] > high]
+        return "unverifiable", (f"conflicting evidence: at least {low} seen, at most {high} allowed"
+                                + (f"; excluded: {', '.join(excluded)}" if excluded else ""))
     excluded = [s for s in ("claude", "codex")
                 if (low is not None and item[s] < low) or (high is not None and item[s] > high)]
     names = ", ".join(NAME[s] for s in excluded)
@@ -157,6 +163,11 @@ def position_evidence(item: dict, points: list, limit: float, margin: float, sou
     """`exhaustive`: the evidence lists every object of the class in the region, as a zoom answer does."""
     settled = instance_verdict(points, item, limit, margin) if points else None
     where = "on the crop" if source == "zoom" else "by SAM"
+    if settled and settled[0] == "refuted_both" and not exhaustive:
+        # SAM sees only the objects it was anchored on: the object at the disputed points may simply
+        # not have been tracked (#23 verify round 4, U3)
+        return {"source": source, "detail": f"the nearest tracked object is at {[round(v, 2) for v in settled[1]]}, "
+                                            "away from both points, but SAM sees only anchored objects; not used"}
     if settled and settled[0] == "refuted_both":
         return {"source": source, "refutes_both": True,
                 "detail": f"that object is at {[round(v, 2) for v in settled[1]]} {where}, away from both points"}
@@ -204,24 +215,21 @@ def counts_agree(item: dict) -> bool:
 
 
 def zoom_relation(item: dict, answer: dict) -> dict | None:
+    """A zoom answer shows `distance_pct < N` (or `<=`) true, because that answer needs a pair of key
+    points that are close; any other answer can come from a crop in which no pair was seen, and the
+    answer does not say how many points the model saw (#23 verify round 4, U2)."""
     parsed = DEFINITION.match(item.get("definition", ""))
     value = answer.get("claude")
     if not parsed or not isinstance(value, bool):
         return None
     if value != answer.get("codex"):
         return unused_zoom(f"the two zoom answers differ ({value!r} and {answer.get('codex')!r})")
-    op = parsed.group(2)
-    if not counts_agree(item):
-        # Points the sides did not mark are outside the crop and may be closer: a crop shows
-        # `distance_pct < N` for the frame, but not that the objects are apart.
-        if not ((op in ("<", "<=") and value) or (op in (">", ">=") and not value)):
-            return unused_zoom(f"both models answered {value!r} on the crop, but the sides' counts differ, so objects "
-                               "outside the marked points could be closer and the crop cannot show the frame's answer")
-        detail = f"both models answered {value!r} on the crop; other objects could only be closer"
-    else:
-        detail = f"both models answered {value!r} on the crop, which holds every point both sides marked"
-    verdict = side_matching(value, item)
-    return verdict and {"source": "zoom", "verdict": verdict, "detail": detail}
+    if not (parsed.group(2) in ("<", "<=") and value):
+        return unused_zoom(f"both models answered {value!r} on the crop; only a pair seen close together shows "
+                           "anything for the frame, and this answer can come from a crop in which no pair was seen")
+    verdict = side_matching(True, item)
+    return verdict and {"source": "zoom", "verdict": verdict,
+                        "detail": "both models answered True on the crop: a pair of key points is that close"}
 
 
 def sam_relation(item: dict, frame: dict, tracked: str, margin: float) -> dict | None:
@@ -232,14 +240,21 @@ def sam_relation(item: dict, frame: dict, tracked: str, margin: float) -> dict |
             or item.get("between") != [tracked, tracked]):
         return None
     op, threshold = parsed.group(2), float(parsed.group(3))
-    # every object of the class that both sides agree on was tracked: the measurement is the frame's distance
-    complete = counts_agree(item) and item["counts"][tracked][0] == len(objects)
+    if abs(measured - threshold) <= margin:   # strictly farther than the margin, both ways (round 4, M2)
+        return {"source": "sam", "detail": f"distance_pct={measured} is within {margin} of the threshold {threshold}; not used"}
+    # The distance is measured between tips; an object at the edge of the view has none (round 4, U2).
+    tipped = [o for o in objects if o.get("tip_pct")]
+    complete = counts_agree(item) and item["counts"][tracked][0] == len(tipped)
     low = measured - margin if complete else 0.0
     verdict = side_matching(relation_value(op, threshold, low, measured + margin), item)
+    if not verdict:
+        return {"source": "sam", "detail": f"distance_pct={measured} between the tips of {len(tipped)} of "
+                                           f"{len(objects)} tracked objects; other objects could be closer, so it "
+                                           "settles neither answer; not used"}
     note = "" if complete else "; other objects could only be closer"
-    return verdict and {"source": "sam", "verdict": verdict,
-                        "detail": f"distance_pct={measured} between {len(objects)} tracked objects "
-                                  f"(threshold {threshold}, margin {margin}{note})"}
+    return {"source": "sam", "verdict": verdict,
+            "detail": f"distance_pct={measured} between the tips of {len(tipped)} tracked objects "
+                      f"(threshold {threshold}, margin {margin}{note})"}
 
 
 # ── adjudication ─────────────────────────────────────────────────────
@@ -253,6 +268,8 @@ def other_evidence(item: dict, zoom: dict, sam: dict | None, vocab: dict, margin
     elif answer and item["kind"] == "relation":
         evidence.append(zoom_relation(item, answer))
     frame, tracked = sam_frame(item, sam), (sam or {}).get("class")
+    if frame and vocab.get("track_point") != "tip":   # SAM's point is the mask tip (round 4, U4)
+        frame = None
     if frame and item["kind"] == "position" and item.get("class") == tracked:
         tips = [obj["tip_pct"] for obj in present(frame) if obj.get("tip_pct")]
         evidence.append(position_evidence(item, tips, limit, margin, "sam", exhaustive=False))

@@ -512,6 +512,8 @@ python3 - "$WORK" <<'PY'
 import json, sys
 w = sys.argv[1]
 vocab = json.load(open(f"{w}/vocab.json")); vocab["max_count"] = {"INST": 2}
+json.dump(vocab, open(f"{w}/vocab_notip.json", "w"))
+vocab["track_point"] = "tip"   # SAM's tip is the instrument's key point (#23 verify round 4, U4)
 json.dump(vocab, open(f"{w}/vocab_limits.json", "w"))
 rel = {"id": "d1", "frame": "f08.png", "kind": "relation", "relation": "tips_together", "between": ["INST", "INST"],
        "definition": "distance_pct < 5", "claude": True, "codex": False, "counts": {"INST": [2, 2]}}
@@ -573,7 +575,10 @@ run_py adjudicate.py "$WORK/vocab_limits.json" "$WORK/disputes.json"
 assert_eq "unverifiable" "$(verdict d1)" "without any third evidence the disagreement is unverifiable"
 
 run_py adjudicate.py "$WORK/vocab_limits.json" "$WORK/disputes.json" --zoom "$WORK/zoom_codex.json"
-assert_eq "resolved_codex" "$(verdict d1)" "matching zoom-round answers that agree with Codex resolve to Codex"
+assert_eq "unverifiable" "$(verdict d1)" "a zoom answer of 'not together' is not used: it can come from a crop with no pair seen (#23 verify round 4, U2)"
+run_py adjudicate.py "$WORK/vocab_notip.json" "$WORK/disputes.json" --sam "$WORK/track_35.json"
+assert_eq "unverifiable" "$(verdict d1)" "without track_point: tip, SAM gives no relation evidence (U4)"
+assert_eq "resolved_claude" "$(verdict d3)" "without track_point: tip, SAM still gives count evidence"
 printf '{"d3": {"claude": 0, "codex": 0}}\n' > "$WORK/zoom_both_wrong.json"
 run_py adjudicate.py "$WORK/vocab_limits.json" "$WORK/disputes.json" --zoom "$WORK/zoom_both_wrong.json" --sam "$WORK/track_35.json"
 assert_eq "resolved_claude" "$(verdict d3)" \
@@ -607,7 +612,7 @@ run_py adjudicate.py "$WORK/vocab_limits.json" "$WORK/disputes_pos.json" --zoom 
 assert_eq "unverifiable" "$(verdict d9)" "zoom points that still disagree are not evidence"
 
 run_py adjudicate.py "$WORK/vocab_limits.json" "$WORK/disputes.json" --zoom "$WORK/zoom_codex.json" --sam "$WORK/track_35.json"
-assert_eq "unverifiable" "$(verdict d1)" "zoom round and SAM pointing to different sides is unverifiable"
+assert_eq "resolved_claude" "$(verdict d1)" "an unused zoom 'false' does not conflict with SAM's 3.5% (U2)"
 
 run_py adjudicate.py "$WORK/vocab_limits.json" "$WORK/disputes.json" --sam "$WORK/track_35.json"
 assert_eq "resolved_claude" "$(verdict d3)" "SAM tracking two objects confirms the higher count (2 vs 1)"
@@ -690,13 +695,52 @@ run_py adjudicate.py "$WORK/vocab_limits.json" "$WORK/disputes_r3.json" --sam "$
 assert_eq "resolved_claude" "$(verdict d8)" "3.5% between two tracked tips shows together even when objects may be missing"
 run_py adjudicate.py "$WORK/vocab_limits.json" "$WORK/disputes_r3.json" --zoom "$WORK/zoom_r3_false.json"
 assert_eq "unverifiable" "$(verdict d8)" "a crop answering 'not together' cannot show it for the frame when the counts differ"
-assert_contains "$(json_get "$RUN_OUT" "[a['evidence'] for a in d['adjudications'] if a['id'] == 'd8'][0]")" "counts differ" \
+assert_contains "$(json_get "$RUN_OUT" "[a['evidence'] for a in d['adjudications'] if a['id'] == 'd8'][0]")" "not used" \
   "a zoom answer that cannot be used is still listed, with the reason (third end-to-end run)"
 assert_contains "$(json_get "$RUN_OUT" "[a['note'] for a in d['adjudications'] if a['id'] == 'd8'][0]")" "settles neither" \
   "the note does not say there was no evidence when the zoom round answered"
-assert_eq "resolved_codex" "$(verdict d12)" "with the counts agreed, every marked point is in the crop, so 'not together' holds"
+assert_eq "unverifiable" "$(verdict d12)" "nor when the counts agree: the model may not have seen every point (U2)"
 run_py adjudicate.py "$WORK/vocab_limits.json" "$WORK/disputes_r3.json" --zoom "$WORK/zoom_r3_true.json"
 assert_eq "resolved_claude" "$(verdict d8)" "a crop answering 'together' shows it for the frame"
+
+# Round 4: SAM cannot refute both (U3); a tipless object leaves SAM's distance incomplete (U2);
+# a measurement exactly one margin from the threshold is not evidence (M2); a conflict names the excluded (M7).
+python3 - "$WORK" <<'PY'
+import json, sys
+w = sys.argv[1]
+tip = lambda x, y: {"area": 900, "centroid_pct": [x, y], "tip_pct": [x, y], "entry_pct": [x, 99], "present": True}
+pos = {"id": "d13", "frame": "f04.png", "kind": "position", "class": "INST", "claude": [50, 50], "codex": [60, 50],
+       "claude_points": [[50, 50]], "codex_points": [[60, 50]], "distance_pct": 10.0, "threshold_pct": 5, "aspect": 1.0}
+rel = {"id": "d14", "frame": "f08.png", "kind": "relation", "relation": "tips_together", "between": ["INST", "INST"],
+       "definition": "distance_pct < 5", "claude": True, "codex": False, "counts": {"INST": [3, 3]}}
+edge = dict(rel, id="d15", counts={"INST": [2, 2]})
+json.dump({"disagreements": [pos, rel, edge]}, open(f"{w}/disputes_r4.json", "w"))
+tipless = {"area": 400, "centroid_pct": [1, 50], "tip_pct": None, "entry_pct": [0, 50], "present": True}
+json.dump({"sam_status": "ok", "class": "INST", "frames": {
+    "f04.png": {"invalid": False, "max_iou": 0.0, "distance_pct": None, "objects": {"1": tip(80, 50)}},
+    "f08.png": {"invalid": False, "max_iou": 0.0, "distance_pct": 30.0,
+                "objects": {"1": tip(10, 10), "2": tip(40, 10), "3": tipless}}}}, open(f"{w}/track_r4.json", "w"))
+json.dump({"sam_status": "ok", "class": "INST", "frames": {
+    "f08.png": {"invalid": False, "max_iou": 0.0, "distance_pct": 6.0, "objects": {"1": tip(10, 10), "2": tip(16, 10)}}}},
+    open(f"{w}/track_r4_edge.json", "w"))
+json.dump({"d13": {"claude": [[50.5, 50]], "codex": [[50.2, 50]]}}, open(f"{w}/zoom_r4.json", "w"))
+PY
+run_py adjudicate.py "$WORK/vocab_limits.json" "$WORK/disputes_r4.json" --zoom "$WORK/zoom_r4.json" --sam "$WORK/track_r4.json"
+assert_eq "resolved_claude" "$(verdict d13)" "SAM that tracked only another instrument cannot refute both and override the zoom round (U3)"
+assert_eq "unverifiable" "$(verdict d14)" "a SAM distance with one of three objects tipless cannot show the tips apart (U2)"
+run_py adjudicate.py "$WORK/vocab_limits.json" "$WORK/disputes_r4.json" --sam "$WORK/track_r4_edge.json"
+assert_eq "unverifiable" "$(verdict d15)" "a SAM distance exactly one margin from the threshold is not evidence (M2)"
+printf '{"d2": {"claude": 3, "codex": 3}}\n' > "$WORK/zoom_d2_three.json"
+run_py adjudicate.py "$WORK/vocab_limits.json" "$WORK/disputes.json" --zoom "$WORK/zoom_d2_three.json"
+assert_contains "$(json_get "$RUN_OUT" "[a['note'] for a in d['adjudications'] if a['id'] == 'd2'][0]")" "excluded" \
+  "a conflict between the bounds still names the excluded counts (M7)"
+python3 -B - "$SCRIPTS" <<'PY' > "$WORK/pad.txt"
+import sys
+sys.path.insert(0, sys.argv[1])
+from zoom_round import crop_box
+print(crop_box([(50, 50), (75, 50)], pad=21.0))
+PY
+assert_eq "[29.0, 29.0, 96.0, 71.0]" "$(cat "$WORK/pad.txt")" "a position crop can be padded to cover the threshold around each point (M8)"
 
 python3 - "$WORK" <<'PY'
 import json, sys
@@ -1311,8 +1355,8 @@ assert_contains "$RUN_OUT" '"sam_status": "not_installed"' "a missing SAM enviro
 
 xval adjudicate --run "$WORK/run5"
 assert_eq "0" "$RUN_STATUS" "adjudicate exits 0"
-assert_eq "resolved_codex" "$(json_get "$(cat "$WORK/run5/adjudication.json")" 'd["adjudications"][0]["verdict"]')" \
-  "both zoom answers say false, as Codex did -> resolved_codex"
+assert_eq "unverifiable" "$(json_get "$(cat "$WORK/run5/adjudication.json")" 'd["adjudications"][0]["verdict"]')" \
+  "both zoom answers say false, as Codex did, but 'not together' is not shown by a crop -> unverifiable (#23 verify round 4, U2)"
 ( mkdir -p "$WORK/project" && cd "$WORK/project" && python3 "$SCRIPTS/xval.py" result --run "$WORK/run5" --out "$WORK/run5_zoomlines.md" >/dev/null 2>&1 )
 assert_contains "$(cat "$WORK/run5_zoomlines.md" 2>/dev/null)" "Codex zoom round: requested at" "the result file lists the zoom round's request and reply digest"
 rm -rf "$WORK/run5e"; cp -R "$WORK/run5" "$WORK/run5e"
@@ -1505,7 +1549,8 @@ esac
 headings=$(grep '^## ' "$result_file" | tr '\n' '|')
 assert_eq "## Agreement|## Disagreements|## SAM evidence|## Seal|## Limitations|" "$headings" \
   "the body sections come in the required order"
-assert_contains "$(cat "$result_file")" "resolved_codex" "each disagreement carries its verdict"
+assert_contains "$(cat "$result_file")" "→ **unverifiable**" "each disagreement carries its verdict"
+assert_contains "$(cat "$result_file")" "not used" "a zoom answer that settles nothing is still listed in the result file"
 assert_contains "$(cat "$result_file")" "does not establish that either is correct" \
   "the limitations say agreement does not establish correctness"
 

@@ -54,10 +54,12 @@ def dispute_points(item: dict, claude: dict, codex: dict) -> list[tuple[float, f
 WHOLE_IMAGE_PCT = 95.0   # a crop this large on both axes is the whole picture again, not a closer look
 
 
-def crop_box(points: list[tuple[float, float]]) -> list[float]:
+def crop_box(points: list[tuple[float, float]], pad: float = 12.0) -> list[float]:
+    """`pad` around the points: a position crop pads by at least the threshold, so an answer that
+    finds no object near a disputed point covers the whole threshold around it (round 4, M8)."""
     if not points:
         return [0.0, 0.0, 100.0, 100.0]
-    pad, minimum = 12.0, 30.0
+    minimum = 30.0
     x0, x1 = min(p[0] for p in points) - pad, max(p[0] for p in points) + pad
     y0, y1 = min(p[1] for p in points) - pad, max(p[1] for p in points) + pad
     for lo, hi, axis in ((x0, x1, "x"), (y0, y1, "y")):

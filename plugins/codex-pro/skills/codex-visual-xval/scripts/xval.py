@@ -558,7 +558,8 @@ def crops(run: str) -> None:
     n = 0
     for item in comparison["disagreements"]:
         points = dispute_points(item, claude, codex)
-        box = crop_box(points)
+        pad = max(12.0, float(item.get("threshold_pct", 0)) + 1.0) if item["kind"] == "position" else 12.0
+        box = crop_box(points, pad)
         if not points:
             skipped.append({"id": item["id"], "frame": item["frame"], "reason": "no key point to frame"})
             continue

@@ -77,6 +77,9 @@ def vocab_problems(vocab: Any) -> list[str]:
         problems.append("max_count must map vocabulary classes to non-negative integers")
     if "track_class" in vocab and vocab["track_class"] not in key_points:
         problems.append("track_class must be a class that has a key point")
+    if "track_point" in vocab and vocab["track_point"] != "tip":
+        # SAM measures the mask tip; the only declaration it can honour (#23 verify round 4, U4)
+        problems.append('track_point, when given, must be "tip"')
     constraints = vocab.get("constraints", [])
     if not isinstance(constraints, list) or not all(isinstance(c, str) for c in constraints):
         problems.append("constraints must be a list of sentences")
