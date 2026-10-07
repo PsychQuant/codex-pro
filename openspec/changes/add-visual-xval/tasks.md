@@ -134,7 +134,7 @@
   - `--claude-answers` 檔可用原始檔名，init 後依對照表換成中性檔名再封存。
   - 驗證：帶 EXIF 的 JPEG 複本不含原拍攝時間；13 張圖被拒；以原始檔名作答的答案檔可以封存。
   - [after: 6.6]
-- [ ] 6.8 測試與文件（I8、I16、F 系列附帶）。
+- [x] 6.8 測試與文件（I8、I16）：Native Codex plugin manifest、Complete generated Codex bundles、Backward-compatible generator interfaces、Full bundle parity test、Codex installation e2e checklist 的 nine 改為 ten。
   - 測試層在缺 numpy 或非 macOS 時略過對應案例並印出原因，不算失敗。
   - 主規格的 nine skills 改為 ten；e2e-checklist 更新版本字串、producer 清單，加入 visual-xval 的端到端項目。
   - README 與 SKILL.md 寫明 Python 3.10 以上；重新產生原生 bundle。

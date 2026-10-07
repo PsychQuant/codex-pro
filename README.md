@@ -102,6 +102,7 @@ v0.2 起 codex-pro 把 skill 分四 category 讓使用者一眼看出「跑這�
 
 - Codex App 或支援 `codex plugin` 的 Codex CLI。
 - `$codex-review`、`$codex-adversarial-review`、`$codex-rescue`、`$codex-visual-xval` 四個 producer 目前只支援 macOS，並需要 Xcode Command Line Tools 提供的 `swift`。
+- `$codex-visual-xval` 另需 Python 3.10 以上的 `python3`（macOS 內建的 `/usr/bin/python3` 是 3.9，太舊時會以 `runtime_unavailable` 寫出結果檔）與 macOS 的 `sips`；SAM 2.1 追蹤是選用的，首次使用前徵得同意才安裝（約 1 GB）。
 - producer 使用 Codex CLI 的 ChatGPT OAuth：先跑 `codex login`，確認 `~/.codex/auth.json` 可讀。
 - `$codex-status`、`$codex-result`、`$codex-config`、`$codex-cancel` 是純本機 consumer；即使不是 macOS、沒有 Swift 或 producer runtime 不可用，仍可使用。
 - `$codex-batch` 是獨立的 fan-out 例外，使用 `codex exec --full-auto` subprocess，不使用套件內的 Swift runtime；本版不承諾其跨平台可攜性。

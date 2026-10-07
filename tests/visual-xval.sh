@@ -386,7 +386,9 @@ PY
   run_py sam_track.py tip-check "$WORK/tipcase_edge.json"
   assert_eq "None" "$(json_get "$RUN_OUT" 'd["tip_px"]')" "an object that only touches the edge of the view has no tip"
 else
-  fail "numpy is available for the SAM geometry tests"
+  # numpy is only needed for these geometry cases (the SAM environment brings its own);
+  # a machine without it skips them instead of failing the layer (#23 verify I8).
+  skip "SAM tip geometry cases" "numpy is not installed for $(command -v python3)"
 fi
 
 # ── sam_env.sh: consent before a ~1 GB download, pinned versions, no half-installed env ──
@@ -568,6 +570,11 @@ run_py adjudicate.py "$WORK/vocab_limits.json" "$WORK/disputes.json" --sam "$WOR
 # d1: 8.0% is beyond 5 ± 1, so "not together" -> Codex; d2: 3 > max 2 -> Codex; d3: unverifiable
 assert_eq "0 2 1" "$(json_get "$RUN_OUT" '"%d %d %d" % (d["counts"]["resolved_claude"], d["counts"]["resolved_codex"], d["counts"]["unverifiable"])')" \
   "the summary counts every verdict once"
+
+# The orchestrator cases make and crop images with sips, like the producer itself, which is
+# macOS-only. On other platforms they are skipped with the reason; the runtime layer already
+# fails there, so the suite as a whole does not pass silently (#23 verify I8).
+if [ "$(uname -s)" = "Darwin" ] && command -v sips >/dev/null 2>&1; then   # ── macOS-only section begins
 
 # ── xval.py: the orchestrator, behind a mock codex-call ──────────
 # The mock records every invocation. MOCK_HELP_IMAGE=0 drops --image from --help (an old
@@ -1194,5 +1201,9 @@ rm -f "$WORK/run9/runtime.txt" "$WORK/run9/runtime_error.txt"
 assert_eq "$(cd "$FIX/bin" && pwd -P)/codex-pro-call" "$(cat "$WORK/run9/runtime.txt" 2>/dev/null)" \
   "a healthy bundle records its own wrapper as the runtime"
 assert_eq "" "$(head -1 "$WORK/run9/runtime_error.txt" 2>/dev/null)" "a healthy bundle records no runtime error"
+
+else
+  skip "xval.py orchestrator, result file, input-handling and native-bundle cases" "they need macOS sips (found $(uname -s))"
+fi   # ── macOS-only section ends
 
 report_summary "visual-xval"

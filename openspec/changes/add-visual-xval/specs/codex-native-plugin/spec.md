@@ -85,3 +85,193 @@ The plugin SHALL remain installable on supported Codex surfaces, and its pure lo
 
 - **WHEN** a non-macOS user invokes review, adversarial-review, rescue, or visual-xval
 - **THEN** runtime preflight returns `error=unsupported_platform` before reading OAuth data or accessing the network
+
+### Requirement: Native Codex plugin manifest
+
+The repository SHALL provide `.codex-plugin/plugin.json` as a valid skills-only Codex plugin manifest. The manifest SHALL declare `name` as `codex-pro`, strict SemVer `version` as `0.8.0`, `skills` as `./skills/`, a non-empty description, `author.name`, and install-surface `interface` metadata containing display name, short description, long description, developer name, category, capabilities, website URL, and one to three starter prompts. The manifest MUST NOT declare apps, MCP servers, hooks, or asset paths without corresponding package files.
+
+#### Scenario: Plugin validator accepts the manifest
+
+- **WHEN** the repository root is validated with the current Codex plugin validator
+- **THEN** validation succeeds with no placeholder, schema, path, or missing-file errors
+
+#### Scenario: Skills path targets the native bundle
+
+- **WHEN** Codex resolves the manifest `skills` field relative to the repository root
+- **THEN** it resolves to the generated root `skills/` directory containing exactly the ten names in `scripts/codex-skills.manifest`
+
+
+<!-- @trace
+source: add-native-codex-plugin
+updated: 2026-08-10
+code:
+  - THIRD_PARTY_NOTICES.md
+  - tests/codex-plugin.sh
+  - scripts/generate-codex-skills.sh
+  - tests/rescue.sh
+  - plugins/codex-pro/runtime/codex-pro-call
+  - skills/codex-review/SKILL.md
+  - .codex/skills/codex-setup/SKILL.md
+  - .codex/skills/codex-adversarial-review/SKILL.md
+  - tests/adversarial-review.sh
+  - tests/review.sh
+  - tests/setup.sh
+  - tests/run-dispatcher.sh
+  - plugins/codex-pro/THIRD_PARTY_NOTICES.md
+  - tests/codex-runtime.sh
+  - AGENTS.md
+  - plugins/codex-pro/runtime/codex-call
+  - skills/codex-adversarial-review/SKILL.md
+  - tests/run.sh
+  - .codex/skills/codex-review/SKILL.md
+  - tests/codex-skills-parity.sh
+  - .codex/skills/codex-rescue/SKILL.md
+  - plugins/codex-pro/LICENSE
+  - scripts/codex-bundle-resources.manifest
+  - skills/codex-setup/SKILL.md
+  - skills/codex-rescue/SKILL.md
+-->
+
+---
+
+### Requirement: Complete generated Codex bundles
+
+`plugins/codex-pro/` SHALL remain the only hand-maintained source for Codex skill content and runtime resources. Running `scripts/generate-codex-skills.sh` without arguments SHALL update two complete bundle roots: `.codex/` and the repository root. Each bundle SHALL contain generated `skills/`, `references/`, `bin/`, and a sorted `.codex-bundle-files` ownership inventory. The ten skill directories, every manifest-listed skill-local resource, shared reference, wrapper, and runtime snapshot SHALL be byte-identical between both bundle roots, except generated SKILL.md content that is deterministically transformed from the Claude source and is itself identical across the two Codex bundles.
+
+Every resource-manifest source and publish entry MUST name a file below its allowed subtree. A `skills/` entry MUST use `skills/<expected-skill>/<child-file>`; `references/`, `runtime/`, and `bin/` entries MUST contain at least one child component. Before writing the ownership inventory or applying a staged bundle, the generator SHALL independently enumerate staged regular files and require that exact set to equal the expected inventory.
+
+Every expected source skill directory and its `SKILL.md` MUST be a regular in-bundle directory/file pair, not a symbolic link, and MUST resolve inside `plugins/codex-pro/`. Source containment SHALL be validated before creating or mutating any destination.
+
+#### Scenario: Fresh full-bundle regeneration matches committed outputs
+
+- **WHEN** the generator produces a bundle in a new temporary directory using `--bundle-root`
+- **THEN** recursive comparison against both committed bundles reports no missing, extra, stale, or different generated files
+
+#### Scenario: Batch template and shared references are present
+
+- **WHEN** generated skill-relative Markdown links are resolved from each SKILL.md
+- **THEN** `codex-batch/references/script-template.sh`, `references/defaults.json`, and `references/profile-contract.md` exist at their referenced locations in both bundles
+
+#### Scenario: Cleanup remains bounded to generated ownership
+
+- **WHEN** a former generated resource is removed from the explicit resource manifest and the generator runs again
+- **THEN** the stale path recorded in the prior ownership inventory is removed while unrelated files elsewhere in the bundle root remain unchanged
+
+#### Scenario: Owned skill directories contain no untracked residue
+
+- **WHEN** recursive parity enumerates every file below each expected generated skill directory
+- **THEN** an extra file not named by the current skill and resource manifests causes parity to fail, while files outside generator-owned expected skill directories remain governed by the bounded ownership inventory
+
+#### Scenario: Resource publish path cannot name a skill directory
+
+- **WHEN** a resource mapping publishes to `skills/<expected-skill>` without a child file path
+- **THEN** generation exits non-zero before writing an ownership inventory or applying any bundle content
+
+#### Scenario: Source skill symlink escape is rejected
+
+- **WHEN** an expected source `SKILL.md` is a symbolic link to content outside `plugins/codex-pro/`
+- **THEN** generation exits non-zero before writing any generated output
+
+
+<!-- @trace
+source: add-native-codex-plugin
+updated: 2026-08-10
+code:
+  - THIRD_PARTY_NOTICES.md
+  - tests/codex-plugin.sh
+  - scripts/generate-codex-skills.sh
+  - tests/rescue.sh
+  - plugins/codex-pro/runtime/codex-pro-call
+  - skills/codex-review/SKILL.md
+  - .codex/skills/codex-setup/SKILL.md
+  - .codex/skills/codex-adversarial-review/SKILL.md
+  - tests/adversarial-review.sh
+  - tests/review.sh
+  - tests/setup.sh
+  - tests/run-dispatcher.sh
+  - plugins/codex-pro/THIRD_PARTY_NOTICES.md
+  - tests/codex-runtime.sh
+  - AGENTS.md
+  - plugins/codex-pro/runtime/codex-call
+  - skills/codex-adversarial-review/SKILL.md
+  - tests/run.sh
+  - .codex/skills/codex-review/SKILL.md
+  - tests/codex-skills-parity.sh
+  - .codex/skills/codex-rescue/SKILL.md
+  - plugins/codex-pro/LICENSE
+  - scripts/codex-bundle-resources.manifest
+  - skills/codex-setup/SKILL.md
+  - skills/codex-rescue/SKILL.md
+-->
+
+---
+
+### Requirement: Backward-compatible generator interfaces
+
+The generator SHALL support `--bundle-root <path>` for one complete bundle and SHALL preserve `--output <skills-dir>` as a skill-only compatibility interface. The generator MUST reject an empty destination, `/`, the current user's home directory, and any destination that cannot be resolved safely before deleting or replacing generated content. Skill manifest entries MUST be unique safe single path components. The skill-only interface MUST reject an expected skill directory, its `SKILL.md`, or an existing parent chain that is a symbolic link or resolves outside the validated output root before any mutation. Orphan enumeration MUST preserve filename boundaries, validate every removal candidate as a direct child, and reject line-break-bearing directory names before deleting any orphan. Complete-bundle ownership validation MUST reject an expected `SKILL.md` symbolic link before reading its generated marker.
+
+In default mode, the generator SHALL stage and validate both committed bundle destinations, including prior inventories and existing generated skill ownership, before mutating either destination. This pre-apply validation requirement does not claim crash-safe atomicity across two bundle roots.
+
+#### Scenario: Legacy skill-only caller remains valid
+
+- **WHEN** an existing test invokes the generator with `--output <temporary-skills-directory>`
+- **THEN** the generator writes the ten transformed skill directories without changing either committed bundle
+
+#### Scenario: Dangerous bundle destination is rejected
+
+- **WHEN** `--bundle-root` receives `/`, the current user's home directory, or an empty value
+- **THEN** the generator exits non-zero before any cleanup and names the rejected destination class
+
+#### Scenario: Skill-only child symlink escape is rejected
+
+- **WHEN** `--output` targets a safe temporary directory whose expected skill child or `SKILL.md` is a symbolic link to a path outside that directory
+- **THEN** the generator exits non-zero before changing either the link target or any generated file
+
+#### Scenario: Orphan filename cannot escape cleanup framing
+
+- **WHEN** a direct-child orphan directory contains a newline that could be split into a caller-relative path
+- **THEN** the generator exits non-zero before deletion and preserves every path outside the validated output root
+
+#### Scenario: Complete-bundle ownership marker cannot be external
+
+- **WHEN** an expected generated skill's `SKILL.md` is a symbolic link to an external file containing the generated marker
+- **THEN** complete-bundle validation exits non-zero without trusting or modifying the external file
+
+#### Scenario: Default destinations are validated as a set
+
+- **WHEN** either committed bundle has an unsafe prior inventory, child symlink, or non-generated expected skill directory
+- **THEN** the generator exits non-zero without changing the other committed bundle
+
+
+<!-- @trace
+source: add-native-codex-plugin
+updated: 2026-08-10
+code:
+  - THIRD_PARTY_NOTICES.md
+  - tests/codex-plugin.sh
+  - scripts/generate-codex-skills.sh
+  - tests/rescue.sh
+  - plugins/codex-pro/runtime/codex-pro-call
+  - skills/codex-review/SKILL.md
+  - .codex/skills/codex-setup/SKILL.md
+  - .codex/skills/codex-adversarial-review/SKILL.md
+  - tests/adversarial-review.sh
+  - tests/review.sh
+  - tests/setup.sh
+  - tests/run-dispatcher.sh
+  - plugins/codex-pro/THIRD_PARTY_NOTICES.md
+  - tests/codex-runtime.sh
+  - AGENTS.md
+  - plugins/codex-pro/runtime/codex-call
+  - skills/codex-adversarial-review/SKILL.md
+  - tests/run.sh
+  - .codex/skills/codex-review/SKILL.md
+  - tests/codex-skills-parity.sh
+  - .codex/skills/codex-rescue/SKILL.md
+  - plugins/codex-pro/LICENSE
+  - scripts/codex-bundle-resources.manifest
+  - skills/codex-setup/SKILL.md
+  - skills/codex-rescue/SKILL.md
+-->
+
+---

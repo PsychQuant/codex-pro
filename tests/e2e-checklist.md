@@ -56,7 +56,7 @@ Vendored Swift runtime 以 `FileManager.homeDirectoryForCurrentUser` 取得
 - [ ] 跑 `codex plugin marketplace list --json`，確認列出 marketplace `codex-pro`；不能只
   依賴 `plugin list` 的 exit status。
 - [ ] 跑 `codex plugin list --marketplace codex-pro --available --json`，確認看到未安裝的
-  `codex-pro` 0.8.0。
+  `codex-pro` 0.9.0。
 - [ ] 安裝：`codex plugin add codex-pro@codex-pro --json`。再以 `codex plugin list
   --marketplace codex-pro --json` 確認 installed 與 enabled 狀態。
 
@@ -102,10 +102,10 @@ Vendored Swift runtime 以 `FileManager.homeDirectoryForCurrentUser` 取得
 - [ ] 在同一隔離 OS 帳號先以 CLI 執行 `codex plugin marketplace add
   PsychQuant/codex-pro --ref main --json`；完全結束並重啟 Codex App。
 - [ ] 開啟 Plugins Directory，選擇 `codex-pro` marketplace，確認 listing 顯示同名 plugin
-  0.8.0。不要把「加入 Git marketplace」寫成 App UI 內的操作。
+  0.9.0。不要把「加入 Git marketplace」寫成 App UI 內的操作。
 - [ ] 安裝並啟用 plugin，開新 task，人工確認十個 skill 可見；跑 `$codex-setup` 與一個純
   本機 consumer。App 仍需遵守 macOS＋Swift 與 OAuth 前提。
-- [ ] 走一次 update 或 reinstall UI，開新 task 確認仍載入 0.8.0。
+- [ ] 走一次 update 或 reinstall UI，開新 task 確認仍載入 0.9.0。
 - [ ] 從 App 解除安裝 plugin，必要時移除 marketplace；確認新 task 不再列出 skills，既有
   專案 result files 不被刪除。
 - [ ] 記錄官方 directory 狀態為「尚未提交／審核中的外部步驟」；不得把 self-hosted smoke
@@ -195,14 +195,35 @@ bash tests/e2e.sh --skill adversarial-review --scenario with-profile
 - [ ] `~/.codex-pro/sam-env/` 已由 `sam_env.sh install --yes` 建好（約 1 GB，首次下載模型 856 MB）
 - [ ] 準備一段**同一支影片、依時間排序**的 8–12 張影格（例如腹腔鏡訓練片每 5 秒一格），以及兩份
       claim JSON（可以兩份相同，再改一格的關係判斷製造一個分歧，讓錨點切成兩段）
-- [ ] `compare_claims.py compare` → `sam_track.py anchors --class INST` → 用 sam-env 的 python 跑
-      `sam_track.py track`，`sam_status` 為 `ok`
+- [ ] `compare_claims.py compare` → `sam_track.py anchors --class INST --order <影格順序.json>` → 用 sam-env 的
+      python（加 `-I`、`HF_HOME=~/.codex-pro/sam-env/hf`）跑 `sam_track.py track`，`sam_status` 為 `ok`
+- [ ] `track.json` 有 `class` 與 `revision`，每個物件有 `present` 與 `object_score`；畫面內的物件
+      `present` 為 true（模型只用本機檔案載入，沒有重新下載）
 - [ ] 把 `tip_pct` 畫回影格親眼看：尖端落在器械夾口，不是桿身入口、也不是沿縫線跑到另一支器械
 - [ ] 尖端與標註位置的誤差：2026-10-07 的基準是 23/24 個尖端 ≤ 1.2%（寬度百分比），1 個貼著視野
       邊緣的被正確回報為 null。明顯變差就先查 `THREAD_RADIUS_AT_960` 與 `view_region`
 
+紀錄：2026-10-07 第二輪（verify 修正後）在同一組 12 張影格重跑，revision `665f8e2` 以本機檔案載入，
+`class: INST`，12 格尖端距離與第一輪完全相同（最大位移 0），兩支器械的 object score 全部為正
+（5.87–17.65），無塌陷格。這次用的是既有環境加上全域 HF 快取，不是 `sam_env.sh` 新裝的環境。
+
 這一段踩過的坑（都已修，留著是為了重跑時知道要看什麼）：transformers 會清空傳入的 `obj_ids`
 list（每格都沒有物件）；黑色桿身被當成視野外（尖端跑到入口）；遮罩黏著縫線（尖端沿線跑走）。
+
+## F. Visual cross-validation：真實後端端到端（手動）
+
+`tests/visual-xval.sh` 的請求全部送給 stub。發布前用真實的 `codex-call` 跑一次完整流程，確認真實模型
+照 schema 回覆、中性檔名與送出順序一致、結果檔完整：
+
+- [ ] Claude 端 PATH 上的 `codex-call --help` 列出 `--image`（parallel-ai-agents 2.24.0 以上；
+      `claude plugin marketplace update` 後 `claude plugin update parallel-ai-agents@<marketplace>`）
+- [ ] 準備 3 張**合成圖**（不含任何真實影格），寫好詞彙表；照 SKILL.md 從 Step 1 跑到 Step 9，
+      至少製造一個分歧，讓放大輪實際送出
+- [ ] 第一輪：`requests.json` 有請求時間與回覆雜湊；`codex.json` 通過 schema（每個計數物件一個關鍵點）
+- [ ] 放大輪：Claude 端由 subagent 依 `zoom_prompt.md` 作答；送給 Codex 的 prompt 與該檔逐字相同
+- [ ] 結果檔：frontmatter 完整、`seal_broken: false`、封存早於請求；把結果檔路徑與重點記在下面
+
+紀錄：（task 6.9 執行後填寫）
 
 ## Post-test cleanup checklist
 
