@@ -91,16 +91,25 @@ def now_iso() -> str:
 
 
 def neutral_names(run: str) -> list[str]:
-    return sorted(load(os.path.join(run, "frames.json"), {}))
+    frames = load(os.path.join(run, "frames.json"), {})   # a record of another type lists nothing (round 7, Y3)
+    return sorted(k for k in frames if isinstance(k, str)) if isinstance(frames, dict) else []
 
 
 def safe_digest(path: str) -> str | None:
     """A file's digest, or None when it is missing: a missing file is a broken record, not a crash
     reported as the skill's own fault (#23 verify round 5, N2)."""
+    if not os.path.isfile(path):   # only a regular file is read: a FIFO or a device would stall (round 7, Y3)
+        return None
     try:
         return sealing.digest(path)
     except OSError:
         return None
+
+
+def inside(run: str, sub: str, name: Any) -> bool:
+    """Whether `name` is a plain file name that lies in the run's `sub` directory."""
+    return (isinstance(name, str) and name not in ("", ".", "..") and os.path.basename(name) == name
+            and os.path.dirname(os.path.realpath(os.path.join(run, sub, name))) == os.path.realpath(os.path.join(run, sub)))
 
 
 def inputs_digest(run: str) -> str:
@@ -113,8 +122,12 @@ def inputs_digest(run: str) -> str:
     frames = load(os.path.join(run, "frames.json"), {})
     names = sorted(frames) if isinstance(frames, dict) and all(isinstance(k, str) for k in frames) else []
     hires = [frames[n]["hires"] for n in names if isinstance(frames[n], dict) and isinstance(frames[n].get("hires"), str)]
-    for name in ["vocab.json", "frames.json"] + [os.path.join("frames", n) for n in names] + hires:
-        h.update(name.encode() + b"\0" + (safe_digest(os.path.join(run, name)) or "missing").encode() + b"\n")
+    entries = [(n, True) for n in ("vocab.json", "frames.json")]
+    entries += [(os.path.join("frames", n), inside(run, "frames", n)) for n in names]
+    entries += [(v, v == os.path.join("hires", os.path.basename(v)) and inside(run, "hires", os.path.basename(v))) for v in hires]
+    for name, ok in entries:   # a name pointing out of the run is not opened (round 7, Y3)
+        digest = (safe_digest(os.path.join(run, name)) or "missing") if ok else "outside"
+        h.update(name.encode() + b"\0" + digest.encode() + b"\n")
     meta = load(os.path.join(run, "meta.json"))
     settings = {k: v for k, v in meta.items() if k != "inputs_sha256"} if isinstance(meta, dict) else "missing"
     h.update(b"meta\0" + json.dumps(settings, sort_keys=True).encode() + b"\n")

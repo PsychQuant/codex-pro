@@ -38,10 +38,13 @@ def classify(stderr: str, status: int) -> tuple[str, str]:
 
 
 def token_store() -> str:
-    """The token store codex-call reads: in the account's own home directory, whatever HOME says
-    (FileManager.homeDirectoryForCurrentUser), so the check looks at the same file (#23 verify round 6,
-    Q4). XVAL_TEST_TOKEN_HOME is for the test suite only, which has no real login to look at."""
-    home = os.environ.get("XVAL_TEST_TOKEN_HOME") or pwd.getpwuid(os.getuid()).pw_dir
+    """The token store codex-call reads, so the check looks at the same file (#23 verify round 6, Q4).
+    codex-call asks Foundation for the home directory (FileManager.homeDirectoryForCurrentUser), which
+    ignores HOME but honours CFFIXED_USER_HOME when the process is not set-id; the same rule here
+    (round 7, Y7). The test suite sets CFFIXED_USER_HOME too; there is no hook of its own."""
+    fixed = os.environ.get("CFFIXED_USER_HOME")
+    set_id = os.getuid() != os.geteuid() or os.getgid() != os.getegid()
+    home = fixed if fixed and not set_id else pwd.getpwuid(os.getuid()).pw_dir
     return os.path.join(home, ".codex", "auth.json")
 
 

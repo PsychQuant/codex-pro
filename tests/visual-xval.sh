@@ -18,8 +18,9 @@ XVAL_DIR="$REPO_ROOT/plugins/codex-pro/skills/codex-visual-xval"
 SCRIPTS="$XVAL_DIR/scripts"
 WORK=$(mktemp -d)
 trap 'rm -rf "$WORK"' EXIT
-# The login check reads the account's own home, as codex-call does; the suite points it at its fake one.
-export XVAL_TEST_TOKEN_HOME="$WORK/home"
+# The login check finds the home directory the way codex-call (Foundation) does: CFFIXED_USER_HOME when
+# set, otherwise the account's own home. The suite points both at its fake one (round 7, Y7).
+export CFFIXED_USER_HOME="$WORK/home"
 
 # ── SKILL.md: the contract a reader (Claude or Codex) follows ────
 SKILL="$XVAL_DIR/SKILL.md"
@@ -873,6 +874,22 @@ for i, claim in enumerate(x["claims"], 1):
 open(f"{w}/codex_reply.md", "w").write("Here are my answers.\n```json\n" + json.dumps(x) + "\n```\n")
 PY
 
+fm() {   # fm <file> <key> — one frontmatter value
+  python3 - "$1" "$2" <<'PY'
+import re, sys
+text = open(sys.argv[1], encoding="utf-8").read()
+m = re.match(r"^---\n(.*?)\n---\n", text, re.DOTALL)
+for line in (m.group(1).splitlines() if m else []):
+    k, _, v = line.partition(":")
+    if k.strip() == sys.argv[2]:
+        print(v.strip())
+PY
+}
+ask_with() {   # ask_with <reply> <run> <round>
+  RUN_STATUS=0
+  RUN_OUT=$(HOME="$WORK/home" MOCK_REPLY="$1" MOCK_LOG="$WORK/mock.log" MOCK_PROMPTS="$WORK/prompts.txt" \
+    PATH="$WORK/stubbin:$PATH" python3 "$SCRIPTS/xval.py" ask --run "$2" --round "$3" --model m --effort e --max-time 30 2>&1) || RUN_STATUS=$?
+}
 xval() {   # xval <args...> — mock runtime, isolated HOME
   RUN_STATUS=0
   RUN_OUT=$(HOME="$WORK/home" MOCK_LOG="$WORK/mock.log" MOCK_PROMPTS="$WORK/prompts.txt" \
@@ -1219,6 +1236,57 @@ json.dump(x, open(f"{w}/codex_unhashable.json", "w"))
 PY
 y9a=$(python3 "$SCRIPTS/compare_claims.py" compare "$WORK/vocab.json" "$WORK/claude_marked.json" "$WORK/codex_unhashable.json" 2>&1)
 assert_contains "$y9a" "parse_failed" "a Codex claim of an odd type is parse_failed, not a traceback (Y9)"
+
+# Round 7 (Y3): the result file is written whatever the run directory holds, and a failed result step
+# keeps the run's error.
+rm -rf "$WORK/run7t"
+xval init --run "$WORK/run7t" --vocab "$WORK/vocab.json" "$WORK"/imgs/*.png
+cp "$WORK/claude_marked.json" "$WORK/run7t/claude.json"
+cp "$WORK/run7t/meta.json" "$WORK/meta_saved.json"; printf '[1]' > "$WORK/run7t/meta.json"
+xval seal --run "$WORK/run7t"
+assert_contains "$RUN_OUT" '"error": "target_invalid"' "meta.json of the wrong type is a changed input at sealing, not an internal error (Y3)"
+for bad in 'meta.json:[1]' 'frames.json:1' 'frames.json:[{"a": 1}, {"b": 2}]' 'error.json:[1]'; do
+  rm -rf "$WORK/run7r"; cp -R "$WORK/run7t" "$WORK/run7r"; cp "$WORK/meta_saved.json" "$WORK/run7r/meta.json"
+  printf '%s' "${bad#*:}" > "$WORK/run7r/${bad%%:*}"
+  rm -f "$WORK/run7r_result.md"
+  ( cd "$WORK/project" && python3 "$SCRIPTS/xval.py" result --run "$WORK/run7r" --out "$WORK/run7r_result.md" >/dev/null 2>&1 )
+  assert_file "$WORK/run7r_result.md" "a result file is written when ${bad%%:*} holds ${bad#*:} (Y3)"
+done
+rm -rf "$WORK/run7e"; cp -R "$WORK/run7t" "$WORK/run7e"
+printf '{"error": "rate_limit", "detail": "limit", "step": "ask --round 1"}' > "$WORK/run7e/error.json"
+( cd "$WORK/project" && python3 "$SCRIPTS/xval.py" result --run "$WORK/run7e" --out "$WORK/no-such-dir/x.md" >/dev/null 2>&1 )
+assert_contains "$(cat "$WORK/run7e/error.json")" "rate_limit" "a failed result step does not replace the run's error (Y3)"
+( cd "$WORK/project" && python3 "$SCRIPTS/xval.py" result --run "$WORK/run7e" --out "$WORK/run7e_result.md" >/dev/null 2>&1 )
+assert_eq "rate_limit" "$(fm "$WORK/run7e_result.md" error)" "and a later result writes the run's own error"
+mkdir -p "$WORK/notrun2"; printf '[1]' > "$WORK/notrun2/error.json"
+( cd "$WORK/project" && python3 "$SCRIPTS/xval.py" result --run "$WORK/notrun2" --out "$WORK/notrun2_result.md" >/dev/null 2>&1 ); q1s=$?
+assert_eq "0" "$q1s" "result on a directory that is not a run reads nothing from it, not even error.json (Y3)"
+# Y3: a frame name pointing out of the run is not read, so a FIFO there cannot stall a step.
+rm -rf "$WORK/run7f" "$WORK/fifo"; mkfifo "$WORK/fifo"
+xval init --run "$WORK/run7f" --vocab "$WORK/vocab.json" "$WORK"/imgs/*.png
+cp "$WORK/claude_marked.json" "$WORK/run7f/claude.json"
+python3 - "$WORK/run7f" <<'PY'
+import json, sys
+run = sys.argv[1]; f = json.load(open(f"{run}/frames.json")); f["../../fifo"] = f.pop("f01.png")
+json.dump(f, open(f"{run}/frames.json", "w"))
+PY
+y3f=$(python3 - "$SCRIPTS" "$WORK/run7f" <<'PY'
+import subprocess, sys
+try:
+    done = subprocess.run([sys.executable, f"{sys.argv[1]}/xval.py", "seal", "--run", sys.argv[2]], capture_output=True, text=True, timeout=30)
+    print(done.returncode, done.stdout.strip()[:120])
+except subprocess.TimeoutExpired:
+    print("hung")
+PY
+)
+rm -f "$WORK/fifo"
+assert_contains "$y3f" '5 {"error": "target_invalid"' "a frame name pointing at a FIFO outside the run neither stalls nor is read (Y3)"
+new_run "$WORK/run7p"
+printf '{"model": "gpt\\u0000x", "effort": "high", "max_time": 30, "profile_source": "default"}\n' > "$WORK/run7p/profile.json"
+ask_with "$WORK/codex_reply.md" "$WORK/run7p" 1
+assert_contains "$RUN_OUT" "profile.json has no valid model" "a model name with a control character is refused (Y6)"
+assert_eq "False" "$(python3 -c 'import json,sys; print("1" in json.load(open(sys.argv[1])))' "$WORK/run7p/requests.json" 2>/dev/null || echo False)" \
+  "and the round is not recorded as sent"
 rm -rf "$WORK/runw1a" "$WORK/Client Data"; mkdir -p "$WORK/Client Data/Wang Xiaoming"
 IMG1=$(ls "$WORK"/imgs/*.png | head -1)
 xval init --run "$WORK/runw1a" --vocab "$WORK/Client Data/Wang Xiaoming/vocab.json" "$IMG1"
@@ -1469,7 +1537,7 @@ RUN_OUT=$(HOME="$WORK/home" MOCK_STDERR="error: empty prompt" MOCK_STATUS=1 MOCK
 assert_eq "kept" "$(python3 -c 'import json,sys; print("kept" if json.load(open(sys.argv[1])).get("1") else "withdrawn")' "$WORK/run4s/requests.json" 2>/dev/null)" \
   "a failure that reads like a check before sending still keeps the record (V1)"
 new_run "$WORK/run4l"; mkdir -p "$WORK/nologin"
-RUN_OUT=$(HOME="$WORK/home" XVAL_TEST_TOKEN_HOME="$WORK/nologin" MOCK_REPLY="$WORK/codex_reply.md" MOCK_LOG="$WORK/mock.log" MOCK_PROMPTS="$WORK/prompts.txt" \
+RUN_OUT=$(HOME="$WORK/home" CFFIXED_USER_HOME="$WORK/nologin" MOCK_REPLY="$WORK/codex_reply.md" MOCK_LOG="$WORK/mock.log" MOCK_PROMPTS="$WORK/prompts.txt" \
   PATH="$WORK/stubbin:$PATH" python3 "$SCRIPTS/xval.py" ask --run "$WORK/run4l" --round 1 2>&1)
 assert_contains "$RUN_OUT" '"error": "oauth_invalid"' "not being logged in to Codex is caught before sending (V2)"
 assert_no_file "$WORK/mock.log" "codex-call is not run without a Codex login"
@@ -1605,11 +1673,6 @@ fi
 cat > "$WORK/zoom_reply.md" <<'JSON'
 {"answers": {"z01.png": {"value": false}}}
 JSON
-ask_with() {   # ask_with <reply> <run> <round>
-  RUN_STATUS=0
-  RUN_OUT=$(HOME="$WORK/home" MOCK_REPLY="$1" MOCK_LOG="$WORK/mock.log" MOCK_PROMPTS="$WORK/prompts.txt" \
-    PATH="$WORK/stubbin:$PATH" python3 "$SCRIPTS/xval.py" ask --run "$2" --round "$3" --model m --effort e --max-time 30 2>&1) || RUN_STATUS=$?
-}
 new_run "$WORK/run5"
 ask_with "$WORK/codex_reply.md" "$WORK/run5" 1
 xval compare --run "$WORK/run5"
@@ -1847,6 +1910,22 @@ edit_json "$WORK/run6r/claude.json" 'd["claims"][0]["objects"] = {"INST": 9}'
 ( cd "$WORK/project" && python3 "$SCRIPTS/xval.py" result --run "$WORK/run6r" --out "$WORK/run6r_result.md" >/dev/null 2>&1 )
 assert_contains "$(cat "$WORK/run6r_result.md" 2>/dev/null)" "changed after the comparison" \
   "the result file reports an answer file changed after the comparison (W2)"
+assert_eq "target_invalid" "$(fm "$WORK/run6r_result.md" error)" "and says so in the frontmatter, where codex-status reads (Y4)"
+for target in comparison adjudication; do
+  rm -rf "$WORK/run7$target"; cp -R "$WORK/run6w" "$WORK/run7$target"
+  xval adjudicate --run "$WORK/run7$target"
+  case $target in
+    comparison) edit_json "$WORK/run7comparison/comparison.json" 'd["agreement_rate"] = 0.5' ;;
+    adjudication) edit_json "$WORK/run7adjudication/adjudication.json" 'd["counts"]["resolved_claude"] = 9' ;;
+  esac
+  ( cd "$WORK/project" && python3 "$SCRIPTS/xval.py" result --run "$WORK/run7$target" --out "$WORK/run7${target}_result.md" >/dev/null 2>&1 )
+  assert_eq "target_invalid" "$(fm "$WORK/run7${target}_result.md" error)" "an edited $target.json is reported in the frontmatter (Y4)"
+  assert_contains "$(cat "$WORK/run7${target}_result.md")" "$target.json changed after" "and named in the body"
+done
+rm -rf "$WORK/run7s"; cp -R "$WORK/run6w" "$WORK/run7s"; xval adjudicate --run "$WORK/run7s"
+edit_json "$WORK/run7s/seal.json" 'd.pop("inputs_sha256")'
+( cd "$WORK/project" && python3 "$SCRIPTS/xval.py" result --run "$WORK/run7s" --out "$WORK/run7s_result.md" >/dev/null 2>&1 )
+assert_eq "target_invalid" "$(fm "$WORK/run7s_result.md" error)" "a seal without the input digest counts as changed (Y4)"
 # N1: a run whose init record lacks the input digest is not sealed.
 rm -rf "$WORK/run6n"
 xval init --run "$WORK/run6n" --vocab "$WORK/vocab.json" "$WORK"/imgs/*.png
@@ -1898,12 +1977,18 @@ case "$q1r" in
 esac
 assert_no_file "$WORK/cwdq1/.codex-pro" "result with --out creates no .codex-pro in the working directory"
 # Q4: the login check reads the token store codex-call reads, in the account's own home.
-q4=$(env -u XVAL_TEST_TOKEN_HOME HOME="$WORK/elsewhere" python3 -B -c '
+q4=$(env -u CFFIXED_USER_HOME HOME="$WORK/elsewhere" XVAL_TEST_TOKEN_HOME="$WORK/elsewhere" python3 -B -c '
 import os, pwd, sys
 sys.path.insert(0, sys.argv[1])
 import codex_errors
 print(codex_errors.token_store() == os.path.join(pwd.getpwuid(os.getuid()).pw_dir, ".codex", "auth.json"))' "$SCRIPTS")
-assert_eq "True" "$q4" "the login check follows the account's home, not HOME, as codex-call does (Q4)"
+assert_eq "True" "$q4" "the login check follows the account's home, not HOME, and honours no test hook (Q4, Y7)"
+q4f=$(CFFIXED_USER_HOME="$WORK/fixed" python3 -B -c '
+import sys
+sys.path.insert(0, sys.argv[1])
+import codex_errors
+print(codex_errors.token_store())' "$SCRIPTS")
+assert_eq "$WORK/fixed/.codex/auth.json" "$q4f" "and CFFIXED_USER_HOME, which Foundation honours, as codex-call does (Y7)"
 # Q6: the prompt is written before the request is recorded.
 new_run "$WORK/run6p"; mkdir -p "$WORK/run6p/prompt_round1.md"
 ask_with "$WORK/codex_reply.md" "$WORK/run6p" 1
@@ -2265,17 +2350,6 @@ result_in() {   # result_in <run> — write the result file from inside $WORK/pr
   RUN_STATUS=0
   RUN_OUT=$(cd "$WORK/project" && python3 "$SCRIPTS/xval.py" result --run "$1" --model gpt-test --effort high \
     --profile-source default 2>&1) || RUN_STATUS=$?
-}
-fm() {   # fm <file> <key> — one frontmatter value
-  python3 - "$1" "$2" <<'PY'
-import re, sys
-text = open(sys.argv[1], encoding="utf-8").read()
-m = re.match(r"^---\n(.*?)\n---\n", text, re.DOTALL)
-for line in (m.group(1).splitlines() if m else []):
-    k, _, v = line.partition(":")
-    if k.strip() == sys.argv[2]:
-        print(v.strip())
-PY
 }
 result_in "$WORK/run5"
 assert_eq "0" "$RUN_STATUS" "result exits 0"

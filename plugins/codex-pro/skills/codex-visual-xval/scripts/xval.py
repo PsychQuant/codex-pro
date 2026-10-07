@@ -84,8 +84,13 @@ def _older_python(argv):
     if out is None:   # .codex-pro is created only for the default location (round 6, Q1)
         os.makedirs(".codex-pro", exist_ok=True)
         out = os.path.join(".codex-pro", "visual-xval-%s.md" % now.astimezone(datetime.timezone.utc).strftime("%Y%m%dT%H%M%SZ"))
-    with open(out, "w", encoding="utf-8") as fh:
-        fh.write("\n".join(lines) + "\n")
+    try:
+        with open(out, "w", encoding="utf-8") as fh:
+            fh.write("\n".join(lines) + "\n")
+    except OSError as exc:   # a structured answer, not a traceback (round 7, Y3)
+        print(json.dumps({"error": "target_invalid", "detail": "cannot write the result file %s: %s"
+                          % (os.path.basename(out), exc.strerror or type(exc).__name__)}))
+        sys.exit(5)
     print(json.dumps({"result": out, "error": "runtime_unavailable"}))
     sys.exit(0)
 
@@ -224,7 +229,8 @@ def seal_answers(run: str, zoom: bool) -> None:
             raise Stop(stop.error, f"{stop.detail}; the zoom round is not used and the run continues", record=False)
     elif not os.path.isfile(answers):
         raise Stop("target_invalid", f"Claude's answers are missing: {os.path.basename(answers)}")
-    if not zoom and (load(os.path.join(run, "meta.json"), {}) or {}).get("inputs_sha256") != inputs_digest(run):
+    meta = load(os.path.join(run, "meta.json"), {})
+    if not zoom and (meta.get("inputs_sha256") if isinstance(meta, dict) else None) != inputs_digest(run):
         # init always records it, so a missing digest is a changed record, not a pass (N1; round 6, W2)
         raise Stop("target_invalid", "the image copies, the vocabulary or the run's settings changed after init; "
                    "start a new run")
@@ -317,13 +323,14 @@ def profile(run: str) -> dict:
     """The profile Step 4.1 resolved for this run. Shell variables do not survive between the
     skill's Bash calls, and a missing value used to fall back to a default in silence (#23 verify B11)."""
     data = load(os.path.join(run, "profile.json"))
-    ok = (isinstance(data, dict) and all(isinstance(data.get(k), str) and data[k] for k in ("model", "effort"))
+    text = lambda v: isinstance(v, str) and bool(v) and not re.search(r"[\x00-\x1f\x7f]", v)   # round 7, Y6
+    ok = (isinstance(data, dict) and all(text(data.get(k)) for k in ("model", "effort"))
           and isinstance(data.get("max_time"), int) and not isinstance(data.get("max_time"), bool) and data["max_time"] > 0)
     if not ok:
         if isinstance(data, dict) and data.get("invalid"):   # Step 4.1 found a value it would not replace (L6)
             raise Stop("target_invalid", f"{data['invalid']}; nothing was sent")
         if isinstance(data, dict):   # name the field (round 4, M10)
-            bad = [k for k in ("model", "effort") if not (isinstance(data.get(k), str) and data[k])]
+            bad = [k for k in ("model", "effort") if not text(data.get(k))]
             t = data.get("max_time")   # a bool is not a time (round 5, N7)
             bad += [] if isinstance(t, int) and not isinstance(t, bool) and t > 0 else ["max_time"]
             raise Stop("target_invalid", f"profile.json has no valid {', '.join(bad)} (Step 4.1 writes it); nothing was sent")
@@ -356,9 +363,9 @@ def call_codex(run: str, prompt: str, images: list[str], tag: str, argv: list[st
         cmd += ["--image", image]
     try:
         done = subprocess.run(cmd, capture_output=True, text=True)   # foreground; the hard timeout is codex-call's
-    except OSError as exc:   # the runtime never started, so nothing was sent
+    except (OSError, ValueError, TypeError) as exc:   # it never started, so nothing was sent (round 7, Y6)
         withdraw_request(run, rnd)
-        raise Stop("runtime_unavailable", f"cannot run codex-call: {failure(exc)}")
+        raise Stop("runtime_unavailable", f"cannot run codex-call: {failure(exc)}; nothing was sent")
     if done.returncode != 0:   # counted as sent, whatever the message says (round 5, V1)
         error, detail = classify(done.stderr, done.returncode)
         raise Stop(error, f"{detail}; the request is counted as sent, so this round is used up")
@@ -511,7 +518,7 @@ def compare(run: str) -> None:
         check = {"seal_broken": True, "sha256_sealed": None, "sha256_now": None}
     dump(os.path.join(run, "seal_check.json"), check)
     sealed_inputs = load(os.path.join(run, "seal.json"), {}).get("inputs_sha256")
-    if sealed_inputs and sealed_inputs != inputs_digest(run):
+    if sealed_inputs != inputs_digest(run):   # a seal without the digest is not a pass (round 7, Y4)
         raise Stop("target_invalid", "the vocabulary or the image copies changed after Claude's answers were sealed")
     recorded = load(os.path.join(run, "requests.json"), {}).get("1", {}).get("answers_sha256")
     codex_path = os.path.join(run, "codex.json")
@@ -699,6 +706,7 @@ def adjudicate(run: str) -> None:
         # the run stopped before comparing: nothing to settle. Anything else is checked, so a missing
         # vocabulary after a comparison is a changed input, not "no comparison" (round 6, W2)
         dump(os.path.join(run, "adjudication.json"), {"counts": {}, "adjudications": [], "note": "no comparison"})
+        dump(os.path.join(run, "adjudication_record.json"), {"sha256": sealing.digest(os.path.join(run, "adjudication.json"))})
         print(json.dumps({"counts": {}, "note": "no comparison"}))
         return
     checked_inputs(run)   # V8
@@ -714,6 +722,8 @@ def adjudicate(run: str) -> None:
     result.update(zoom_status)
     result["sam_record_broken"] = sam_broken
     dump(os.path.join(run, "adjudication.json"), result)
+    # what the result file reports is checked against this (round 7, Y4)
+    dump(os.path.join(run, "adjudication_record.json"), {"sha256": sealing.digest(os.path.join(run, "adjudication.json"))})
     print(json.dumps({"counts": result["counts"]}))
 
 
@@ -758,10 +768,10 @@ def main(argv: list[str]) -> None:
         else:
             print(__doc__, file=sys.stderr)
             sys.exit(64)
-    except Stop as stop:
-        stop_run(run, step, stop.error, stop.detail, stop.record)
+    except Stop as stop:   # result's own failure goes to the history only: the run's error stays (round 7, Y3)
+        stop_run(run, step, stop.error, stop.detail, stop.record and command != "result")
     except Exception as exc:   # an unexpected failure still leaves a record and a result file
-        stop_run(run, step, "internal_error", f"{type(exc).__name__}: {failure(exc)}")
+        stop_run(run, step, "internal_error", f"{type(exc).__name__}: {failure(exc)}", command != "result")
     clear_error(run, step)
 
 
@@ -787,9 +797,12 @@ def stop_run(run: str, command: str, error: str, detail: str, record_error: bool
 
 
 def clear_error(run: str, command: str) -> None:
-    """A step that now completes clears the error it raised before; another step's error stays."""
+    """A step that now completes clears the error it raised before; another step's error stays. result
+    never raises one, and reads nothing in a directory that is not a run (round 7, Y3)."""
+    if command == "result" or not is_run_dir(run):
+        return
     current = load(os.path.join(run, "error.json"))
-    if current and current.get("step") == command and command != "result":
+    if isinstance(current, dict) and current.get("step") == command:
         os.remove(os.path.join(run, "error.json"))
 
 

@@ -13,15 +13,18 @@ from typing import Any
 
 import compare_claims
 import seal as sealing
-from run_files import answers_changed, inputs_digest, is_run_dir
+from run_files import answers_changed, failure, inputs_digest, is_run_dir, neutral_names, safe_digest
 
 
 def load(path: str, default: Any = None) -> Any:
+    """A record, or `default` when it is missing, unreadable or of another type than `default`: the
+    result file is written whatever the run directory holds (#23 verify round 7, Y3)."""
     try:
         with open(path, encoding="utf-8") as fh:
-            return json.load(fh)
-    except (OSError, ValueError):
+            value = json.load(fh)
+    except (OSError, ValueError, RecursionError):
         return default
+    return default if default is not None and not isinstance(value, type(default)) else value
 
 
 def option(argv: list[str], name: str) -> str | None:
@@ -32,7 +35,7 @@ def request_lines(run: str, rnd: str, label: str, reply_name: str, seal_record: 
     """One round's request record, re-checked now: both the raw reply and the parsed answers are
     compared with the digests recorded when Codex answered (#23 verify round 2, S1, S9)."""
     record = load(os.path.join(run, "requests.json"), {}).get(rnd)
-    if not record:
+    if not record or not isinstance(record, dict):
         return []
     line = f"Codex {label}: requested at {record.get('requested_at')}; reply SHA-256 `{record.get('reply_sha256') or 'none'}`"
     reply = os.path.join(run, reply_name)
@@ -46,10 +49,6 @@ def request_lines(run: str, rnd: str, label: str, reply_name: str, seal_record: 
     else:
         line += " **The seal does not predate the request.**"
     return ["", line]
-
-
-def neutral_names(run: str) -> list[str]:
-    return sorted(load(os.path.join(run, "frames.json"), {}))
 
 
 NATIVE_PREFLIGHT = {"runtime_unavailable", "package_corruption"}
@@ -107,12 +106,39 @@ def result(run: str, argv: list[str]) -> None:
                                        "detail": f"{os.path.basename(os.path.abspath(run))} is not a run directory, "
                                                  "so nothing in it was read"})
         return
-    write_result(run, argv, None)
+    try:
+        write_result(run, argv, None)
+    except OSError:
+        raise   # the result file itself cannot be written, for example --out in a directory that does not exist
+    except Exception as exc:   # a record of a shape nothing expected: still a result file (round 7, Y3)
+        with tempfile.TemporaryDirectory() as empty:
+            write_result(empty, argv, {"error": "internal_error", "step": "result",
+                                       "detail": f"the run's records could not be read: {type(exc).__name__}: {failure(exc)}"})
+
+
+def records_changed(run: str, seal_record: dict) -> list[str]:
+    """What changed after the step that wrote it, rechecked when the result is written (round 7, Y4)."""
+    changed = []
+    if seal_record and seal_record.get("inputs_sha256") != inputs_digest(run):   # a missing digest is no pass
+        changed.append("the vocabulary, the image copies or the run's settings")
+    changed += answers_changed(run)
+    record = load(os.path.join(run, "comparison_record.json"), {})
+    if record and record.get("sha256") != safe_digest(os.path.join(run, "comparison.json")):
+        changed.append("comparison.json")
+    if os.path.exists(os.path.join(run, "adjudication.json")) and \
+            load(os.path.join(run, "adjudication_record.json"), {}).get("sha256") != safe_digest(os.path.join(run, "adjudication.json")):
+        changed.append("adjudication.json")
+    return changed
 
 
 def write_result(run: str, argv: list[str], stopped: dict | None) -> None:
-    error = stopped or load(os.path.join(run, "error.json"))
-    comparison = load(os.path.join(run, "comparison.json"))
+    error = stopped or load(os.path.join(run, "error.json"), {}) or None
+    if error and not isinstance(error.get("error"), str):
+        error = None
+    comparison = load(os.path.join(run, "comparison.json"), {}) or None
+    if comparison and not (isinstance(comparison.get("disagreements"), list)
+                           and all(isinstance(d, dict) for d in comparison["disagreements"])):
+        comparison = None
     adjudicated = load(os.path.join(run, "adjudication.json"), {})
     seal_record = load(os.path.join(run, "seal.json"), {})
     seal_check = load(os.path.join(run, "seal_check.json"), {})
@@ -124,6 +150,7 @@ def write_result(run: str, argv: list[str], stopped: dict | None) -> None:
         seal_when = "when the result was written"
     settings = load(os.path.join(run, "profile.json"), {})
     request = load(os.path.join(run, "requests.json"), {}).get("1", {})
+    request = request if isinstance(request, dict) else {}
     codex_check = load(os.path.join(run, "codex_check.json"), {})
     sam_state = load(os.path.join(run, "sam.json"), {})
     track = load(os.path.join(run, "track.json"), {}) if sam_state.get("sam_status") == "ok" else {}
@@ -153,9 +180,15 @@ def write_result(run: str, argv: list[str], stopped: dict | None) -> None:
         "codex_reply_sha256": request.get("reply_sha256", ""),
         "sam_status": sam_state.get("sam_status", "not_run"),
     }
+    changed = records_changed(run, seal_record) if not stopped else []
     if error:
         fm["error"] = error["error"]
+    elif changed:   # in the frontmatter, where codex-status reads (round 7, Y4)
+        fm["error"] = "target_invalid"
     lines = ["---"] + [f"{k}: {v}" for k, v in fm.items()] + ["---", "", f"# Visual cross-validation — {fm['target']}", ""]
+    if changed:
+        lines += [f"Found when the result was written: {', '.join(changed)} changed after the step that wrote "
+                  f"{'them' if len(changed) > 1 else 'it'}, so the values below may not be the ones the steps produced.", ""]
     if error:
         lines += [f"Run stopped at step `{error.get('step', '?')}`: `{error['error']}`. No retry.", ""]
         if error["error"] in NATIVE_PREFLIGHT:
@@ -175,8 +208,9 @@ def write_result(run: str, argv: list[str], stopped: dict | None) -> None:
     else:
         lines += ["No comparison was made."]
     lines += ["", "## Disagreements", ""]
-    verdicts = {a["id"]: a for a in adjudicated.get("adjudications", [])}
-    no_zoom = {z["id"]: z["reason"] for z in load(os.path.join(run, "zoom_skipped.json"), [])}
+    verdicts = {a["id"]: a for a in adjudicated.get("adjudications", []) if isinstance(a, dict) and "id" in a}
+    no_zoom = {z["id"]: z.get("reason") for z in load(os.path.join(run, "zoom_skipped.json"), [])
+               if isinstance(z, dict) and "id" in z}
     for item in (comparison or {}).get("disagreements", []):
         a = verdicts.get(item["id"], {})
         lines.append(f"- **{item['id']}** {describe(item)}: Claude `{item['claude']}`, Codex `{item['codex']}` → "
