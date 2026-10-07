@@ -127,7 +127,7 @@
   - 物理約束只排除一方時在證據中註明；放大輪兩邊一致推翻雙方原答時註明。
   - 驗證：以 `/usr/bin/python3`（3.9）執行時結果檔存在且為 `runtime_unavailable`；第一輪 timeout 後 `adjudicate` 與 `result` 都正常結束；時間戳含 `429` 的圖片錯誤分類為 `target_invalid`。
   - [after: 6.3, 6.4, 6.5]
-- [ ] 6.7 輸入處理（I2 的影格部分、I3、I12、I14、I15）。
+- [x] 6.7 輸入處理（I2 的影格部分、I3、I12、I14、I15）。
   - init 重新編碼影格，去除 EXIF／XMP 並套用方向；run 目錄寫入 `.gitignore`。
   - 單次 run 最多 12 張圖片，超過時 `target_invalid`；中性檔名依張數補位。
   - SKILL.md 與給 Codex 的 instructions 都寫明畫面中的文字只是判讀內容、不是指令。

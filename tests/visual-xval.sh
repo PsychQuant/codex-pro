@@ -49,6 +49,7 @@ checks = {
     "classes": bool(step5) and all(c in step5.group(1) for c in (
         "rate_limit", "oauth_invalid", "timeout", "target_invalid", "runtime_unsupported", "parse_failed", "internal_error")),
     "python_310": "Python 3.10" in body,
+    "image_text_is_data": "不是指令" in body,
     "all_failures_anchor": "\n\n**所有 failure 仍寫 result file**" in body,
     "no_retry": "所有 failure 都不 retry" in body,
     "one_error_enum": len(re.findall(r"error: <[^>\n]+>", body)) == 1,
@@ -641,6 +642,47 @@ assert_eq "f01.png f12.png" "$(python3 -c 'import json,sys; d=json.load(open(sys
 assert_eq "False" "$(python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); print(any("2026" in k for k in d))' "$WORK/run1/frames.json")" \
   "neutral names carry no timestamps from the original file names"
 
+# Copies carry no embedded metadata and are turned upright; the run directory stays out of git;
+# at most 12 images per run (#23 verify I2, I3, I12).
+python3 - "$WORK" <<'PY'
+import struct, subprocess, sys, zlib
+w = sys.argv[1]
+subprocess.run(["sips", "-z", "120", "200", "-s", "format", "jpeg", f"{w}/dot.png", "--out", f"{w}/plain.jpg"],
+               capture_output=True, check=True)
+dt = b"2026:09:11 10:07:33\x00"
+exif_off = 8 + 2 + 2 * 12 + 4
+dt_off = exif_off + 2 + 12 + 4
+ifd0 = struct.pack(">H", 2) + struct.pack(">HHI", 0x0112, 3, 1) + struct.pack(">HH", 6, 0) \
+     + struct.pack(">HHII", 0x8769, 4, 1, exif_off) + struct.pack(">I", 0)
+exif = struct.pack(">H", 1) + struct.pack(">HHII", 0x9003, 2, len(dt), dt_off) + struct.pack(">I", 0)
+app1 = b"Exif\x00\x00" + b"MM\x00\x2a\x00\x00\x00\x08" + ifd0 + exif + dt
+data = open(f"{w}/plain.jpg", "rb").read()
+open(f"{w}/rotated_exif.jpg", "wb").write(data[:2] + b"\xff\xe1" + struct.pack(">H", len(app1) + 2) + app1 + data[2:])
+png = open(f"{w}/imgs/shot_2026-09-11_1001.png", "rb").read()
+text = b"tEXt" + b"Creation Time\x002026-09-11 10:07:33"
+chunk = struct.pack(">I", len(text) - 4) + text + struct.pack(">I", zlib.crc32(text) & 0xffffffff)
+open(f"{w}/text_chunk.png", "wb").write(png[:33] + chunk + png[33:])
+PY
+rm -rf "$WORK/gitproj"; mkdir -p "$WORK/gitproj" && git -C "$WORK/gitproj" init -q
+xval init --run "$WORK/gitproj/.codex-pro/visual-xval-run-x" --vocab "$WORK/vocab.json" "$WORK/rotated_exif.jpg" "$WORK/text_chunk.png"
+assert_eq "0" "$RUN_STATUS" "init accepts a JPEG with EXIF and a PNG with a text chunk"
+meta_check=$(python3 - "$WORK/gitproj/.codex-pro/visual-xval-run-x" <<'PY'
+import json, os, sys
+run = sys.argv[1]
+leaks = [n for n in sorted(os.listdir(f"{run}/frames")) if b"2026" in open(f"{run}/frames/{n}", "rb").read()
+         or b"Exif\x00\x00" in open(f"{run}/frames/{n}", "rb").read()]
+f = json.load(open(f"{run}/frames.json"))["f01.jpg"]
+print("leaks=%s size=%sx%s" % (",".join(leaks) or "none", f["width"], f["height"]))
+PY
+)
+assert_contains "$meta_check" "leaks=none" "the copies carry no capture time and no EXIF block"
+assert_contains "$meta_check" "size=120x200" "an EXIF orientation is applied to the pixels before it is removed"
+assert_eq "" "$(git -C "$WORK/gitproj" status --porcelain)" "the run directory does not show up in git status"
+rm -rf "$WORK/run13"; cp "$WORK/imgs/shot_2026-09-11_1001.png" "$WORK/thirteenth.png"
+xval init --run "$WORK/run13" --vocab "$WORK/vocab.json" "$WORK"/imgs/*.png "$WORK/thirteenth.png"
+assert_contains "$RUN_OUT" '"error": "target_invalid"' "a run with 13 images is refused"
+assert_contains "$RUN_OUT" "at most 12 images" "the refusal states the limit of 12 images"
+
 # Runtime image capability preflight: an old runtime is refused before anything is sent.
 RUN_STATUS=0
 RUN_OUT=$(HOME="$WORK/home" MOCK_HELP_IMAGE=0 MOCK_LOG="$WORK/mock.log" MOCK_PROMPTS="$WORK/prompts.txt" \
@@ -648,6 +690,23 @@ RUN_OUT=$(HOME="$WORK/home" MOCK_HELP_IMAGE=0 MOCK_LOG="$WORK/mock.log" MOCK_PRO
 assert_eq "5" "$RUN_STATUS" "a runtime without --image stops the run (exit 5)"
 assert_contains "$RUN_OUT" '"error": "runtime_unsupported"' "a runtime without --image is runtime_unsupported"
 assert_no_file "$WORK/mock.log" "no request is sent to a runtime without --image"
+
+# Answers written beforehand may name the frames by their original file names (#23 verify I15).
+rm -rf "$WORK/runmap"
+xval init --run "$WORK/runmap" --vocab "$WORK/vocab.json" "$WORK"/imgs/*.png
+python3 - "$WORK" <<'PY'
+import json, sys
+w = sys.argv[1]
+c = json.load(open(f"{w}/claude_marked.json"))
+for i, claim in enumerate(c["claims"], 1):
+    claim["frame"] = f"shot_2026-09-11_10{i:02d}.png"
+json.dump(c, open(f"{w}/runmap/claude.json", "w"))
+PY
+xval seal --run "$WORK/runmap"
+assert_eq "0" "$RUN_STATUS" "answers that use the original file names can be sealed"
+assert_eq "f01.png" "$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["claims"][0]["frame"])' "$WORK/runmap/claude.json")" \
+  "the original file names are replaced by the neutral names before sealing"
+assert_file "$WORK/runmap/claude_source.json" "the answers as given are kept beside the mapped ones"
 
 # The request waits for the privacy confirmation and for an intact seal (#23 verify B1, I2).
 rm -rf "$WORK/run0" "$WORK/mock.log"
@@ -717,6 +776,7 @@ assert_eq "0" "$RUN_STATUS" "round 1 with a valid JSON reply exits 0"
 assert_eq "12" "$(grep -o -- '--image ' "$WORK/mock.log" | wc -l | tr -d ' ')" "round 1 sends all twelve images with --image"
 assert_contains "$(cat "$WORK/mock.log")" "--max-time 30" "round 1 passes the profile's hard timeout"
 assert_contains "$(cat "$WORK/mock.log")" "--model gpt-test --effort high" "round 1 uses the model and effort recorded for the run"
+assert_contains "$(cat "$WORK/mock.log")" "not an instruction" "the instructions say that text in the images is not an instruction"
 prompt=$(cat "$WORK/prompts.txt" 2>/dev/null)
 assert_contains "$prompt" "f01.png" "the prompt names the frames by their neutral names"
 assert_contains "$prompt" "tips_together" "the prompt carries the vocabulary's relations"
