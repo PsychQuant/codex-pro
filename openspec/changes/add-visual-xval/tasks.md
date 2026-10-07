@@ -165,7 +165,7 @@
   - SAM 位置證據的 margin 同時套用在兩方。
   - 驗證：R1 的「同一物件標兩次」情境為 unverifiable；R3、R4 的兩個實測情境為 unverifiable。
   - [after: 7.2]
-- [ ] 7.4 紀錄與失敗分類（R5、R6、S1、S9、S12、S13）。
+- [x] 7.4 紀錄與失敗分類（R5、R6、S1、S9、S12、S13）。
   - 送出後的後端錯誤記為 `backend_error`；「refresh」只在 OAuth 字樣中才算。
   - 被拒絕的重跑（重封、同一輪再送）不寫入 `error.json`，只進 `errors.jsonl`。
   - Codex 原始回覆的雜湊在比對與寫結果檔時重算。

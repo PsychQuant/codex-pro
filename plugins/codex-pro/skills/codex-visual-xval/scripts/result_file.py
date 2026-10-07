@@ -26,6 +26,26 @@ def option(argv: list[str], name: str) -> str | None:
     return argv[argv.index(name) + 1] if name in argv and argv.index(name) + 1 < len(argv) else None
 
 
+def request_lines(run: str, rnd: str, label: str, reply_name: str, seal_record: dict) -> list[str]:
+    """One round's request record, re-checked now: both the raw reply and the parsed answers are
+    compared with the digests recorded when Codex answered (#23 verify round 2, S1, S9)."""
+    record = load(os.path.join(run, "requests.json"), {}).get(rnd)
+    if not record:
+        return []
+    line = f"Codex {label}: requested at {record.get('requested_at')}; reply SHA-256 `{record.get('reply_sha256') or 'none'}`"
+    reply = os.path.join(run, reply_name)
+    if record.get("reply_sha256"):
+        same = os.path.isfile(reply) and sealing.digest(reply) == record["reply_sha256"]
+        line += "; the reply file still matches." if same else "; **the reply file no longer matches** its recorded digest."
+    if not seal_record:
+        line += " Claude's answers for this round were never sealed."
+    elif (seal_record.get("sealed_epoch") or 0) < (record.get("requested_epoch") or 0):
+        line += " The seal predates the request."
+    else:
+        line += " **The seal does not predate the request.**"
+    return ["", line]
+
+
 def neutral_names(run: str) -> list[str]:
     return sorted(load(os.path.join(run, "frames.json"), {}))
 
@@ -127,7 +147,8 @@ def result(run: str, argv: list[str]) -> None:
     if adjudicated.get("zoom_codex_record_broken"):
         lines += ["", "**Codex's zoom answers changed after they were recorded**, so no disagreement was settled "
                   "by the zoom round."]
-    lines += ["", "## SAM evidence", "", f"Status: `{fm['sam_status']}`. {sam_state.get('detail', '')}".rstrip()]
+    sam_detail = sanitize(sam_state.get("detail", "")).replace(os.path.expanduser("~"), "~")   # no local home path
+    lines += ["", "## SAM evidence", "", f"Status: `{fm['sam_status']}`. {sam_detail}".rstrip()]
     if track:
         anchors = [a["frame"] for a in load(os.path.join(run, "anchors.json"), {}).get("anchors", [])]
         lines.append(f"Anchors: {', '.join(anchors) or 'none'}; collapsed (invalid) frames: "
@@ -136,14 +157,12 @@ def result(run: str, argv: list[str]) -> None:
               f"Claude's answers: SHA-256 `{fm['claude_answers_sha256'] or 'none'}`, sealed at {fm['sealed_at'] or 'never'}; "
               f"recomputed {seal_when}: `{seal_check.get('sha256_now') or 'n/a'}` → "
               + ("**broken**." if fm["seal_broken"] == "true" else "intact.")]
-    if request:
-        order = (seal_record.get("sealed_epoch") or 0) < (request.get("requested_epoch") or 0)
-        lines += ["", f"Codex round 1: requested at {request.get('requested_at')}; reply SHA-256 "
-                  f"`{request.get('reply_sha256') or 'none'}`. The seal "
-                  + ("predates the request." if order else "**does not predate the request**.")]
-        if codex_check.get("codex_record_broken"):
-            lines += ["", "**Codex's answers changed after they were recorded**: the comparison used a file whose "
-                      "digest no longer matches the one recorded when Codex answered."]
+    for rnd, label, reply_name, seal_name in (("1", "round 1", "codex_round1.md", "seal.json"),
+                                              ("zoom", "zoom round", "codex_zoom.md", "zoom_seal.json")):
+        lines += request_lines(run, rnd, label, reply_name, load(os.path.join(run, seal_name), {}))
+    if codex_check.get("codex_record_broken"):
+        lines += ["", "**Codex's answers changed after they were recorded**: the comparison used a file whose "
+                  "digest no longer matches the one recorded when Codex answered."]
     lines += ["", "## Limitations", "",
               "- Agreement between the two models does not establish that either is correct; only a human reference can.",
               "- Zoom-round answers on Claude's side come from a subagent that saw only the crops and the question "

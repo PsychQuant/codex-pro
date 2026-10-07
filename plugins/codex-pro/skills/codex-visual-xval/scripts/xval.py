@@ -99,9 +99,12 @@ MAX_IMAGES = 12   # per run; the measured backend limit is higher, the cap keeps
 
 
 class Stop(Exception):
-    def __init__(self, error: str, detail: str):
+    """record=False is for refusing a command whose step was already done (a second seal, a second
+    request in one round). That is about the command, not the run, so it must not replace the run's
+    error: a completed run stays completed, a rate_limit stays a rate_limit (#23 verify round 2, R6)."""
+    def __init__(self, error: str, detail: str, record: bool = True):
         super().__init__(detail)
-        self.error, self.detail = error, detail
+        self.error, self.detail, self.record = error, detail, record
 
 
 def load(path: str, default: Any = None) -> Any:
@@ -188,9 +191,9 @@ def seal_answers(run: str, zoom: bool) -> None:
     # late seal look exactly like an early one (#23 verify B1).
     previous = load(record)
     if previous:
-        raise Stop("target_invalid", f"already sealed at {previous.get('sealed_at')}; a seal is not rewritten")
+        raise Stop("target_invalid", f"already sealed at {previous.get('sealed_at')}; a seal is not rewritten", record=False)
     if load(os.path.join(run, "requests.json"), {}).get("zoom" if zoom else "1"):
-        raise Stop("target_invalid", "Codex has already been asked this round; answers sealed now prove nothing")
+        raise Stop("target_invalid", "Codex has already been asked this round; answers sealed now prove nothing", record=False)
     if not zoom:
         map_source_names(run, answers)
         vocab = load(os.path.join(run, "vocab.json"))
@@ -282,13 +285,19 @@ def classify(stderr: str, status: int) -> tuple[str, str]:
     low = message.lower()
     detail = message[-500:]
     if message.startswith("--image "):
-        return "target_invalid", detail
+        return "target_invalid", detail          # checked before anything is sent
     if re.search(r"\bhttp 429\b", low) or "rate limit" in low or "usage limit" in low:
         return "rate_limit", detail
-    if re.search(r"\bhttp 40[13]\b", low) or "unauthorized" in low or "auth.json" in low or "refresh" in low:
+    if (re.search(r"\bhttp 40[13]\b", low) or "unauthorized" in low or "auth.json" in low
+            or "refresh_token" in low or "token refresh" in low):
         return "oauth_invalid", detail
     if "timed out" in low or "timeout" in low:
         return "timeout", detail
+    # The request was made and the backend or the connection failed. This used to fall into
+    # runtime_unavailable, which the skill describes as "nothing was sent" (#23 verify round 2, R5).
+    if re.search(r"\bhttp \d{3}\b", low) or any(w in low for w in ("network", "connection", "could not connect",
+                                                                   "hostname", "offline", "ssl", "stream")):
+        return "backend_error", detail
     return "runtime_unavailable", f"codex-call exit {status}: {detail}"
 
 
@@ -319,7 +328,13 @@ def call_codex(run: str, prompt: str, images: list[str], tag: str, argv: list[st
         cmd += ["--image", image]
     done = subprocess.run(cmd, capture_output=True, text=True)   # foreground; the hard timeout is codex-call's
     if done.returncode != 0:
-        raise Stop(*classify(done.stderr, done.returncode))
+        error, detail = classify(done.stderr, done.returncode)
+        if error in ("target_invalid", "runtime_unavailable"):
+            # codex-call stopped before sending anything: the round is not used up (#23 verify round 2, S13)
+            records = load(os.path.join(run, "requests.json"), {})
+            records.pop(rnd, None)
+            dump(os.path.join(run, "requests.json"), records)
+        raise Stop(error, detail)
     try:
         reply = open(output, encoding="utf-8").read()
     except OSError:
@@ -368,7 +383,7 @@ def before_request(run: str, rnd: str) -> None:
     earlier = load(os.path.join(run, "requests.json"), {}).get(rnd)
     if earlier:
         raise Stop("target_invalid", f"round {rnd} was already requested at {earlier.get('requested_at')}; "
-                   "a recorded answer is not replaced and requests are not retried")
+                   "a recorded answer is not replaced and requests are not retried", record=False)
 
 
 def record_request(run: str, rnd: str, **fields: Any) -> None:
@@ -676,6 +691,7 @@ def main(argv: list[str]) -> None:
     if not run:
         print(__doc__, file=sys.stderr)
         sys.exit(64)
+    step = f"ask --round {option(argv, '--round')}" if command == "ask" else command
     try:
         if command == "confirm-privacy":
             confirm_privacy(run)
@@ -702,16 +718,19 @@ def main(argv: list[str]) -> None:
             print(__doc__, file=sys.stderr)
             sys.exit(64)
     except Stop as stop:
-        stop_run(run, command, stop.error, stop.detail)
+        stop_run(run, step, stop.error, stop.detail, stop.record)
     except Exception as exc:   # an unexpected failure still leaves a record and a result file
-        stop_run(run, command, "internal_error", f"{type(exc).__name__}: {exc}")
-    clear_error(run, command)
+        stop_run(run, step, "internal_error", f"{type(exc).__name__}: {exc}")
+    clear_error(run, step)
 
 
-def stop_run(run: str, command: str, error: str, detail: str) -> None:
+def stop_run(run: str, command: str, error: str, detail: str, record_error: bool = True) -> None:
     record = {"error": error, "detail": detail, "step": command, "at": now_iso()}
     if os.path.isdir(run):
-        dump(os.path.join(run, "error.json"), record)
+        if record_error:
+            dump(os.path.join(run, "error.json"), record)
+        else:
+            record["refused"] = True
         with open(os.path.join(run, "errors.jsonl"), "a", encoding="utf-8") as fh:   # history survives clearing
             fh.write(json.dumps(record, ensure_ascii=False) + "\n")
     print(json.dumps({"error": error, "detail": detail}, ensure_ascii=False))

@@ -42,6 +42,7 @@ allowed-tools:
 4. `parse_failed`：Codex 的回覆不是符合 schema 的 JSON
 5. `runtime_unavailable`：找不到 `codex-call`，或 `python3` 比 3.10 舊
 6. `internal_error`：腳本內部的意外例外。照樣寫結果檔，detail 是例外類型與訊息
+7. `backend_error`：請求已經送出，後端回錯誤（例如 HTTP 500）或連線中斷。這一輪已經用掉，不重送
 
 ## Step 1: Parse arguments
 
@@ -129,7 +130,10 @@ for f, d in DEFAULTS.items():
     v, s = (p[f], "project") if f in p else ((g[f], "global") if f in g else (d, "default"))
     if f == "max_time":
         try: v = int(v)
-        except (ValueError, TypeError): v, s = d, "default"
+        except (ValueError, TypeError): v = 0
+        if v <= 0:   # a wrong value stops here; it is not replaced by the default in silence
+            print(json.dumps({"error": "target_invalid", "detail": f"profile max_time is not a positive integer ({s} profile)"}))
+            sys.exit(0)
     resolved[f] = v; sources.add(s)
 ps = "mixed" if {"project", "global"} <= sources else ("project" if "project" in sources else ("global" if "global" in sources else "default"))
 with open(os.path.join(sys.argv[1], "profile.json"), "w") as fh:
@@ -179,6 +183,7 @@ python3 "$SKILL_DIR/scripts/xval.py" ask --run "$RUN" --round 1
 | Codex 回覆不合 schema | `parse_failed` | 「Codex 的回覆不是符合 schema 的 JSON。**不會自動 retry**。」 |
 | 找不到 `codex-call`，或 `python3` 比 3.10 舊 | `runtime_unavailable` | 「執行環境不足：<detail>。沒有送出請求。」 |
 | 腳本內部的意外例外 | `internal_error` | 「skill 的腳本發生意外錯誤：<detail>。這是 skill 的問題，請回報。」 |
+| 請求送出後後端出錯或連線中斷 | `backend_error` | 「Codex 後端出錯：<detail>。請求已經送出，這一輪不會重送。」 |
 
 **所有 failure 仍寫 result file**，**所有 failure 都不 retry**。
 
@@ -250,7 +255,8 @@ python3 "$SKILL_DIR/scripts/xval.py" result --run "$RUN"
 
 run 停在 Step 5 時也要跑這兩步：沒有比對結果時 `adjudicate` 照樣正常結束，`result` 讀 `$RUN/error.json`
 寫出失敗的結果檔。model、effort 與 profile 來源取自 `$RUN/profile.json`。同一步之後重跑成功時，它先前留下的
-錯誤會被清除，歷史留在 `$RUN/errors.jsonl`。回報使用者結果檔路徑、一致率與各裁決的數量。
+錯誤會被清除，歷史留在 `$RUN/errors.jsonl`。因為「已經做過」而被拒絕的指令（重封、同一輪再送）只記進歷史，
+不會取代這個 run 原本的錯誤。回報使用者結果檔路徑、一致率與各裁決的數量。
 
 ## Result file structure（完整契約）
 
@@ -271,7 +277,7 @@ seal_broken: <true | false>
 codex_requested_at: <ISO8601 with offset，第一輪請求送出的時間>
 codex_reply_sha256: <hex，第一輪回覆的雜湊>
 sam_status: <ok | not_installed | not_applicable | no_anchor | failed | not_run>
-error: <rate_limit | oauth_invalid | timeout | target_invalid | runtime_unsupported | parse_failed | runtime_unavailable | package_corruption | internal_error>  # 僅失敗時出現
+error: <rate_limit | oauth_invalid | timeout | target_invalid | runtime_unsupported | parse_failed | runtime_unavailable | package_corruption | backend_error | internal_error>  # 僅失敗時出現
 ---
 
 # Visual cross-validation — <target>

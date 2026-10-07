@@ -47,7 +47,8 @@ checks = {
     "no_codex_cli": re.search(r"(^|\s)codex exec", body) is None,
     "foreground": "前景同步執行" in body and "run_in_background" in body,
     "classes": bool(step5) and all(c in step5.group(1) for c in (
-        "rate_limit", "oauth_invalid", "timeout", "target_invalid", "runtime_unsupported", "parse_failed", "internal_error")),
+        "rate_limit", "oauth_invalid", "timeout", "target_invalid", "runtime_unsupported", "parse_failed", "internal_error",
+        "backend_error")),
     "python_310": "Python 3.10" in body,
     "image_text_is_data": "不是指令" in body,
     "all_failures_anchor": "\n\n**所有 failure 仍寫 result file**" in body,
@@ -814,7 +815,12 @@ printf 'model: gpt-global\neffort: low\n' > "$WORK/p41/home/.codex-pro/profile.y
 assert_eq "gpt-global low 600 global" \
   "$(python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); print(d["model"], d["effort"], d["max_time"], d["profile_source"])' "$WORK/p41/project/run/profile.json" 2>/dev/null)" \
   "Step 4.1 records the resolved profile in the run directory"
-rm -rf "$WORK/run0p" "$WORK/p41" "$WORK/mock.log"
+mkdir -p "$WORK/p41b/home/.codex-pro" "$WORK/p41b/project/run"
+printf 'max_time: abc\n' > "$WORK/p41b/home/.codex-pro/profile.yaml"
+p41b_out=$( cd "$WORK/p41b/project" && HOME="$WORK/p41b/home" RUN=run bash -c "$step41" 2>&1 )
+assert_no_file "$WORK/p41b/project/run/profile.json" "an invalid max_time is not replaced by the default in silence (#23 verify round 2, S12)"
+assert_contains "$p41b_out" "max_time" "Step 4.1 says which profile field is invalid"
+rm -rf "$WORK/run0p" "$WORK/p41" "$WORK/p41b" "$WORK/mock.log"
 
 # A runtime path that is missing is runtime_unavailable, not a crash.
 : > "$WORK/run1/runtime.txt"
@@ -886,7 +892,9 @@ for case_ in "rate limit exceeded (429):rate_limit" "request timed out after 30s
              "error: HTTP 429: too many requests:rate_limit" "error: Hard timeout after 30s:timeout" \
              "error: HTTP 401: token expired:oauth_invalid" \
              "error: --image .codex-pro/visual-xval-run-20261007T042915Z/frames/f01.png: not a PNG, JPEG, WebP or GIF file:target_invalid" \
-             "error: --image .codex-pro/visual-xval-run-20261007T140130Z/frames/f01.png: cannot decode image:target_invalid"; do
+             "error: --image .codex-pro/visual-xval-run-20261007T140130Z/frames/f01.png: cannot decode image:target_invalid" \
+             "error: HTTP 500: internal server error, please refresh:backend_error" \
+             "error: The network connection was lost.:backend_error"; do
   new_run "$WORK/run4"
   RUN_STATUS=0
   RUN_OUT=$(HOME="$WORK/home" MOCK_STDERR="${case_%:*}" MOCK_STATUS=1 MOCK_LOG="$WORK/mock.log" MOCK_PROMPTS="$WORK/prompts.txt" \
@@ -894,6 +902,27 @@ for case_ in "rate limit exceeded (429):rate_limit" "request timed out after 30s
   assert_contains "$RUN_OUT" "\"error\": \"${case_##*:}\"" "'${case_%:*}' is classified as ${case_##*:}"
   assert_eq "1" "$(wc -l < "$WORK/mock.log" | tr -d ' ')" "${case_##*:} is not retried"
 done
+
+# A failure inside codex-call before anything is sent does not use up the round (#23 verify round 2, S13).
+new_run "$WORK/run4s"
+RUN_OUT=$(HOME="$WORK/home" MOCK_STDERR="error: --image x/f01.png: cannot decode image" MOCK_STATUS=1 MOCK_LOG="$WORK/mock.log" \
+  MOCK_PROMPTS="$WORK/prompts.txt" PATH="$WORK/stubbin:$PATH" python3 "$SCRIPTS/xval.py" ask --run "$WORK/run4s" --round 1 2>&1)
+assert_eq "" "$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("1", ""))' "$WORK/run4s/requests.json" 2>/dev/null)" \
+  "a request codex-call refused before sending is not recorded as sent"
+RUN_OUT=$(HOME="$WORK/home" MOCK_REPLY="$WORK/codex_reply.md" MOCK_LOG="$WORK/mock.log" MOCK_PROMPTS="$WORK/prompts.txt" \
+  PATH="$WORK/stubbin:$PATH" python3 "$SCRIPTS/xval.py" ask --run "$WORK/run4s" --round 1 2>&1)
+assert_contains "$RUN_OUT" '"ok": true' "after fixing the image the round can be sent"
+
+# A refused repeat does not replace the run's error (#23 verify round 2, R6).
+new_run "$WORK/run4r"
+RUN_OUT=$(HOME="$WORK/home" MOCK_STDERR="error: HTTP 429: too many requests" MOCK_STATUS=1 MOCK_LOG="$WORK/mock.log" \
+  MOCK_PROMPTS="$WORK/prompts.txt" PATH="$WORK/stubbin:$PATH" python3 "$SCRIPTS/xval.py" ask --run "$WORK/run4r" --round 1 2>&1)
+xval ask --run "$WORK/run4r" --round 1
+assert_contains "$RUN_OUT" '"error": "target_invalid"' "asking the same round again is refused"
+assert_contains "$(cat "$WORK/run4r/error.json" 2>/dev/null)" '"rate_limit"' "the refused repeat does not replace the run's error"
+xval seal --run "$WORK/run4r"
+assert_contains "$(cat "$WORK/run4r/error.json" 2>/dev/null)" '"rate_limit"' "a refused second seal does not replace the run's error either"
+assert_contains "$(cat "$WORK/run4r/errors.jsonl" 2>/dev/null)" "already" "refused repeats are kept in the error history"
 
 # A first-round failure leaves no comparison; adjudication still finishes (#23 verify B10).
 new_run "$WORK/run4b"
@@ -1014,6 +1043,13 @@ xval adjudicate --run "$WORK/run5"
 assert_eq "0" "$RUN_STATUS" "adjudicate exits 0"
 assert_eq "resolved_codex" "$(json_get "$(cat "$WORK/run5/adjudication.json")" 'd["adjudications"][0]["verdict"]')" \
   "both zoom answers say false, as Codex did -> resolved_codex"
+( mkdir -p "$WORK/project" && cd "$WORK/project" && python3 "$SCRIPTS/xval.py" result --run "$WORK/run5" --out "$WORK/run5_zoomlines.md" >/dev/null 2>&1 )
+assert_contains "$(cat "$WORK/run5_zoomlines.md" 2>/dev/null)" "Codex zoom round: requested at" "the result file lists the zoom round's request and reply digest"
+rm -rf "$WORK/run5e"; cp -R "$WORK/run5" "$WORK/run5e"
+printf 'edited\n' >> "$WORK/run5e/codex_round1.md"
+( cd "$WORK/project" && python3 "$SCRIPTS/xval.py" result --run "$WORK/run5e" --out "$WORK/run5_replyedit.md" >/dev/null 2>&1 )
+assert_contains "$(cat "$WORK/run5_replyedit.md" 2>/dev/null)" "reply file no longer matches" \
+  "an edited raw Codex reply is reported (#23 verify round 2, S1)"
 
 # Zoom answers that change after they were sealed or recorded are not evidence (#23 verify B2).
 cp -R "$WORK/run5" "$WORK/run5b"
@@ -1134,11 +1170,21 @@ assert_contains "$(cat "$result_file")" "resolved_codex" "each disagreement carr
 assert_contains "$(cat "$result_file")" "does not establish that either is correct" \
   "the limitations say agreement does not establish correctness"
 
+# A run that never sealed does not claim the seal predates the request (S9).
+rm -rf "$WORK/runns"
+xval init --run "$WORK/runns" --vocab "$WORK/vocab.json" "$WORK"/imgs/*.png
+( cd "$WORK/project" && python3 "$SCRIPTS/xval.py" result --run "$WORK/runns" --out "$WORK/runns_result.md" >/dev/null 2>&1 )
+case "$(cat "$WORK/runns_result.md" 2>/dev/null)" in
+  *"predates the request"*) fail "a run that was never sealed does not claim the seal predates the request" ;;
+  *) pass "a run that was never sealed does not claim the seal predates the request" ;;
+esac
+
 # Every failure class still writes the file; nothing is retried.
 result_in "$WORK/run4b"
 fail_file=$(ls -t "$WORK"/project/.codex-pro/visual-xval-*.md | head -1)
 assert_eq "oauth_invalid" "$(fm "$fail_file" error)" "a stopped run writes the result file with its error"
 assert_contains "$(cat "$fail_file")" "No retry" "a failed run says it was not retried"
+assert_contains "$(sed -n '/^---$/,/^---$/p' "$fail_file")" "error: oauth_invalid" "the failure keeps its class in the frontmatter"
 assert_contains "$(cat "$fail_file")" "recomputed when the result was written" \
   "a seal the comparison never checked is recomputed for the result, not reported as checked"
 
