@@ -3,7 +3,7 @@ name: codex-status
 description: |
   列出 .codex-pro/ 內所有 producer skill（review / rescue / adversarial-review）的 result file 並輸出 markdown table summary。Read-only consumer category — 純掃目錄 + parse frontmatter、無 Codex HTTP wrapper 呼叫、無 subprocess、無 file mutation。
   與 review / rescue / adversarial-review 的 mutating producer 對比、與 setup（read-only environment check）同屬 read-only category。Triple skill set 之一（status + result + cancel）對應上游 codex-plugin-cc /codex:status drop-in surface。
-  支援 --skill <review|rescue|adversarial-review> filter 看單一 producer。Missing / empty .codex-pro/ 為 informational case（exit 0 不算 error）。
+  支援 --skill <review|rescue|adversarial-review|visual-xval> filter 看單一 producer。Missing / empty .codex-pro/ 為 informational case（exit 0 不算 error）。
   Trigger keywords: list codex result files, codex review history, 過去 codex 結果列表, codex-pro status, list .codex-pro
 allowed-tools:
   - Bash
@@ -45,14 +45,14 @@ fi
 
 ```bash
 case "$SKILL_FILTER" in
-  review|rescue|adversarial-review)
+  review|rescue|adversarial-review|visual-xval)
     FILES=$(printf '%s\n' "$FILES" | grep -E "/${SKILL_FILTER}-[0-9]")
     ;;
   "")
     : # no filter
     ;;
   *)
-    echo "Error: --skill must be one of: review, rescue, adversarial-review" >&2
+    echo "Error: --skill must be one of: review, rescue, adversarial-review, visual-xval" >&2
     exit 2
     ;;
 esac
@@ -60,7 +60,7 @@ esac
 
 ## Step 2: Parse frontmatter per file
 
-對每個 file、用 inline python3 拆 YAML frontmatter（`---` ... `---` 包圍區段）、抽 6 個 field（target / task_description / findings_count / outcome / focus / error）。容忍缺漏（render `—` em dash）、容忍 malformed YAML（該 row `outcome summary` 顯示 `(unparseable frontmatter)`、不阻塞其他 row）：
+對每個 file、用 inline python3 拆 YAML frontmatter（`---` ... `---` 包圍區段）、抽 7 個 field（target / task_description / findings_count / outcome / focus / error / agreement_rate）。容忍缺漏（render `—` em dash）、容忍 malformed YAML（該 row `outcome summary` 顯示 `(unparseable frontmatter)`、不阻塞其他 row）：
 
 ```bash
 python3 - "$FILES" <<'PY'
@@ -73,6 +73,7 @@ for path in files:
     if fname.startswith("review-"): skill = "review"
     elif fname.startswith("rescue-"): skill = "rescue"
     elif fname.startswith("adversarial-review-"): skill = "adversarial-review"
+    elif fname.startswith("visual-xval-"): skill = "visual-xval"
     else: skill = "—"
     # parse frontmatter
     try:
@@ -87,12 +88,14 @@ for path in files:
         findings = re.search(r'^findings_count:\s*(\d+)', fm, re.MULTILINE)
         outcome = re.search(r'^outcome:\s*(\w+)', fm, re.MULTILINE)
         error = re.search(r'^error:\s*(\w+)', fm, re.MULTILINE)
+        rate = re.search(r'^agreement_rate:\s*([0-9.]+)', fm, re.MULTILINE)
         # column derivation
         target_or_task = (target.group(1).strip() if target else
                           (task.group(1).strip()[:50] if task else "—"))
         if skill == "review": outcome_summary = f"{findings.group(1)} findings" if findings else "—"
         elif skill == "rescue": outcome_summary = outcome.group(1) if outcome else "—"
         elif skill == "adversarial-review": outcome_summary = "4/4 sections"
+        elif skill == "visual-xval": outcome_summary = f"{float(rate.group(1)) * 100:.1f}% agreement" if rate else "—"
         else: outcome_summary = "—"
         # timestamp from filename ISO8601 portion
         ts_match = re.search(r'-(\d{8}T\d{6}Z?)', fname)

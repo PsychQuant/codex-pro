@@ -313,4 +313,27 @@ else
 fi
 rm -rf "$TMP_MISS"
 
+# ── (v) --latest visual-xval (#23) ───────────────────────────────
+for token in 'review|rescue|adversarial-review|visual-xval|"")' \
+             'must be one of: review | rescue | adversarial-review | visual-xval' \
+             '`review` / `rescue` / `adversarial-review` / `visual-xval`'; do
+  if grep -qF -- "$token" "$RESULT_SKILL"; then
+    pass "SKILL.md accepts visual-xval: $token"
+  else
+    fail "SKILL.md accepts visual-xval: $token"
+  fi
+done
+TMP_VX=$(mktemp -d)
+mkdir -p "$TMP_VX/.codex-pro/visual-xval-run-20261007T140000Z"
+printf -- '---\nskill: visual-xval\n---\n\n# Visual earlier\n' > "$TMP_VX/.codex-pro/visual-xval-20261007T120000Z.md"
+printf -- '---\nskill: visual-xval\n---\n\n# Visual later\n' > "$TMP_VX/.codex-pro/visual-xval-20261007T130000Z.md"
+printf -- '---\ntarget: diff\n---\n\n# Review newest\n' > "$TMP_VX/.codex-pro/review-20261007T150000Z.md"
+VX_OUT=$(cd "$TMP_VX" && run_result --latest visual-xval)
+if echo "$VX_OUT" | grep -q '# Visual later'; then
+  pass "behavioral: --latest visual-xval picks the newest visual-xval file (run directories ignored)"
+else
+  fail "behavioral: --latest visual-xval wrong (out='$VX_OUT')"
+fi
+rm -rf "$TMP_VX"
+
 report_summary "result"

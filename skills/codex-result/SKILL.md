@@ -36,7 +36,7 @@ allowed-tools:
 解析 argument 為三種 mode（互斥 / mutually exclusive）：
 
 - **Mode (a) 位置 `<filename>`**：完整檔名（不含 path prefix、不含 `.codex-pro/`）、例 `review-20260601T120000Z.md`
-- **Mode (b) `--latest <skill>`**：`<skill>` 必為 `review` / `rescue` / `adversarial-review` 三者之一、拿該 producer 最近一次 result
+- **Mode (b) `--latest <skill>`**：`<skill>` 必為 `review` / `rescue` / `adversarial-review` / `visual-xval` 四者之一、拿該 producer 最近一次 result
 - **Mode (c) `--latest` 無 arg**：拿全 producer 最近一次 result（不限 skill type）
 
 ```bash
@@ -51,12 +51,12 @@ if [ -n "$POSITIONAL_FILE" ] && [ -n "$LATEST_FLAG_SET" ]; then
   exit 2
 fi
 
-# Enum check (mode b): <skill> 必為三 producer 之一 — fail-fast reject，
+# Enum check (mode b): <skill> 必為四 producer 之一 — fail-fast reject，
 # 防止非法值（如 codex-review 帶前綴形）流進 glob 產生誤導性的零 match 訊息
 case "${LATEST_SKILL:-}" in
-  review|rescue|adversarial-review|"") ;;  # "" = mode (c) --latest 無 arg
+  review|rescue|adversarial-review|visual-xval|"") ;;  # "" = mode (c) --latest 無 arg
   *)
-    echo "Error: --latest <skill> must be one of: review | rescue | adversarial-review" >&2
+    echo "Error: --latest <skill> must be one of: review | rescue | adversarial-review | visual-xval" >&2
     echo "  (got: '$LATEST_SKILL' — use the bare producer name, not codex-<name>)" >&2
     exit 2
     ;;

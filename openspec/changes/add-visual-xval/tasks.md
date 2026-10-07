@@ -68,7 +68,7 @@
   - 非 macOS 主機在讀取 OAuth 前回 `unsupported_platform`。
   - 驗證：`tests/codex-skills-parity.sh` 與 resolver 矩陣測試包含新 skill 且通過。
   - [after: 4.3]
-- [ ] 4.5 status 與 result 支援新的 producer 前綴：Status skill registration and argument parsing、Status output is a markdown table of result file frontmatter summary、Result skill registration and selection-mode argument parsing。
+- [x] 4.5 status 與 result 支援新的 producer 前綴：Status skill registration and argument parsing、Status output is a markdown table of result file frontmatter summary、Result skill registration and selection-mode argument parsing。
   - Status skill registration and argument parsing：接受 `--skill visual-xval`，錯誤值時列出四個合法值。
   - Status output is a markdown table of result file frontmatter summary：visual-xval 列顯示 `<百分比> agreement`。
   - Result skill registration and selection-mode argument parsing：接受 `--latest visual-xval`。

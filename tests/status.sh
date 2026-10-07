@@ -125,9 +125,9 @@ run_status() {
   fi
   if [ -n "$skill_filter" ]; then
     case "$skill_filter" in
-      review|rescue|adversarial-review) ;;
+      review|rescue|adversarial-review|visual-xval) ;;
       *)
-        echo "Error: --skill must be one of: review, rescue, adversarial-review" >&2
+        echo "Error: --skill must be one of: review, rescue, adversarial-review, visual-xval" >&2
         return 2
         ;;
     esac
@@ -146,6 +146,7 @@ for fname in files:
     if fname.startswith("review-"): skill = "review"
     elif fname.startswith("rescue-"): skill = "rescue"
     elif fname.startswith("adversarial-review-"): skill = "adversarial-review"
+    elif fname.startswith("visual-xval-"): skill = "visual-xval"
     else: skill = "—"
     try:
         content = open(path).read()
@@ -159,11 +160,13 @@ for fname in files:
         findings = re.search(r'^findings_count:\s*(\d+)', fm, re.MULTILINE)
         outcome = re.search(r'^outcome:\s*(\w+)', fm, re.MULTILINE)
         error = re.search(r'^error:\s*(\w+)', fm, re.MULTILINE)
+        rate = re.search(r'^agreement_rate:\s*([0-9.]+)', fm, re.MULTILINE)
         target_or_task = (target.group(1).strip() if target else
                           (task.group(1).strip()[:50] if task else "—"))
         if skill == "review": outcome_summary = f"{findings.group(1)} findings" if findings else "—"
         elif skill == "rescue": outcome_summary = outcome.group(1) if outcome else "—"
         elif skill == "adversarial-review": outcome_summary = "4/4 sections"
+        elif skill == "visual-xval": outcome_summary = f"{float(rate.group(1)) * 100:.1f}% agreement" if rate else "—"
         else: outcome_summary = "—"
         ts_match = re.search(r'-(\d{8}T\d{6}Z?)', fname)
         ts = ts_match.group(1) if ts_match else "—"
@@ -216,11 +219,38 @@ timestamp: 2026-06-01T13:00:00+08:00
 
 # Adversarial Review
 F
+  cat > "$dir/.codex-pro/visual-xval-20261007T120000Z.md" <<'F'
+---
+skill: visual-xval
+target: 12 images (sequence)
+model: gpt-5.6-sol
+effort: xhigh
+timestamp: 2026-10-07T20:00:00+08:00
+agreement_rate: 0.917
+---
+
+# Visual cross-validation
+F
+  mkdir -p "$dir/.codex-pro/visual-xval-run-20261007T120000Z"   # a run directory is not a result file
   cat > "$dir/.codex-pro/review-20260601T140000Z.md" <<'F'
 this is not yaml frontmatter at all
 no leading triple-dash
 F
 }
+
+# ── (h2) visual-xval is a producer prefix in the SKILL.md itself (#23) ──
+# The behavioral cases below run a mirror of the SKILL.md logic, so they cannot
+# catch the SKILL.md falling behind; these checks read the SKILL.md directly.
+for token in 'review|rescue|adversarial-review|visual-xval)' \
+             'must be one of: review, rescue, adversarial-review, visual-xval' \
+             'fname.startswith("visual-xval-")' \
+             '% agreement'; do
+  if grep -qF -- "$token" "$STATUS_SKILL"; then
+    pass "SKILL.md carries the visual-xval case: $token"
+  else
+    fail "SKILL.md carries the visual-xval case: $token"
+  fi
+done
 
 # ── (i) Missing .codex-pro/ — informational + exit 0 ─────────────
 TMP_MISSING=$(mktemp -d)
@@ -314,4 +344,32 @@ fi
 
 rm -rf "$TMP_POP"
 
+# ── (v) visual-xval rows and filter (#23) ────────────────────────
+TMP_VX=$(mktemp -d)
+write_fixture "$TMP_VX"
+VX_OUT=$(cd "$TMP_VX" && run_status)
+if echo "$VX_OUT" | grep -qF '| visual-xval-20261007T120000Z.md | visual-xval | 12 images (sequence) | 91.7% agreement | 2026-10-07 12:00 | — |'; then
+  pass "behavioral: a visual-xval row shows its agreement rate"
+else
+  fail "behavioral: visual-xval row wrong ($(echo "$VX_OUT" | grep visual-xval))"
+fi
+case "$VX_OUT" in
+  *visual-xval-run-*) fail "behavioral: the run directory is not listed as a result" ;;
+  *) pass "behavioral: the run directory is not listed as a result" ;;
+esac
+VX_FILTER=$(cd "$TMP_VX" && run_status visual-xval)
+if [ "$(echo "$VX_FILTER" | grep -c '^| visual-xval-')" = "1" ] && ! echo "$VX_FILTER" | grep -q '^| review-'; then
+  pass "behavioral: --skill visual-xval lists only visual-xval files"
+else
+  fail "behavioral: --skill visual-xval filter wrong"
+fi
+VX_BOGUS=$(cd "$TMP_VX" && run_status bogus 2>&1)
+if echo "$VX_BOGUS" | grep -qF 'review, rescue, adversarial-review, visual-xval'; then
+  pass "behavioral: an invalid --skill lists the four accepted values"
+else
+  fail "behavioral: invalid --skill hint wrong ($VX_BOGUS)"
+fi
+rm -rf "$TMP_VX"
+
 report_summary "status"
+
