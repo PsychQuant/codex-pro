@@ -289,6 +289,15 @@ f01 是 3000×1875 的大圖，驗證原解析度複本；送出前的登入檢�
 - f02 關係：放大輪兩邊答 true → `resolved_codex`；f01 關係：放大輪答 false，不採用 → `unverifiable`。
 - 第一輪複本、原解析度複本與三張裁切圖都不含 EXIF 或文字區塊；結果檔沒有 error。
 
+第六次紀錄：2026-10-08，codex-pro `04c41fb`（第六輪 verify 的修正之後），同一個 runtime 與 profile。
+原圖放在名稱含空白的資料夾，run 目錄照 SKILL Step 1 先建立，再做隱私確認（confirm-privacy 不再建立目錄）。
+
+- 登入檢查讀帳號家目錄的 token 檔，照常通過；init 為 3000×1875 的 f01 寫出原解析度的 `hires/f01.png`。
+- 植入與第五次相同的兩個錯誤；第一輪 6.1 秒，分歧三筆，全是植入的錯誤。comparison_record.json 記下兩邊答案檔的雜湊。
+- 放大輪 5.3 秒，Codex 收到的題目檔與 subagent 作答的那份逐字相同；f01 數量 → `resolved_codex`（上限 2），
+  f02 關係 → `resolved_codex`，f01 關係的 false 不採用 → `unverifiable`。
+- 結果檔沒有出現原圖資料夾的名稱，沒有「changed after」的警示；複本與裁切圖都不含 EXIF 或文字區塊。
+
 ## Post-test cleanup checklist
 
 - [ ] B 段使用的 disposable account／VM 沒有污染日常 Codex home
