@@ -781,6 +781,16 @@ xval ask --run "$WORK/run9" --round 1 --model m --effort e --max-time 30
 assert_contains "$RUN_OUT" '"error": "runtime_unavailable"' "xval.py stops on the native preflight error"
 assert_no_file "$WORK/mock.log" "nothing is sent after a native preflight failure (no PATH fallback in a native bundle)"
 
+# A native bundle (it has a plugin manifest) whose wrapper is gone is package corruption;
+# the codex-call on PATH must not be used instead.
+mv "$FIX/bin/codex-pro-call" "$FIX/bin/codex-pro-call.moved"
+rm -f "$WORK/run9/runtime.txt" "$WORK/run9/runtime_error.txt" "$WORK/mock.log"
+( SKILL_DIR="$FIX/skills/codex-visual-xval" RUN="$WORK/run9" PATH="$WORK/stubbin:$PATH" bash "$WORK/native_resolver.sh" ) 2>/dev/null
+assert_eq "package_corruption" "$(head -1 "$WORK/run9/runtime_error.txt" 2>/dev/null)" \
+  "a native bundle without its wrapper is package_corruption"
+assert_no_file "$WORK/run9/runtime.txt" "a corrupt native bundle does not fall back to the codex-call on PATH"
+mv "$FIX/bin/codex-pro-call.moved" "$FIX/bin/codex-pro-call"
+
 printf '#!/bin/sh\necho "ok runtime=x sha256=y swift=z"\n' > "$FIX/bin/codex-pro-call"
 rm -f "$WORK/run9/runtime.txt" "$WORK/run9/runtime_error.txt"
 ( SKILL_DIR="$FIX/skills/codex-visual-xval" RUN="$WORK/run9" bash "$WORK/native_resolver.sh" ) 2>/dev/null
