@@ -286,3 +286,22 @@
 - [x] 10.7 真實後端端到端（第五次）。
   - 驗證：紀錄寫進 e2e-checklist §F。
   - [after: 10.6]
+
+## 11. Verify 第六輪修正（#23 第六輪 report 的 W1–W2、Q1–Q15）
+
+- [x] 11.1 規格與 design 依第六輪更新（design「第六輪：比對之後也核對答案檔，路徑在產生的地方就只放檔名」；Sealed Claude answers 比對之後核對答案檔與 meta、Blind Codex judgment 的登入檢查與 prompt 先寫、Structured result file 的 backend_error 與路徑、Privacy reminder before sending images 的寫入目錄封閉清單與損毀的圖）。
+  - 驗證：`spectra validate` 與 `spectra analyze` 無 warning。
+- [ ] 11.2 錯誤細節由檔名組成；路徑過濾跨過空白、保留 `~/.codex-pro/`（W1、Q15）。
+  - [after: 11.1]
+- [ ] 11.3 比對之後核對答案檔；輸入納入 meta.json；sam、adjudicate、result 先核對；frames.json 型別錯誤；原解析度複本限定在 run 內（W2、Q8、Q9）。
+  - [after: 11.2]
+- [ ] 11.4 寫入目錄的封閉清單、登入檢查看帳號家目錄、prompt 先寫、init 建不起目錄的類別、深層巢狀的回覆、compare_claims 不引用 Codex 的名稱（Q1、Q4、Q6、Q7、Q8、Q14）。
+  - [after: 11.3]
+- [ ] 11.5 損毀或截斷的圖拒收；SAM 塌陷格與量不到距離列為沒用上；JPEG 只壓縮一次的測試（Q10、Q12、Q13）。
+  - [after: 11.4]
+- [ ] 11.6 文件：SKILL Step 4.2 與 Step 5、README、media.py、design 的指向、CHANGELOG 與 #89、refresh 失效、測試註解（Q2、Q3、Q5、Q11、Q14、Q15）。
+  - 驗證：`bash tests/run.sh` 只剩 #24。
+  - [after: 11.5]
+- [ ] 11.7 真實後端端到端（第六次）。
+  - 驗證：紀錄寫進 e2e-checklist §F。
+  - [after: 11.6]

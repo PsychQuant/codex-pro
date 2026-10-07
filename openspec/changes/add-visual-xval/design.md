@@ -176,13 +176,13 @@ Claude 的逐格答案先寫到 run 目錄 `.codex-pro/visual-xval-run-<timestam
 
 改成 fail-closed：只有一份封閉列舉裡的錯誤算「沒有送出」，其餘一律保留紀錄、記為 `backend_error`（或可辨認的 rate_limit、oauth_invalid、timeout）。列舉是 `codex-call` 在任何網路請求之前就會停下的那幾種：圖片檢查（`--image …`）、未知選項或不合法的 `--max-time`、讀不到或空白的 prompt、`auth.json` 不是物件或缺欄位、token refresh 的鎖檔、refresh 沒拿到 token。不得依字面相似類推其他類。第三輪原本還列了「refresh 被拒（`invalid_grant`）」，第四輪拿掉，見下方第四輪的段落。
 
-代價：離線時這一輪也會被鎖住，要另開一個 run。要精確分辨，得由 `codex-call` 印出原始錯誤碼與已送出的位元組數，這交給上游 PsychQuant/parallel-ai-agents#89（使用者選擇，2026-10-07）。
+代價：離線時這一輪也會被鎖住，要另開一個 run。要精確分辨，得由 `codex-call` 印出原始錯誤碼與已送出的位元組數，這交給上游 PsychQuant/parallel-ai-agents#89（使用者選擇，2026-10-07）。第五輪起封閉列舉取消，見第五輪的段落；#89 在第六輪改為要求專屬的 exit status，見第六輪的段落。
 
 ### 第四輪：證據只在它看得到的範圍內作數
 
 第四輪 verify 找到的問題都是同一個原則的邊界：證據只能證明它看得到的東西。
 
-- **封閉列舉要錨定在 codex-call 自己的那一行**（U1）。第三輪有兩條沒有錨定，後端回應的文字含 `auth.json` 或 `invalid_grant` 就會被當成沒送出；`classify` 又取最後一行 `error:`，多行的錯誤內容可以偽造這一行。改為只看第一行、整行比對。token refresh 失敗時印的 `HTTP <status>` 與主請求失敗完全相同，所以 `invalid_grant` 不再算送出前，一律當成已送出；要分辨得靠上游 PsychQuant/parallel-ai-agents#89 把 refresh 的失敗另外標出來。
+- **封閉列舉要錨定在 codex-call 自己的那一行**（U1；第五輪起取消，見第五輪的段落）。第三輪有兩條沒有錨定，後端回應的文字含 `auth.json` 或 `invalid_grant` 就會被當成沒送出；`classify` 又取最後一行 `error:`，多行的錯誤內容可以偽造這一行。改為只看第一行、整行比對。token refresh 失敗時印的 `HTTP <status>` 與主請求失敗完全相同，所以 `invalid_grant` 不再算送出前，一律當成已送出；要分辨得靠上游 PsychQuant/parallel-ai-agents#89 把 refresh 的失敗另外標出來。
 - **放大輪的關係題只證明「近」**（U2）。第三輪規定沒有一對關鍵點時答 false，這讓 false 可能只是裁切區湊不出一對點，而放大輪只回 true／false，看不出模型看到了幾個點。所以放大輪只用來證明 `distance_pct < N`（或 `<=`）為 true，這個答案一定來自一對真的很近的點。使用者選擇這個做法（2026-10-07）：最簡單、一定成立，代價是「其實很遠」那一側較常停在 unverifiable。
 - **SAM 不能推翻雙方**（U3）。SAM 只追蹤錨定的物件，配對時會把分歧點硬配到最近的那個追蹤物件；第三輪讓這種配對「推翻雙方」，結果壓過了一致的放大輪證據。只有窮舉的證據（放大輪列出裁切區內每一個點）能推翻雙方。
 - **SAM 量的是遮罩的尖端**（U4）。尖端是遮罩上離進入點最遠的像素，只對器械這類物件是關鍵點；詞彙表的關鍵點卻可以是圓心。詞彙表要宣告 `track_point: tip`，SAM 才提供位置與關係證據；沒宣告時只提供數量證據（數量與關鍵點的種類無關）。使用者選擇（2026-10-07）。SAM 的關係量測要追蹤到「有尖端的」物件數等於雙方一致的數量，才兩個方向都採用。
@@ -199,6 +199,24 @@ Claude 的逐格答案先寫到 run 目錄 `.codex-pro/visual-xval-run-<timestam
 - **之後的每一步都核對輸入**（V8、N1）。封存時核對 init 寫下的輸入雜湊，crops、sam、adjudicate 開頭都核對封存的雜湊；原本 compare 之後改詞彙表的 `max_count` 就能改變裁決。
 - **只有 init 會建立目錄**（V5）。其他步驟遇到不是 run 的目錄就拒絕，不寫任何檔案。
 - **結果檔只寫檔名**（V4）。路徑在產生錯誤的地方就只放檔名；結果檔再把剩下的絕對路徑縮成最後一段，網址不動。第四輪只替換家目錄與暫存目錄，其他位置的完整路徑又跑了出來。
+
+### 第六輪：比對之後也核對答案檔，路徑在產生的地方就只放檔名
+
+- **錯誤細節由檔名組成**（W1）。第五輪的後備過濾以空白為界，含空白的目錄名照樣進結果檔；詞彙表路徑、sips 的指令列、OSError 的訊息也還帶完整路徑。改為：錯誤細節在產生的地方就只放檔名（sips 失敗只報結束碼，OSError 只報原因與檔名）；結果檔的後備過濾從路徑起點一路吃到最後一個 `/`，跨過空白，寧可多吃掉一些文字，也不留下目錄名。skill 自己的固定位置 `~/.codex-pro/` 保留原樣，否則使用者找不到 SAM 環境裝在哪裡。相對路徑無法從文字裡認出來，所以靠的是產生的地方只放檔名。
+- **比對之後，答案檔也要是比對時的那一份**（W2）。compare 記下它讀到的 claude.json、codex.json 的雜湊；crops、sam、adjudicate 開頭核對，不符就停在 `target_invalid`；結果檔寫出時也重算一次。原本 compare 之後改兩邊一致格的點，SAM 的錨點就跟著移動，結果檔仍寫封存完好。輸入的雜湊另外納入 meta.json 的設定（`sequence`、`order` 等），meta.json 沒有參考雜湊時封存拒絕，不再放行；frames.json 被改成型別不對的 JSON 時當成輸入被改過；原解析度複本必須在 `run/hires` 之內，與第一輪對影格的要求相同。
+- **會寫入目錄的步驟列成封閉清單**（Q1）。第五輪的「只有 init 會建立目錄」是一句總括判準，與 SKILL 的步驟順序衝突（Step 1 先建目錄、Step 2 confirm-privacy 寫進去），result 也要寫 `.codex-pro/`。改成封閉列舉，只有這五類，不得依性質相似類推：
+  1. `init` 建立 run 目錄（不存在時）與其中的 `frames/`、`hires/`；
+  2. `confirm-privacy` 只接管已經存在的空目錄（Step 1 建的），不建立任何目錄；
+  3. `crops` 在 run 目錄內建立 `crops/`；
+  4. `result` 把結果檔寫到 `--out`，沒給時才建立工作目錄下的 `.codex-pro/`；不是 run 的目錄裡的檔案它一概不讀；
+  5. `sam_env.sh install` 建立 `~/.codex-pro/sam-env`。
+
+  其他步驟遇到不是 run 的目錄就拒絕，不寫任何檔案。
+- **登入檢查看 codex-call 讀的那一份**（Q4）。codex-call 讀帳號本身家目錄的 `~/.codex/auth.json`，不看 `$HOME`；檢查原本跟著 `$HOME`，兩者可能不是同一個檔。refresh token 失效（久未使用）時檢查會通過、codex-call 在 refresh 時失敗，這一輪會用掉，圖片卻沒有送出：只寫進文件，請使用者重新登入、另開一個 run（Q5，使用者選擇，2026-10-07）。只看 access token 的到期時間分不出 refresh 會不會成功，擋下來會連 refresh 會成功的正常情況一起擋。
+- **送出前要就緒的東西，在記錄請求之前寫好**（Q6）。prompt 檔先寫，再記錄請求、啟動 codex-call；寫不進去就停在 `runtime_unavailable`，什麼都沒送出。
+- **`backend_error` 的意思是「codex-call 啟動之後失敗」**（Q3）。封閉列舉取消後，codex-call 自己的本機失敗（讀不到 prompt、鎖檔權限）也落在這一類；算作已送出是對的，但規格原本把它定義成「後端或連線出錯」，SKILL 也回報「Codex 後端出錯」。定義改成「codex-call 啟動之後失敗、沒有更具體的類別，算作已送出」。
+- **解不開的圖靠檔案結構判斷**（Q13）。sips 帶 `--matchTo` 時，IDAT 不是壓縮資料的 PNG 也回 exit 0，產出全黑的圖；截斷的 PNG、JPEG 則安靜地解出一部分。兩個模型在空白圖上的答案一致，一致率虛高。所以 init 在交給 sips 之前先核對檔案結構：PNG 每個 chunk 的 CRC、壓縮資料完整且長度符合 IHDR；JPEG 在掃描資料之後要有 end-of-image；GIF 要有結尾位元組；WebP 的長度欄位不超過檔案。看不出來的是結構完整、但壓縮資料本身壞掉的 JPEG、GIF、WebP。
+- **上游 #89 改成要求 exit status**（Q11）。#89 原本要 codex-call 在訊息裡多寫送出的位元組數，但第五輪已經決定字樣不可信。改為要求「主請求一個位元組都沒送出」時用專屬的 exit status，後端的文字偽造不了；上游做到之後，xval 才把那個 exit status 判為沒送出。使用者選擇（2026-10-07）。
 
 ### 放大輪不採用不是 run 的錯誤
 
