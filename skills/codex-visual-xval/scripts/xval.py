@@ -90,7 +90,7 @@ import media  # noqa: E402
 import result_file  # noqa: E402
 from run_files import (Stop, RUN_MARK, checked_comparison, dump, inputs_digest, is_run_dir, load,  # noqa: E402
                        neutral_names, now_iso, run_dir, seal_intact, zoom_record_intact)
-from codex_errors import classify  # noqa: E402
+from codex_errors import classify, login_problem  # noqa: E402
 from zoom_round import (class_lines, crop_box, dispute_points, enlargement, question,  # noqa: E402
                         to_frame, valid_zoom_value, zoom_prompt, WHOLE_IMAGE_PCT)
 import sam_track  # noqa: E402
@@ -298,6 +298,21 @@ def profile(run: str) -> dict:
     return data
 
 
+def own_words(message: str, run: str) -> str:
+    """A schema error about Codex's reply, keeping only the run's own words: a frame name or class
+    the reply invented is text an image could have put there, and it would reach Claude's output
+    as it was written (#23 verify round 5, N12)."""
+    vocab = load(os.path.join(run, "vocab.json"), {}) or {}
+    allowed = (set(neutral_names(run)) | set(vocab.get("classes", {})) | set(vocab.get("relations", {}))
+               | {"other", "objects", "points", "relations", "frame", "claims", "other_description"})
+    head, sep, rest = message.partition(": ")
+    if sep and head not in allowed:
+        head = "a claim"
+    text = rest if sep else message
+    text = re.sub(r"'([^']*)'", lambda m: m.group(0) if m.group(1) in allowed else "'…'", text)
+    return f"{head}: {text}" if sep else text
+
+
 def withdraw_request(run: str, rnd: str) -> None:
     records = load(os.path.join(run, "requests.json"), {})
     records.pop(rnd, None)
@@ -323,11 +338,9 @@ def call_codex(run: str, prompt: str, images: list[str], tag: str, argv: list[st
     except OSError as exc:   # the runtime never started, so nothing was sent
         withdraw_request(run, rnd)
         raise Stop("runtime_unavailable", f"cannot run codex-call: {exc}")
-    if done.returncode != 0:
-        error, detail, sent = classify(done.stderr, done.returncode)
-        if not sent:   # codex-call stopped before any network request: the round is not used up (S13)
-            withdraw_request(run, rnd)
-        raise Stop(error, detail)
+    if done.returncode != 0:   # counted as sent, whatever the message says (round 5, V1)
+        error, detail = classify(done.stderr, done.returncode)
+        raise Stop(error, f"{detail}; the request is counted as sent, so this round is used up")
     try:
         reply = open(output, encoding="utf-8").read()
     except OSError:
@@ -381,6 +394,9 @@ def before_request(run: str, rnd: str) -> None:
                    "(run `confirm-privacy` after the user agrees); nothing was sent")
     if not seal_intact(run, zoom=(rnd == "zoom")):
         raise Stop("target_invalid", "Claude's answers are not sealed, or changed after sealing; nothing was sent")
+    problem = login_problem()   # checked here, since a failed call counts as sent (round 5, V2)
+    if problem:
+        raise Stop("oauth_invalid", f"{problem}; run /codex-pro:codex-setup to log in; nothing was sent")
     if rnd == "1":   # what is sent is what was sealed, and it lies in the run (#23 verify round 4, U6)
         frames_dir = os.path.realpath(os.path.join(run, "frames"))
         if any(os.path.basename(n) != n or os.path.dirname(os.path.realpath(os.path.join(run, "frames", n))) != frames_dir
@@ -410,7 +426,7 @@ def ask(run: str, argv: list[str]) -> None:
         try:
             codex = compare_claims.by_frame(compare_claims.claims_list(data), vocab)
         except (compare_claims.SchemaError, TypeError) as exc:
-            raise Stop("parse_failed", f"Codex reply: {exc}")
+            raise Stop("parse_failed", f"Codex reply: {own_words(str(exc), run)}")
         if sorted(codex) != names:
             raise Stop("parse_failed", "Codex reply does not answer every image")
         dump(os.path.join(run, "codex.json"), data if isinstance(data, dict) else {"claims": data})

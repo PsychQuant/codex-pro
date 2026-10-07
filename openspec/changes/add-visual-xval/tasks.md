@@ -272,7 +272,7 @@
 
 - [x] 10.1 規格與 design 依使用者第五輪決定更新（design「第五輪：不靠字樣判斷送出，也不讓重新編碼拿走放大輪的細節」；Blind Codex judgment 一律當成已送出並在送出前自檢、Zoom round 從原解析度複本裁切與邊距、Sealed Claude answers 每一步核對輸入、Structured result file 只寫檔名、Privacy reminder before sending images 的 run 目錄與複本）。
   - 驗證：`spectra validate` 與 `spectra analyze` 無 warning。
-- [ ] 10.2 送出判定：codex-call 失敗一律保留紀錄；呼叫前自檢登入、影格與 prompt（V1、V2、N12）。
+- [x] 10.2 送出判定：codex-call 失敗一律保留紀錄；呼叫前自檢登入、影格與 prompt（V1、V2、N12）。
   - [after: 10.1]
 - [ ] 10.3 裁切與裁決：位置題邊距依高寬比換算；只有 `<`／`<=` 的關係題出放大題；SAM 位置證據的 margin 嚴格大於；沒用上的證據一律列出（V3、N4、N5、N10）。
   - [after: 10.1]
