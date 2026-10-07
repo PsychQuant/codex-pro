@@ -920,6 +920,11 @@ json.dump(c, open(f"{w}/runswap/claude.json", "w"))
 PY
 xval seal --run "$WORK/runswap"
 assert_contains "$RUN_OUT" '"error": "target_invalid"' "frame names that are both original and neutral names in another order are refused (S10)"
+case "$RUN_OUT" in
+  *"name the frames by the neutral names"*) fail "the refusal gives only a remedy that works (#23 verify round 3, L13)" ;;
+  *"new run"*) pass "the refusal gives only a remedy that works (#23 verify round 3, L13)" ;;
+  *) fail "the refusal gives only a remedy that works (#23 verify round 3, L13)" ;;
+esac
 
 # The request waits for the privacy confirmation and for an intact seal (#23 verify B1, I2).
 rm -rf "$WORK/run0" "$WORK/mock.log"
@@ -1012,6 +1017,7 @@ assert_contains "$prompt" "at most 2 objects of class INST" "the prompt carries 
 assert_contains "$prompt" "smallest distance between a key point of INST and a different key point of INST" \
   "the prompt defines distance_pct as the smallest distance between the two classes' key points"
 assert_contains "$prompt" "INST: the tip of the jaws" "the prompt gives the key-point definition of each class that has one"
+assert_contains "$prompt" "no such pair" "the prompt says what a relation is when a frame has no pair of key points (#23 verify round 3, T7)"
 assert_contains "$prompt" "one key point for every object you count" "the prompt asks for one key point per counted object of those classes"
 case "$prompt" in
   *touching*) fail "the prompt no longer asks what each point touches" ;;
@@ -1155,6 +1161,7 @@ if [ -x "$OLDPY" ] && "$OLDPY" -c 'import sys; sys.exit(0 if sys.version_info < 
   ( cd "$WORK/project" && "$OLDPY" "$SCRIPTS/xval.py" result --run "$WORK/runold" --out "$WORK/runold_result.md" >/dev/null 2>&1 )
   assert_contains "$(cat "$WORK/runold_result.md" 2>/dev/null)" "error: runtime_unavailable" "an old Python still writes the result file"
   assert_contains "$(cat "$WORK/runold_result.md" 2>/dev/null)" "Python 3.10" "the result file says which Python is required"
+  assert_contains "$(cat "$WORK/runold_result.md" 2>/dev/null)" "first_side_model:" "the old-Python result file has every frontmatter field (L8)"
 else
   skip "an old Python stops the run and still writes the result file" "no Python older than 3.10 at $OLDPY"
 fi
@@ -1204,6 +1211,14 @@ assert_file "$WORK/run5/zoom_prompt.md" "crops writes the zoom question file bot
 qfile=$(cat "$WORK/run5/zoom_prompt.md" 2>/dev/null)
 assert_contains "$qfile" "z01.png" "the question file names each crop"
 assert_contains "$qfile" "attached in this order: z01.png" "the question file states the order the crops are attached in (S4)"
+assert_contains "$qfile" "smallest distance" "the zoom relation question carries the full definition of distance_pct (#23 verify round 3, T7)"
+assert_contains "$qfile" "the tip of the jaws" "the zoom relation question carries the key-point definition"
+assert_contains "$qfile" "no such pair" "the zoom relation question says what holds without a pair of key points"
+assert_contains "$qfile" "z01.png (shown at 2x)" "each crop line states its actual scale (L12)"
+case "$qfile" in
+  *"cropped and enlarged"*) fail "the question file does not call every crop enlarged" ;;
+  *) pass "the question file does not call every crop enlarged" ;;
+esac
 case "$qfile" in
   *41.37*|*'"claims"'*|*'"d1"'*) fail "the question file carries no earlier answers and no dispute ids" ;;
   *) pass "the question file carries no earlier answers and no dispute ids" ;;
@@ -1397,7 +1412,7 @@ xval crops --run "$WORK/runbig"
 big_w=$(sips -g pixelWidth "$WORK/runbig/crops/z01.png" 2>/dev/null | awk '/pixelWidth/{print $2}')
 assert_eq "yes" "$([ -n "$big_w" ] && [ "$big_w" -le 2048 ] && echo yes || echo "no ($big_w)")" \
   "a crop is enlarged no further than a longer side of 2048 px (S15)"
-assert_contains "$(cat "$WORK/runbig/zoom_prompt.md" 2>/dev/null)" "enlarged 1.06x" "the question states the actual enlargement"
+assert_contains "$(cat "$WORK/runbig/zoom_prompt.md" 2>/dev/null)" "z01.png (shown at 1.06x)" "the question file states the actual enlargement"
 
 new_run "$WORK/run6"
 ask_with "$WORK/codex_reply.md" "$WORK/run6" 1
@@ -1472,6 +1487,17 @@ case "$(cat "$WORK/runns_result.md" 2>/dev/null)" in
   *"predates the request"*) fail "a run that was never sealed does not claim the seal predates the request" ;;
   *) pass "a run that was never sealed does not claim the seal predates the request" ;;
 esac
+
+# The first side's model is one line of identifier; anything else could add frontmatter keys (L1).
+rm -rf "$WORK/runfsx"
+xval init --run "$WORK/runfsx" --vocab "$WORK/vocab.json" --first-side "$(printf 'claude\nerror: none')" "$WORK"/imgs/*.png
+assert_contains "$RUN_OUT" '"error": "target_invalid"' "a --first-side with a line break is refused"
+assert_contains "$(cat "$result_file")" "sealed before they were read" \
+  "the limitations say the zoom answers' sealing before reading depends on the skill being followed (L10)"
+assert_contains "$(cat "$result_file")" "could still make the true count higher" \
+  "the limitations say what a count settled for one side does and does not show"
+assert_contains "$(cat "$result_file")" "PAD, THREAD" \
+  "the limitations name the classes compared by count only, whose count disagreements cannot be settled (T8)"
 
 # A first side that is not Claude (the native Codex bundle) is named in the limitations (F1).
 rm -rf "$WORK/runfs"

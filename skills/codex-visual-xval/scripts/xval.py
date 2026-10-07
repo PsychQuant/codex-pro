@@ -38,7 +38,7 @@ def _older_python(argv):
     syntax and would crash at import, leaving no result file (#23 verify B10). This function
     must itself stay 3.9-compatible."""
     found = "%d.%d.%d" % tuple(sys.version_info[:3])
-    detail = "Python 3.10 or later is required; this is Python %s (%s)" % (found, sys.executable)
+    detail = "Python 3.10 or later is required; this is Python %s (%s)" % (found, sys.executable.replace(os.path.expanduser("~"), "~"))
     command = argv[0] if argv else ""
     run = argv[argv.index("--run") + 1] if "--run" in argv and argv.index("--run") + 1 < len(argv) else None
     if not run:
@@ -56,11 +56,11 @@ def _older_python(argv):
                 return json.load(fh)
         except (OSError, ValueError):
             return default
-    profile, frames = read("profile.json", {}), read("frames.json", {})
+    profile, frames, meta = read("profile.json", {}), read("frames.json", {}), read("meta.json", {})
     now = datetime.datetime.now().astimezone()
     fm = [("skill", "visual-xval"), ("target", "%d images" % len(frames)), ("model", profile.get("model", "")),
           ("effort", profile.get("effort", "")), ("profile_source", profile.get("profile_source", "")),
-          ("timestamp", now.isoformat(timespec="seconds")), ("n_images", len(frames)), ("n_claims", 0),
+          ("first_side_model", meta.get("first_side_model", "")), ("timestamp", now.isoformat(timespec="seconds")), ("n_images", len(frames)), ("n_claims", 0),
           ("agreement_rate", ""), ("claude_answers_sha256", ""), ("sealed_at", ""), ("seal_broken", "true"),
           ("codex_requested_at", ""), ("codex_reply_sha256", ""), ("sam_status", "not_run"),
           ("error", "runtime_unavailable")]
@@ -131,7 +131,13 @@ image_size = media.image_size
 
 
 # ── init / seal ─────────────────────────────────────────────────
+FIRST_SIDE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:/@+-]{0,99}")
+
+
 def init(run: str, vocab_path: str, images: list[str], sequence: bool, first_side: str = "") -> None:
+    if first_side and not FIRST_SIDE.fullmatch(first_side):
+        # it goes into the result file's frontmatter, where a line break would add keys (round 3, L1)
+        raise Stop("target_invalid", "--first-side must be a model identifier on one line (letters, digits, . _ : / @ + -)")
     if os.path.exists(os.path.join(run, "frames.json")):
         # once only: the privacy confirmation and the seal both refer to this one set of images (round 3, L4)
         raise Stop("target_invalid", "this run is already initialised; start a new run directory", record=False)
@@ -266,7 +272,8 @@ def round1_prompt(run: str) -> str:
     constraints = [f"- {c}" for c in vocab.get("constraints", [])]
     constraints += [f"- There are at most {n} objects of class {c} in any image." for c, n in vocab.get("max_count", {}).items()]
     relations = "\n".join(f"- {k}: true when {r['definition']}, where distance_pct is the smallest distance between a key "
-                          f"point of {r['between'][0]} and a different key point of {r['between'][1]}"
+                          f"point of {r['between'][0]} and a different key point of {r['between'][1]}; when the image has "
+                          "no such pair of key points, it is false"
                           for k, r in vocab.get("relations", {}).items())
     key_points = "\n".join(f"- {c}: {d}" for c, d in vocab.get("key_points", {}).items())
     return f"""You are given {len(names)} images, in this order: {", ".join(names)}.
@@ -384,8 +391,10 @@ def map_source_names(run: str, answers: str) -> None:
     if named and all(n in frames for n in named) and all(n in by_source for n in named) \
             and any(by_source[n] != [n] for n in named):
         # f02.png given first becomes f01.png: such names could mean either file (#23 verify round 2, S10)
-        raise Stop("target_invalid", "the frame names are both original and neutral file names, in a different order; "
-                   "rename the original files or name the frames by the neutral names in frames.json")
+        # Neither reading can be told apart from the other, so the only remedy is a new run (round 3, L13).
+        raise Stop("target_invalid", "the original file names are also neutral names (f01.png …) of other images, so the "
+                   "answers cannot be matched to the images; start a new run with the images given in the order of their "
+                   "names, or renamed")
     if not named or any(n in frames for n in named) or not all(n in by_source for n in named):
         return   # already neutral (or not mappable): the schema check reports what is wrong
     if any(len(by_source[n]) > 1 for n in named):
@@ -575,6 +584,8 @@ def crops(run: str) -> None:
             raise Stop("target_invalid", f"cannot crop {item['frame']}: {exc}")
         if item["kind"] == "position":
             item = {**item, "key_point": vocab.get("key_points", {}).get(item["class"], "its key point")}
+        elif item["kind"] == "relation":   # the subagent sees only the question file (round 3, T7)
+            item = {**item, "key_points": {c: vocab.get("key_points", {}).get(c, "its key point") for c in item["between"]}}
         entry = {"crop": crop, "frame": item["frame"], "kind": item["kind"], "box_pct": box, "box_px": px,
                  "scale": scale, "question": question(item, box, scale)}
         for key in ("class", "relation", "definition", "between"):

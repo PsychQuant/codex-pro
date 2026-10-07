@@ -97,7 +97,7 @@ def result(run: str, argv: list[str]) -> None:
         "model": settings.get("model", ""),
         "effort": settings.get("effort", ""),
         "profile_source": settings.get("profile_source", ""),
-        "first_side_model": meta.get("first_side_model", ""),
+        "first_side_model": sanitize(str(meta.get("first_side_model", ""))),
         "timestamp": now.isoformat(timespec="seconds"),
         "n_images": n_images,
         "n_claims": n_claims,
@@ -176,10 +176,19 @@ def result(run: str, argv: list[str]) -> None:
     lines += ["", "## Limitations", "",
               "- Agreement between the two models does not establish that either is correct; only a human reference can.",
               "- Zoom-round answers on Claude's side come from a subagent that saw only the crops and the question "
-              "file; whether it was started fresh, with nothing else in its prompt, depends on the skill being followed.",
+              "file; whether it was started fresh, with nothing else in its prompt, and whether its answers were sealed "
+              "before they were read, depend on the skill being followed.",
+              "- A count disagreement settled for one side means that the other count was ruled out and that exactly "
+              "that many objects were seen in the crop or by SAM; objects that neither saw could still make the true "
+              "count higher.",
               f"- A SAM measurement within {adjudicated.get('sam_margin_pct', 1.0)}% of a threshold is not used as evidence.",
               "- Each round is asked once per run. A new run on the same images is a fresh attempt the program cannot "
               "link to this one, and it is no longer blind to what this run showed."]
+    vocab = load(os.path.join(run, "vocab.json"), {}) or {}
+    count_only = sorted(set(vocab.get("classes", {})) - set(vocab.get("key_points", {})))
+    if count_only:   # no zoom question and no SAM evidence for them (#23 verify round 3, T8)
+        lines.append(f"- Classes without a key point ({', '.join(count_only)}) are compared by count only: a count "
+                     "disagreement on them gets no zoom question and no SAM evidence, so it cannot be settled.")
     first = fm["first_side_model"]
     if not first:
         lines.append("- The model that gave the first side's answers was not recorded.")
