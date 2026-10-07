@@ -1108,13 +1108,18 @@ RUN_OUT=$(HOME="$WORK/home" MOCK_REPLY="$WORK/codex_reply.md" MOCK_LOG="$WORK/mo
   PATH="$WORK/stubbin:$PATH" python3 "$SCRIPTS/xval.py" ask --run "$WORK/run4s" --round 1 2>&1)
 assert_contains "$RUN_OUT" '"ok": true' "after fixing the image the round can be sent"
 
+# Only a closed list of failures counts as unsent, matched on codex-call's own first `error:` line in full
+# (#23 verify round 4, U1: a refresh failure prints `HTTP <status>` like the request's own, so it counts as sent).
 # Only a closed list of failures counts as unsent. codex-call prints `HTTP 0: (no body)` for every
 # failure before a response, sent or not, so anything off the list keeps the record and the
 # round stays used (#23 verify round 3, T1, L11).
 for case_ in "error: HTTP 0: (no body)|backend_error|kept" \
              "error: Codex error|backend_error|kept" \
              "error: Our servers are currently overloaded. Please try again later.|backend_error|kept" \
-             'error: HTTP 400: {"error":"invalid_grant","error_description":"expired"}|oauth_invalid|withdrawn' \
+             'error: HTTP 400: {"error":"invalid_grant","error_description":"expired"}|oauth_invalid|kept' \
+             "error: HTTP 500: failed while processing auth.json|backend_error|kept" \
+             "$(printf 'error: HTTP 400: {\n  "detail": "x"\n}\nerror: auth.json is not an object')|backend_error|kept" \
+             "error: auth.json is not an object|oauth_invalid|withdrawn" \
              "error: auth.json missing tokens.access_token/refresh_token|oauth_invalid|withdrawn" \
              "error: cannot read prompt file: gone|runtime_unavailable|withdrawn" \
              "error: open lock failed: /Users/russell/.codex/.token-refresh.lock: Permission denied|runtime_unavailable|withdrawn"; do

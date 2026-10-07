@@ -245,7 +245,7 @@
 
 - [x] 9.1 規格與 design 依使用者第四輪決定更新（Blind Codex judgment 的封閉列舉錨定、Adjudication without majority vote 的放大輪單向與 SAM 不推翻、Built-in SAM evidence 的 track_point、Sealed Claude answers 的送出前核對、Privacy reminder before sending images 的 run 目錄）。
   - 驗證：`spectra validate` 與 `spectra analyze` 無 warning。
-- [ ] 9.2 送出判定只看 codex-call 自己的第一行、整行比對；`invalid_grant` 當成已送出（U1）。
+- [x] 9.2 送出判定只看 codex-call 自己的第一行、整行比對；`invalid_grant` 當成已送出（U1）。
   - 驗證：後端訊息含 `auth.json` 或 `invalid_grant` 時紀錄保留；多行內容偽造的 `error:` 行不被採用。
   - [after: 9.1]
 - [ ] 9.3 裁決：放大輪關係題只證明「近」；SAM 不推翻雙方；SAM 位置與關係證據需要 `track_point: tip`；SAM 關係的完整性數有尖端的物件；margin 嚴格大於；沒用上的 SAM 證據也列出；下限高於上限時點名被排除的一方；位置題的裁切邊距涵蓋門檻（U2、U3、U4、M2、M7、M8）。
