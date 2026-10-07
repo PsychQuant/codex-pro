@@ -24,7 +24,8 @@ from typing import Any
 
 # A relation is "<quantity> <operator> <number>" and nothing looser: "很近（< 5）" names no
 # quantity, and two models given it would each measure something different (#23 verify I5).
-DEFINITION = re.compile(r"^\s*([a-z][a-z0-9_]*)\s*(<=|>=|<|>|==)\s*(-?\d+(?:\.\d+)?)\s*$")
+# distance_pct is the only quantity both models are told how to measure (#23 verify round 2, S7).
+DEFINITION = re.compile(r"^\s*(distance_pct)\s*(<=|>=|<|>|==)\s*(-?\d+(?:\.\d+)?)\s*$")
 MAX_EXACT_PAIRING = 7   # brute-force minimum-distance pairing up to 7! = 5040 orders
 
 
@@ -49,6 +50,11 @@ def vocab_problems(vocab: Any) -> list[str]:
     if not isinstance(vocab.get("classes"), dict) or not vocab["classes"]:
         problems.append("classes must be a non-empty object")
     classes = vocab.get("classes") if isinstance(vocab.get("classes"), dict) else {}
+    key_points = vocab.get("key_points", {})
+    if not isinstance(key_points, dict) or any(
+            c not in classes or not isinstance(d, str) or not d.strip() for c, d in key_points.items()):
+        problems.append("key_points must map vocabulary classes to a description of their key point")
+        key_points = {}
     relations = vocab.get("relations", {})
     if not isinstance(relations, dict):
         problems.append("relations must be an object")
@@ -56,11 +62,11 @@ def vocab_problems(vocab: Any) -> list[str]:
         for name, spec in relations.items():
             between = spec.get("between") if isinstance(spec, dict) else None
             definition = spec.get("definition") if isinstance(spec, dict) else None
-            if not (isinstance(between, list) and len(between) == 2 and all(c in classes for c in between)):
-                problems.append(f"relation '{name}' must name two vocabulary classes in 'between'")
+            if not (isinstance(between, list) and len(between) == 2 and all(c in key_points for c in between)):
+                problems.append(f"relation '{name}' must name, in 'between', two classes that have a key point")
             if not isinstance(definition, str) or not DEFINITION.match(definition):
                 problems.append(f"relation '{name}' needs a definition of the form "
-                                "'<quantity> <operator> <number>', e.g. 'distance_pct < 5'")
+                                "'distance_pct <operator> <number>', e.g. 'distance_pct < 5'")
     for key in ("position_threshold_pct", "sam_margin_pct"):
         value = vocab.get(key, 1)
         if not is_number(value) or value <= 0:
@@ -69,8 +75,8 @@ def vocab_problems(vocab: Any) -> list[str]:
     if not isinstance(max_count, dict) or any(
             c not in classes or not isinstance(n, int) or isinstance(n, bool) or n < 0 for c, n in max_count.items()):
         problems.append("max_count must map vocabulary classes to non-negative integers")
-    if "track_class" in vocab and vocab["track_class"] not in classes:
-        problems.append("track_class must be a vocabulary class")
+    if "track_class" in vocab and vocab["track_class"] not in key_points:
+        problems.append("track_class must be a class that has a key point")
     constraints = vocab.get("constraints", [])
     if not isinstance(constraints, list) or not all(isinstance(c, str) for c in constraints):
         problems.append("constraints must be a list of sentences")
@@ -86,6 +92,11 @@ def claims_list(data: Any) -> list[dict]:
     if not isinstance(claims, list):
         raise SchemaError("expected a list of claims or an object with a 'claims' list")
     return claims
+
+
+def located(vocab: dict) -> set:
+    """Classes compared by position: the ones the vocabulary gives a key point."""
+    return set(vocab.get("key_points", {}))
 
 
 def check_claim(claim: Any, vocab: dict) -> None:
@@ -113,9 +124,11 @@ def check_claim(claim: Any, vocab: dict) -> None:
             value = point.get(axis)
             if not is_number(value) or not 0 <= value <= 100:
                 raise SchemaError(f"{frame}: point {axis} must be a number from 0 to 100")
-    # One key point per counted object. Without this, a reply that leaves the points out
-    # compares as agreement, and the agreement rate is inflated (#23 verify B7).
-    for cls in allowed:
+    # One key point per counted object of a class that has a key point. Without this, a reply
+    # that leaves the points out compares as agreement (#23 verify B7). Classes without a
+    # key-point definition are compared by count only, and any points given for them are
+    # ignored: a pad or a thread has no point two models would place alike (round 2, R2).
+    for cls in located(vocab):
         n_points = sum(1 for p in points if p["class"] == cls)
         if n_points != objects.get(cls, 0):
             raise SchemaError(f"{frame}: {objects.get(cls, 0)} object(s) of class '{cls}' "
@@ -132,6 +145,7 @@ def by_frame(claims: list[dict], vocab: dict) -> dict[str, dict]:
     result = {}
     for claim in claims:
         check_claim(claim, vocab)
+        claim = {**claim, "points": [p for p in claim.get("points", []) if p["class"] in located(vocab)]}
         if claim["frame"] in result:
             raise SchemaError(f"{claim['frame']}: frame answered twice")
         result[claim["frame"]] = claim

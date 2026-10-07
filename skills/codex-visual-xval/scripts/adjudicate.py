@@ -125,7 +125,7 @@ def from_sam(item: dict, sam: dict, vocab: dict, margin: float) -> dict | None:
     if item["kind"] == "relation":
         parsed = DEFINITION.match(item.get("definition", ""))
         measured = frame.get("distance_pct")
-        if (not parsed or parsed.group(1) != "distance_pct" or measured is None or len(present) != 2
+        if (not parsed or parsed.group(1) != "distance_pct" or measured is None or len(present) < 2
                 or item.get("between") != [tracked, tracked]):
             return None
         op, threshold = parsed.group(2), float(parsed.group(3))

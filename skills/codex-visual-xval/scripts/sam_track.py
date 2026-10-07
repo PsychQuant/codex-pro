@@ -257,9 +257,9 @@ def track(frames_path: str, anchors_path: str, out_path: str) -> None:
                     geometry.update(present=score is not None and score > 0, object_score=score)
                 objects[str(k)] = geometry
             tips = [o["tip_pct"] for o in objects.values() if o and o["present"] and o["tip_pct"]]
-            distance = None
-            if len(tips) == 2:
-                distance = round(math.hypot(tips[0][0] - tips[1][0], (tips[0][1] - tips[1][1]) * height / width), 2)
+            # distance_pct: the smallest distance between two different tracked objects' tips
+            pairs = [(a, b) for i, a in enumerate(tips) for b in tips[i + 1:]]
+            distance = round(min(math.hypot(a[0] - b[0], (a[1] - b[1]) * height / width) for a, b in pairs), 2) if pairs else None
             results[name] = {"anchor": anchor["frame"], "invalid": iou > COLLAPSE_IOU, "max_iou": round(iou, 3),
                              "objects": objects, "distance_pct": distance}
     with open(out_path, "w", encoding="utf-8") as fh:
