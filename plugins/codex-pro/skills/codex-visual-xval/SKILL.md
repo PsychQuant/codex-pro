@@ -62,8 +62,16 @@ mkdir -p "$RUN"
 
 ## Step 2: 送出前的隱私提醒
 
-第一個請求送出之前，告訴使用者：**這些圖片會送到 OpenAI**。畫面上若有不該離開本機的內容（姓名標籤、
-評分表、人臉），要先遮蓋。本 skill 不替使用者判斷哪些內容該遮。使用者表示要先遮蓋時，停在這裡。
+第一個請求送出之前，**用 AskUserQuestion** 告訴使用者：**這些圖片會送到 OpenAI**。畫面上若有不該離開本機的
+內容（姓名標籤、評分表、人臉），要先遮蓋。本 skill 不替使用者判斷哪些內容該遮。使用者表示要先遮蓋時，
+停在這裡。使用者確認可以送出之後，才記錄這次確認：
+
+```bash
+python3 "$SKILL_DIR/scripts/xval.py" confirm-privacy --run "$RUN"
+```
+
+`ask` 沒有這筆紀錄就不送任何請求（`target_invalid`）。提醒只寫在文件裡時，跳過提醒的 run 與沒跳過的
+看起來一模一樣；這筆紀錄讓程式擋得住。
 
 ## Step 3: 建立 run、Claude 作答、封存
 
@@ -131,9 +139,13 @@ python3 "$SKILL_DIR/scripts/xval.py" ask --run "$RUN" --round 1 \
   --model "$MODEL" --effort "$EFFORT" --max-time "$MAX_TIME"
 ```
 
-`xval.py ask` 依序：讀 `runtime_error.txt`（有錯就停）、確認 runtime 存在、確認 `codex-call --help`
-列出 `--image`（沒有就 `runtime_unsupported`，**不送任何請求**）、送出請求、驗證回覆。它只印出狀態，
-Codex 的答案寫在 `$RUN/codex.json`。
+`xval.py ask` 依序：確認隱私確認已記錄、Claude 的答案已封存且未被改動、這一輪還沒送過（任一不符就
+`target_invalid`，**不送任何請求**）；讀 `runtime_error.txt`（有錯就停）、確認 runtime 存在、確認
+`codex-call --help` 列出 `--image`（沒有就 `runtime_unsupported`，**不送任何請求**）；記下請求時間後送出、
+驗證回覆、記下回覆的 SHA-256。它只印出狀態，Codex 的答案寫在 `$RUN/codex.json`。
+
+**每一輪只送一次**：同一輪再跑一次 `ask` 會被拒絕，已記錄的答案不會被取代。這是「不 retry」與
+「不用重問來湊一致」的程式保證。
 
 **codex-call MUST 前景同步執行（foreground, synchronous）**：嚴禁 `run_in_background`、`&`、nohup。
 結果檔寫完之前本 task 未完成。

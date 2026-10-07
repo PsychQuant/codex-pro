@@ -3,6 +3,7 @@
 one run directory, because each Bash call in the skill starts a fresh shell.
 
   init  --run RUN --vocab VOCAB [--sequence] IMAGE...   copy images under neutral names
+  confirm-privacy --run RUN                             record that the user confirmed the privacy reminder
   seal  --run RUN [--zoom]                              seal Claude's answers before Codex sees anything
   ask   --run RUN --round 1|zoom --model M --effort E --max-time S
   compare --run RUN                                     compare, print only what the zoom round needs
@@ -105,6 +106,16 @@ def init(run: str, vocab_path: str, images: list[str], sequence: bool) -> None:
     print(json.dumps({"ok": True, "frames": sorted(frames)}))
 
 
+def now_iso() -> str:
+    return datetime.datetime.now().astimezone().isoformat(timespec="seconds")
+
+
+def confirm_privacy(run: str) -> None:
+    os.makedirs(run, exist_ok=True)
+    dump(os.path.join(run, "privacy.json"), {"confirmed_at": now_iso()})
+    print(json.dumps({"ok": True}))
+
+
 def neutral_names(run: str) -> list[str]:
     return sorted(load(os.path.join(run, "frames.json"), {}))
 
@@ -114,6 +125,13 @@ def seal_answers(run: str, zoom: bool) -> None:
     record = os.path.join(run, "zoom_seal.json" if zoom else "seal.json")
     if not os.path.isfile(answers):
         raise Stop("target_invalid", f"Claude's answers are missing: {answers}")
+    # A seal is written once. Re-sealing, or sealing after Codex has answered, would make a
+    # late seal look exactly like an early one (#23 verify B1).
+    previous = load(record)
+    if previous:
+        raise Stop("target_invalid", f"already sealed at {previous.get('sealed_at')}; a seal is not rewritten")
+    if load(os.path.join(run, "requests.json"), {}).get("zoom" if zoom else "1"):
+        raise Stop("target_invalid", "Codex has already been asked this round; answers sealed now prove nothing")
     if not zoom:
         vocab = load(os.path.join(run, "vocab.json"))
         try:
@@ -200,6 +218,8 @@ def classify(stderr: str, status: int) -> tuple[str, str]:
 
 def call_codex(run: str, prompt: str, images: list[str], tag: str, argv: list[str]) -> str:
     path = runtime(run)
+    rnd = "1" if tag == "round1" else tag
+    record_request(run, rnd, requested_at=now_iso(), requested_epoch=datetime.datetime.now().timestamp())
     prompt_file = os.path.join(run, f"prompt_{tag}.md")
     output = os.path.join(run, f"codex_{tag}.md")
     with open(prompt_file, "w", encoding="utf-8") as fh:
@@ -213,13 +233,44 @@ def call_codex(run: str, prompt: str, images: list[str], tag: str, argv: list[st
     if done.returncode != 0:
         raise Stop(*classify(done.stderr, done.returncode))
     try:
-        return open(output, encoding="utf-8").read()
+        reply = open(output, encoding="utf-8").read()
     except OSError:
         raise Stop("parse_failed", "codex-call exited 0 but wrote no output")
+    record_request(run, rnd, reply_sha256=sealing.digest(output), answered_at=now_iso())
+    return reply
+
+
+def seal_intact(run: str, zoom: bool) -> bool:
+    record = load(os.path.join(run, "zoom_seal.json" if zoom else "seal.json"))
+    answers = os.path.join(run, "zoom_claude.json" if zoom else "claude.json")
+    return bool(record) and os.path.isfile(answers) and record.get("sha256") == sealing.digest(answers)
+
+
+def before_request(run: str, rnd: str) -> None:
+    """Everything a request waits for. Each of these used to be a sentence in SKILL.md that the
+    program did not check, so a run that skipped it looked identical to one that did not."""
+    if not load(os.path.join(run, "privacy.json")):
+        raise Stop("target_invalid", "the privacy reminder has not been confirmed for this run "
+                   "(run `confirm-privacy` after the user agrees); nothing was sent")
+    if not seal_intact(run, zoom=(rnd == "zoom")):
+        raise Stop("target_invalid", "Claude's answers are not sealed, or changed after sealing; nothing was sent")
+    earlier = load(os.path.join(run, "requests.json"), {}).get(rnd)
+    if earlier:
+        raise Stop("target_invalid", f"round {rnd} was already requested at {earlier.get('requested_at')}; "
+                   "a recorded answer is not replaced and requests are not retried")
+
+
+def record_request(run: str, rnd: str, **fields: Any) -> None:
+    path = os.path.join(run, "requests.json")
+    records = load(path, {})
+    records[rnd] = {**records.get(rnd, {}), **fields}
+    dump(path, records)
 
 
 def ask(run: str, argv: list[str]) -> None:
     rnd = option(argv, "--round")
+    if rnd in ("1", "zoom"):
+        before_request(run, rnd)
     if rnd == "1":
         names = neutral_names(run)
         reply = call_codex(run, round1_prompt(run), [os.path.join(run, "frames", n) for n in names], "round1", argv)
@@ -232,6 +283,7 @@ def ask(run: str, argv: list[str]) -> None:
         if sorted(codex) != names:
             raise Stop("parse_failed", "Codex reply does not answer every image")
         dump(os.path.join(run, "codex.json"), data if isinstance(data, dict) else {"claims": data})
+        record_request(run, "1", answers_sha256=sealing.digest(os.path.join(run, "codex.json")))
         print(json.dumps({"ok": True, "round": "1", "frames_answered": len(codex)}))
         return
     if rnd == "zoom":
@@ -252,6 +304,7 @@ def ask(run: str, argv: list[str]) -> None:
                 raise Stop("parse_failed", f"Codex zoom reply: no valid answer for {os.path.basename(crop)}")
             result[did] = value
         dump(os.path.join(run, "zoom_codex.json"), result)
+        record_request(run, "zoom", answers_sha256=sealing.digest(os.path.join(run, "zoom_codex.json")))
         print(json.dumps({"ok": True, "round": "zoom", "crops_answered": len(result)}))
         return
     raise Stop("target_invalid", f"unknown round: {rnd}")
@@ -288,6 +341,10 @@ def compare(run: str) -> None:
     else:
         check = {"seal_broken": True, "sha256_sealed": None, "sha256_now": None}
     dump(os.path.join(run, "seal_check.json"), check)
+    recorded = load(os.path.join(run, "requests.json"), {}).get("1", {}).get("answers_sha256")
+    codex_path = os.path.join(run, "codex.json")
+    codex_broken = not recorded or not os.path.isfile(codex_path) or sealing.digest(codex_path) != recorded
+    dump(os.path.join(run, "codex_check.json"), {"codex_record_broken": codex_broken})
     vocab = load(os.path.join(run, "vocab.json"))
     claude = compare_claims.by_frame(compare_claims.claims_list(load(os.path.join(run, "claude.json"))), vocab)
     codex = compare_claims.by_frame(compare_claims.claims_list(load(os.path.join(run, "codex.json"))), vocab)
@@ -297,7 +354,8 @@ def compare(run: str) -> None:
     dump(os.path.join(run, "comparison.json"), result)
     disputes = [{k: d[k] for k in ("id", "frame", "kind", "class", "relation") if k in d} for d in result["disagreements"]]
     print(json.dumps({"agreement_rate": result["agreement_rate"], "n_frames": result["n_frames"],
-                      "n_disagreements": len(disputes), "seal_broken": check["seal_broken"], "disputes": disputes},
+                      "n_disagreements": len(disputes), "seal_broken": check["seal_broken"],
+                      "codex_record_broken": codex_broken, "disputes": disputes},
                      ensure_ascii=False))
 
 
@@ -450,6 +508,8 @@ def result(run: str, argv: list[str]) -> None:
     adjudicated = load(os.path.join(run, "adjudication.json"), {})
     seal_record = load(os.path.join(run, "seal.json"), {})
     seal_check = load(os.path.join(run, "seal_check.json"), {})
+    request = load(os.path.join(run, "requests.json"), {}).get("1", {})
+    codex_check = load(os.path.join(run, "codex_check.json"), {})
     sam_state = load(os.path.join(run, "sam.json"), {})
     track = load(os.path.join(run, "track.json"), {}) if sam_state.get("sam_status") == "ok" else {}
     meta = load(os.path.join(run, "meta.json"), {})
@@ -473,6 +533,8 @@ def result(run: str, argv: list[str]) -> None:
         "claude_answers_sha256": seal_record.get("sha256", ""),
         "sealed_at": seal_record.get("sealed_at", ""),
         "seal_broken": str(bool(seal_check.get("seal_broken", not seal_record))).lower(),
+        "codex_requested_at": request.get("requested_at", ""),
+        "codex_reply_sha256": request.get("reply_sha256", ""),
         "sam_status": sam_state.get("sam_status", "not_run"),
     }
     if error:
@@ -517,6 +579,14 @@ def result(run: str, argv: list[str]) -> None:
               f"Claude's answers: SHA-256 `{fm['claude_answers_sha256'] or 'none'}`, sealed at {fm['sealed_at'] or 'never'}; "
               f"recomputed before comparison: `{seal_check.get('sha256_now') or 'n/a'}` → "
               + ("**broken**." if fm["seal_broken"] == "true" else "intact.")]
+    if request:
+        order = (seal_record.get("sealed_epoch") or 0) < (request.get("requested_epoch") or 0)
+        lines += ["", f"Codex round 1: requested at {request.get('requested_at')}; reply SHA-256 "
+                  f"`{request.get('reply_sha256') or 'none'}`. The seal "
+                  + ("predates the request." if order else "**does not predate the request**.")]
+        if codex_check.get("codex_record_broken"):
+            lines += ["", "**Codex's answers changed after they were recorded**: the comparison used a file whose "
+                      "digest no longer matches the one recorded when Codex answered."]
     lines += ["", "## Limitations", "",
               "- Agreement between the two models does not establish that either is correct; only a human reference can.",
               "- Claude knows where the disagreements are when it answers the zoom round, so its zoom answers are not "
@@ -536,7 +606,9 @@ def main(argv: list[str]) -> None:
         print(__doc__, file=sys.stderr)
         sys.exit(64)
     try:
-        if command == "init":
+        if command == "confirm-privacy":
+            confirm_privacy(run)
+        elif command == "init":
             skip = {"--run", "--vocab"}
             images = [a for i, a in enumerate(argv[1:], 1)
                       if a not in ("--run", "--vocab", "--sequence") and argv[i - 1] not in skip]

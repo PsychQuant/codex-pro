@@ -27,6 +27,7 @@ def seal(answers: str, seal_path: str) -> None:
         "path": answers,
         "sha256": digest(answers),
         "sealed_at": datetime.datetime.now().astimezone().isoformat(timespec="seconds"),
+        "sealed_epoch": datetime.datetime.now().timestamp(),   # orders the seal against the request
     }
     with open(seal_path, "w", encoding="utf-8") as fh:
         json.dump(record, fh, ensure_ascii=False, indent=1)

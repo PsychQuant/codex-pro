@@ -36,6 +36,9 @@ checks = {
     "name": "name: codex-visual-xval" in fm,
     "tools": all(t in fm for t in ("- Bash", "- Read")),
     "privacy_before_send": pos("## Step 2: 送出前的隱私提醒") < pos("## Step 4: Invoke codex-call"),
+    "privacy_gate": bool(re.search(r"## Step 2: 送出前的隱私提醒\n(.*?)\n## Step 3", body, re.DOTALL))
+        and "AskUserQuestion" in re.search(r"## Step 2: 送出前的隱私提醒\n(.*?)\n## Step 3", body, re.DOTALL).group(1)
+        and "confirm-privacy" in re.search(r"## Step 2: 送出前的隱私提醒\n(.*?)\n## Step 3", body, re.DOTALL).group(1),
     "seal_before_send": pos("xval.py\" seal --run") < pos("### Step 4.2: codex-call invocation"),
     "runtime_files": bool(step4) and 'CODEX_CALL="$(command -v codex-call)"' in step4.group(1)
         and "runtime_error.txt" in step4.group(1) and "runtime.txt" in step4.group(1),
@@ -557,6 +560,7 @@ xval() {   # xval <args...> — mock runtime, isolated HOME
 new_run() {   # new_run <dir> — init a run on the twelve images and seal Claude's marked claims
   rm -rf "$1" "$WORK/mock.log" "$WORK/prompts.txt"
   xval init --run "$1" --vocab "$WORK/vocab.json" "$WORK"/imgs/*.png
+  xval confirm-privacy --run "$1"
   cp "$WORK/claude_marked.json" "$1/claude.json"
   printf '%s\n' "$WORK/stubbin/codex-call" > "$1/runtime.txt"
   : > "$1/runtime_error.txt"
@@ -577,6 +581,35 @@ RUN_OUT=$(HOME="$WORK/home" MOCK_HELP_IMAGE=0 MOCK_LOG="$WORK/mock.log" MOCK_PRO
 assert_eq "5" "$RUN_STATUS" "a runtime without --image stops the run (exit 5)"
 assert_contains "$RUN_OUT" '"error": "runtime_unsupported"' "a runtime without --image is runtime_unsupported"
 assert_no_file "$WORK/mock.log" "no request is sent to a runtime without --image"
+
+# The request waits for the privacy confirmation and for an intact seal (#23 verify B1, I2).
+rm -rf "$WORK/run0" "$WORK/mock.log"
+xval init --run "$WORK/run0" --vocab "$WORK/vocab.json" "$WORK"/imgs/*.png
+cp "$WORK/claude_marked.json" "$WORK/run0/claude.json"
+printf '%s\n' "$WORK/stubbin/codex-call" > "$WORK/run0/runtime.txt"; : > "$WORK/run0/runtime_error.txt"
+xval seal --run "$WORK/run0"
+xval ask --run "$WORK/run0" --round 1 --model m --effort e --max-time 30
+assert_contains "$RUN_OUT" '"error": "target_invalid"' "no request without a recorded privacy confirmation"
+assert_contains "$RUN_OUT" "privacy" "the refusal names the missing privacy confirmation"
+assert_no_file "$WORK/mock.log" "nothing is sent before the privacy confirmation"
+rm -rf "$WORK/run0"
+xval init --run "$WORK/run0" --vocab "$WORK/vocab.json" "$WORK"/imgs/*.png
+xval confirm-privacy --run "$WORK/run0"
+cp "$WORK/claude_marked.json" "$WORK/run0/claude.json"
+printf '%s\n' "$WORK/stubbin/codex-call" > "$WORK/run0/runtime.txt"; : > "$WORK/run0/runtime_error.txt"
+xval ask --run "$WORK/run0" --round 1 --model m --effort e --max-time 30
+assert_contains "$RUN_OUT" '"error": "target_invalid"' "no request before Claude's answers are sealed"
+assert_no_file "$WORK/mock.log" "nothing is sent before the seal"
+xval seal --run "$WORK/run0"
+printf ' ' >> "$WORK/run0/claude.json"
+xval ask --run "$WORK/run0" --round 1 --model m --effort e --max-time 30
+assert_contains "$RUN_OUT" '"error": "target_invalid"' "no request when the answers changed after sealing"
+assert_no_file "$WORK/mock.log" "nothing is sent when the seal does not match"
+seal_before=$(cat "$WORK/run0/seal.json")
+xval seal --run "$WORK/run0"
+assert_eq "5" "$RUN_STATUS" "a second seal is refused"
+assert_eq "$seal_before" "$(cat "$WORK/run0/seal.json")" "a refused second seal leaves the first seal unchanged"
+rm -f "$WORK/mock.log"
 
 # A runtime path that is missing is runtime_unavailable, not a crash.
 : > "$WORK/run1/runtime.txt"
@@ -614,6 +647,21 @@ case "$RUN_OUT" in
   *) pass "ask prints a status, not Codex's answers (keeps Claude blind for the zoom round)" ;;
 esac
 assert_file "$WORK/run2/codex.json" "Codex's answers are written to the run directory"
+
+# One request per round; the answer is recorded once and never replaced (#23 verify B3).
+codex_before=$(cat "$WORK/run2/codex.json")
+RUN_STATUS=0
+RUN_OUT=$(HOME="$WORK/home" MOCK_REPLY="$WORK/codex_reply.md" MOCK_LOG="$WORK/mock.log" MOCK_PROMPTS="$WORK/prompts.txt" \
+  PATH="$WORK/stubbin:$PATH" python3 "$SCRIPTS/xval.py" ask --run "$WORK/run2" --round 1 --model m --effort e --max-time 30 2>&1) || RUN_STATUS=$?
+assert_contains "$RUN_OUT" '"error": "target_invalid"' "a second round-1 request is refused"
+assert_eq "1" "$(wc -l < "$WORK/mock.log" | tr -d ' ')" "the refused second request sends nothing"
+assert_eq "$codex_before" "$(cat "$WORK/run2/codex.json")" "Codex's recorded answer is unchanged"
+rec=$(cat "$WORK/run2/requests.json" 2>/dev/null)
+assert_eq "64 True" "$(json_get "$rec" '"%d %s" % (len(d["1"]["reply_sha256"]), "+" in d["1"]["requested_at"] or d["1"]["requested_at"].endswith("Z"))')" \
+  "the request time and the reply's SHA-256 are recorded"
+rm -f "$WORK/run2/seal.json"
+xval seal --run "$WORK/run2"
+assert_eq "5" "$RUN_STATUS" "Claude's answers cannot be sealed after Codex has answered"
 
 # A reply that is not JSON is parse_failed, and nothing is retried.
 new_run "$WORK/run3"
@@ -739,6 +787,12 @@ assert_eq "$(shasum -a 256 "$WORK/run5/claude.json" | cut -d' ' -f1)" "$(fm "$re
   "frontmatter: claude_answers_sha256 is the digest of Claude's answers"
 assert_eq "false" "$(fm "$result_file" seal_broken)" "frontmatter: seal_broken"
 assert_eq "not_installed" "$(fm "$result_file" sam_status)" "frontmatter: sam_status"
+assert_eq "$(shasum -a 256 "$WORK/run5/codex_round1.md" | cut -d' ' -f1)" "$(fm "$result_file" codex_reply_sha256)" \
+  "frontmatter: codex_reply_sha256 is the digest of Codex's round-1 reply"
+case "$(fm "$result_file" codex_requested_at)" in
+  ????-??-??T??:??:??*[+-]??:??) pass "frontmatter: codex_requested_at with an explicit offset" ;;
+  *) fail "frontmatter: codex_requested_at with an explicit offset (got '$(fm "$result_file" codex_requested_at)')" ;;
+esac
 case "$(fm "$result_file" sealed_at)" in
   ????-??-??T??:??:??[+-]??:??) pass "frontmatter: sealed_at with an explicit offset" ;;
   *) fail "frontmatter: sealed_at with an explicit offset" ;;
@@ -782,6 +836,23 @@ result_in "$WORK/run8"
 seal_file=$(ls -t "$WORK"/project/.codex-pro/visual-xval-*.md | head -1)
 assert_eq "true" "$(fm "$seal_file" seal_broken)" "an edited answer file is reported as seal_broken: true"
 assert_contains "$(cat "$seal_file")" "seal failed" "the conclusion says the seal failed"
+
+# An edited Codex answer is reported too: the record covers both sides (#23 verify B3).
+new_run "$WORK/run8b"
+ask_with "$WORK/codex_reply.md" "$WORK/run8b" 1
+python3 - "$WORK/run8b/codex.json" <<'PY'
+import json, sys
+d = json.load(open(sys.argv[1])); d["claims"][7]["relations"]["tips_together"] = True
+json.dump(d, open(sys.argv[1], "w"))
+PY
+xval compare --run "$WORK/run8b"
+assert_eq "True" "$(json_get "$RUN_OUT" 'd["codex_record_broken"]')" "compare reports that Codex's answer no longer matches its record"
+xval adjudicate --run "$WORK/run8b"
+sleep 1
+result_in "$WORK/run8b"
+codex_file=$(ls -t "$WORK"/project/.codex-pro/visual-xval-*.md | head -1)
+assert_contains "$(cat "$codex_file")" "Codex's answers changed after they were recorded" \
+  "the result file says Codex's recorded answer was changed"
 
 # ── Native Codex bundle: resolver writes the runtime files in its own shell (task 4.4) ──
 for native in "$REPO_ROOT/.codex/skills/codex-visual-xval/SKILL.md" "$REPO_ROOT/skills/codex-visual-xval/SKILL.md"; do
