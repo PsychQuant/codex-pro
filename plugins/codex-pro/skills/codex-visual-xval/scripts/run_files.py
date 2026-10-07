@@ -72,6 +72,9 @@ def failure(exc: BaseException) -> str:
     """What went wrong, without local directories: an OSError names its file by name only, and a
     failed tool reports its exit status, not its command line, which holds full paths (#23 verify
     round 6, W1)."""
+    if isinstance(exc, subprocess.TimeoutExpired):   # its text holds the command line (round 7, Y2)
+        tool = os.path.basename(str(exc.cmd[0])) if isinstance(exc.cmd, (list, tuple)) and exc.cmd else "a tool"
+        return f"{tool} timed out after {int(exc.timeout)} s"
     if isinstance(exc, subprocess.CalledProcessError):
         tool = os.path.basename(str(exc.cmd[0])) if isinstance(exc.cmd, (list, tuple)) and exc.cmd else "a tool"
         return f"{tool} exited {exc.returncode}"

@@ -251,20 +251,22 @@ def main(argv: list[str]) -> None:
             fail("target_invalid", "; ".join(problems), 2)
         try:
             claude = by_frame(claims_list(load_json(argv[2])), vocab)
-        except (OSError, ValueError, SchemaError) as exc:
+        except OSError:   # the file by its name only (#23 verify round 7, Y2)
+            fail("target_invalid", f"Claude claims unreadable: {os.path.basename(argv[2])}", 2)
+        except (ValueError, SchemaError, TypeError, RecursionError) as exc:
             fail("target_invalid", f"Claude claims: {exc}", 2)
         if not claude:
             fail("target_invalid", "Claude claims: no frames", 2)
         try:
             codex = by_frame(claims_list(load_json(argv[3])), vocab)
-        except (OSError, ValueError, SchemaError, RecursionError):
+        except (OSError, ValueError, SchemaError, TypeError, RecursionError):
             # nothing from Codex's claims is quoted: a name in them is text an image could have put there
             # (#23 verify round 5, N12; round 6, Q14)
             fail("parse_failed", "Codex claims do not match the claim schema", 3)
         if set(codex) != set(claude):
             missing = sorted(set(claude) - set(codex))   # Claude's own frame names
             extra = len(set(codex) - set(claude))
-            fail("parse_failed", f"Codex claims cover other frames (missing={missing}, {extra} not given)", 3)
+            fail("parse_failed", f"Codex claims cover other frames (missing={missing}, {extra} not asked about)", 3)
         print(json.dumps(compare(vocab, claude, codex, frame_aspects(frames_path)), ensure_ascii=False, indent=1))
         return
     print(__doc__, file=sys.stderr)

@@ -54,11 +54,11 @@ def login_problem() -> str | None:
         with open(path, encoding="utf-8") as fh:
             data = json.load(fh)
     except FileNotFoundError:
-        return "Codex is not logged in (there is no ~/.codex/auth.json)"
+        return "Codex is not logged in (there is no auth.json)"   # no path in the message (round 7, Y1)
     except (OSError, ValueError):
-        return "the Codex token store ~/.codex/auth.json cannot be read"
+        return "the Codex token store (auth.json) cannot be read"
     tokens = data.get("tokens") if isinstance(data, dict) else None
     if not (isinstance(tokens, dict)
             and all(isinstance(tokens.get(k), str) and tokens[k] for k in ("access_token", "refresh_token"))):
-        return "the Codex token store ~/.codex/auth.json holds no tokens"
+        return "the Codex token store (auth.json) holds no tokens"
     return None

@@ -1168,6 +1168,57 @@ PY
 )
 assert_contains "$w1" "leaks=[] kept=True url=True own=True" \
   "the path filter drops directory names with spaces, keeps file names, URLs and ~/.codex-pro (W1, Q15)"
+# Round 7 (X2, Y1, Y2): apostrophes, brackets, a home-like prefix, the SAM place only, URLs and own messages.
+y1=$(HOME="$WORK/home" python3 -B - "$SCRIPTS" "$WORK/home" <<'PY'
+import subprocess, sys
+sys.path.insert(0, sys.argv[1])
+import result_file, run_files
+home = sys.argv[2]
+cases = {
+    "parens": "Permission denied: /Volumes/Client (2024)/Jane Doe/scan.png",
+    "apostrophe": "'/Volumes/Data/Jane's Clients/case42/scan.png'",
+    "brackets": "/Volumes/Data/[ACME] Corp/scan.png",
+    "traceback": 'File "/opt/Body Conservation/Wang (copy)/x.py", line 3',
+    "home_prefix": f"cannot read {home}n/Clients/Jane Doe/scan.png",
+    "codex_pro": f"tool failed: '{home}/.codex-pro/Client Data/case42/scan.png'",
+}
+out = {k: result_file.sanitize(v) for k, v in cases.items()}
+words = ("Client (2024)", "Jane", "ACME", "Wang", "Clients", "Client Data", "case42")
+leaks = [k for k, v in out.items() if any(w in v for w in words)]
+names = all(n in out[k] for k, n in (("parens", "scan.png"), ("apostrophe", "scan.png"), ("brackets", "scan.png"),
+                                     ("traceback", "x.py"), ("home_prefix", "scan.png"), ("codex_pro", "scan.png")))
+url = result_file.sanitize("cannot read /Volumes/A B/scan.png, see https://a.b/c/d")
+own = "Codex is not logged in (there is no auth.json); run /codex-pro:codex-setup to log in; nothing was sent"
+timeout = run_files.failure(subprocess.TimeoutExpired(["/Volumes/Client Data/bin/codex-call", "--help"], 120))
+print(f"leaks={leaks} names={names} url={'https://a.b/c/d' in url and 'scan.png' in url and 'A B' not in url} "
+      f"own={result_file.sanitize(own) == own} timeout={timeout!r}")
+PY
+)
+assert_contains "$y1" "leaks=[] names=True" "directory names with parentheses, apostrophes and brackets, a home-like prefix and paths under ~/.codex-pro are cut (X2, Y1)"
+assert_contains "$y1" "url=True" "a URL after a path is kept"
+assert_contains "$y1" "own=True" "xval's own message is not eaten"
+assert_contains "$y1" "timeout='codex-call timed out after 120 s'" "a timed-out tool reports its name and time only (Y2)"
+for login_msg in "$(grep -o '"Codex is not logged in[^"]*"' "$SCRIPTS/codex_errors.py")" "$(grep -o '"the Codex token store[^"]*"' "$SCRIPTS/codex_errors.py")"; do
+  case "$login_msg" in
+    *"~/"*|*"/."*) fail "the login check's messages carry no path ($login_msg)" ;;
+    *) pass "the login check's messages carry no path" ;;
+  esac
+done
+mkdir -p "$WORK/Client Data"
+y2a=$(python3 "$SCRIPTS/compare_claims.py" compare "$WORK/vocab.json" "$WORK/Client Data/missing.json" "$WORK/claude_marked.json" 2>&1)
+case "$y2a" in
+  *"Client Data"*) fail "compare_claims names an unreadable Claude file by its name only (Y2)" ;;
+  *) pass "compare_claims names an unreadable Claude file by its name only (Y2)" ;;
+esac
+python3 - "$WORK" <<'PY'
+import json, sys
+w = sys.argv[1]
+c = json.load(open(f"{w}/claude_marked.json"))
+x = json.loads(json.dumps(c)); x["claims"][0]["points"] = [{"class": ["INST"], "x_pct": 1, "y_pct": 1}]
+json.dump(x, open(f"{w}/codex_unhashable.json", "w"))
+PY
+y9a=$(python3 "$SCRIPTS/compare_claims.py" compare "$WORK/vocab.json" "$WORK/claude_marked.json" "$WORK/codex_unhashable.json" 2>&1)
+assert_contains "$y9a" "parse_failed" "a Codex claim of an odd type is parse_failed, not a traceback (Y9)"
 rm -rf "$WORK/runw1a" "$WORK/Client Data"; mkdir -p "$WORK/Client Data/Wang Xiaoming"
 IMG1=$(ls "$WORK"/imgs/*.png | head -1)
 xval init --run "$WORK/runw1a" --vocab "$WORK/Client Data/Wang Xiaoming/vocab.json" "$IMG1"
@@ -1887,6 +1938,15 @@ case "$q14a $q14b" in
   *) pass "compare_claims quotes no frame or class name from Codex's claims (Q14)" ;;
 esac
 assert_contains "$q14a $q14b" "parse_failed" "and still reports parse_failed"
+python3 - "$WORK" <<'PY'
+import json, sys
+w = sys.argv[1]
+c = json.load(open(f"{w}/claude_marked.json"))
+x = json.loads(json.dumps(c)); extra = json.loads(json.dumps(c["claims"][0])); extra["frame"] = "f99.png"
+x["claims"].append(extra); json.dump(x, open(f"{w}/codex_extra_valid.json", "w"))
+PY
+q9w=$(python3 "$SCRIPTS/compare_claims.py" compare "$WORK/vocab.json" "$WORK/claude_marked.json" "$WORK/codex_extra_valid.json" 2>&1)
+assert_contains "$q9w" "1 not asked about" "frames Codex added are reported as not asked about (Y9)"
 # Q15: a vocabulary without key points gives SAM nothing to track; checked after the inputs.
 python3 - "$WORK" <<'PY'
 import json, sys

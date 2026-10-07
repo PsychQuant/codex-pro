@@ -63,26 +63,33 @@ def local_roots() -> list[tuple[str, str]]:
     return sorted((r for r in roots if len(r[0]) > 1), key=lambda r: -len(r[0]))
 
 
-OWN_PLACES = ("~/.codex-pro/",)   # the skill's own fixed locations, which tell the user where to look
+# The skill's own fixed location, which tells the user where SAM goes. Only the place itself is kept:
+# anything below it is cut like any other path (#23 verify round 7, X2).
+OWN_PLACE = re.compile(r"~/\.codex-pro/sam-env(?![\w./-])")
+PATH = re.compile(r"(?<![\w.:/$~\\])(?:~|\$TMPDIR)?/(?:(?!://)[^\"\x00])*/")
+
+
+def cut_paths(clause: str) -> str:
+    """Any absolute path keeps only its last part. A path runs from its root to the last '/' of the
+    clause, across spaces, apostrophes, parentheses and brackets, which directory names hold ("Client
+    (2024)", "Jane's"); it stops at a double quote and never runs into a URL ('://'). Cutting some
+    text too many is better than leaving a directory name (#23 verify round 6, W1; round 7, Y1)."""
+    return PATH.sub("…/", clause)
 
 
 def sanitize(text: str) -> str:
     """One line, no control characters, and no local directories. Details are built from file names
     where they are raised (#23 verify round 6, W1); this is the backstop for what a tool printed. The
-    machine's roots are replaced first, then any absolute path is cut back to its last part: from its
-    root to the last '/' before a quote or bracket, across spaces, since a directory name can hold
-    spaces (round 5, V4 stopped at the first space). Cutting some text too many is better than leaving
-    a directory name. A URL is left alone: its slashes follow ':' or '/' or a word."""
-    text = re.sub(r"[\r\n\t]", " ", text)
-    text = re.sub(r"[\x00-\x1f\x7f]", "", text)
+    machine's roots are replaced only where a path continues after them, so a directory that merely
+    starts like the home directory is not half-replaced (round 7, Y1). Each line, and each clause of
+    it split at '; ' (how the skill joins its own messages), is cut on its own."""
+    text = text.replace("\r\n", "\n").replace("\r", "\n").replace("\t", " ")
+    text = re.sub(r"[\x00-\x09\x0b-\x1f\x7f]", "", text)
     for root, name in local_roots():
-        text = text.replace(root, name)
-    for n, place in enumerate(OWN_PLACES):
-        text = text.replace(place, f"\x00{n}\x00")
-    text = re.sub(r"(?<![\w.:/$~\\])(?:~|\$TMPDIR)?/[^'\"\])\]\x00]*/", "…/", text)
-    for n, place in enumerate(OWN_PLACES):
-        text = text.replace(f"\x00{n}\x00", place)
-    return text[:500]
+        text = re.sub(re.escape(root) + r"(?=/|$|[\s'\"])", name, text, flags=re.MULTILINE)
+    text = OWN_PLACE.sub("\x00", text)
+    lines = ["; ".join(cut_paths(c) for c in line.split("; ")) for line in text.split("\n")]
+    return " ".join(lines).replace("\x00", "~/.codex-pro/sam-env")[:500]
 
 
 def describe(item: dict) -> str:
