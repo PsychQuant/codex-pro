@@ -197,3 +197,46 @@
   - 詞彙表含有關鍵點的類別與只計數的類別，跑完整流程。
   - 驗證：紀錄寫進 e2e-checklist §F。
   - [after: 7.7]
+
+## 8. Verify 第三輪修正（#23 第三輪 report 的 T1–T9、L1–L16）
+
+- [x] 8.1 規格與 design 依使用者第三輪決定更新（Adjudication without majority vote 改為上下界、Blind Codex judgment 改為 fail-closed、Zoom round、Structured result file、Privacy reminder before sending images、Cross-harness version consistency）。
+  - 區間裁決（T5）、推翻雙方的規則（T3）、關係的單向證據（T4）、只比數量的類別無法裁決（T8）、送出判定的封閉列舉（T1）、放大輪不採用不是 run 的錯誤（T6）、白名單與圖片結尾（T2、L14）。
+  - design.md 補上第三輪的決定與理由，更正 Implementation Contract 與「放大 2 倍」。
+  - native-plugin delta spec 不再把原生發行寫成 0.9.0 的功能。
+  - 驗證：`spectra validate` 與 `spectra analyze` 無 warning。
+- [ ] 8.2 送出判定 fail-closed（T1、L11）。
+  - 只有封閉列舉裡的錯誤撤回請求紀錄；`HTTP 0`、串流 error 事件與無法辨認的錯誤保留紀錄、記為 `backend_error`。
+  - token refresh 被拒（`invalid_grant`）與 auth.json 錯誤記為 `oauth_invalid` 並撤回紀錄。
+  - 驗證：`HTTP 0: (no body)`、`Codex error`、伺服器過載都保留紀錄、第二次請求被拒；`invalid_grant`、讀不到 prompt 撤回紀錄。
+  - [after: 8.1]
+- [ ] 8.3 影格複本只留顯示需要的區塊（T2、L14）。
+  - JPEG 略過 marker 前的填充位元組；WebP 只讀到 RIFF 長度為止；PNG 與 WebP 改用白名單。
+  - 驗證：EOI 前有填充位元組的 JPEG、後面接第二張圖的 WebP、帶 `caBX` 的 PNG 與帶 `C2PA` 的 WebP，複本都不含附加或額外的資料，且仍能解碼。
+  - [after: 8.1]
+- [ ] 8.4 裁決改為上下界（T3、T4、T5、L5）。
+  - 數量：放大輪與 SAM 的數量是下限、max_count 是上限；另一方被排除且本方等於最高下限時才裁決。
+  - 位置：兩點對到同一物件且都離它太遠，或放大輪在兩點附近都沒有物件時，推翻雙方。
+  - 關係：雙方數量一致（SAM 另要求追蹤數相同）時兩個方向都採用，否則只採用上界證得出的方向；比對輸出為關係題記錄兩類的數量。
+  - 驗證：spec 的五個新情境；DA 的 3 對 2、上限 2、放大 2 判 Codex。
+  - [after: 8.1]
+- [ ] 8.5 紀錄與輸入保護（T6、L2、L3、L4、L6、L7、L15）。
+  - 放大輪封存失敗不設定 run 的錯誤，結果檔註明放大輪未採用；步驟名稱帶輪次；「已經做過」的檢查排在最前。
+  - 輸入雜湊只算 run 列出的影格；comparison 與 zoom plan 在裁決前核對；放大輪封存後不得重做裁切；run 只能 init 一次。
+  - max_time 不合法時錯誤進入 run 與結果檔；SAM 先判斷用不用得到，再檢查安裝；結果檔的 detail 一律過濾本機路徑。
+  - 驗證：zoom 封存失敗後結果檔沒有 error；`.DS_Store` 不影響比對；改 comparison.json 後裁決被拒；第二次 init 被拒。
+  - [after: 8.4]
+- [ ] 8.6 題目、第一方模型與檔名（T7、L1、L8、L10、L12、L13）。
+  - 放大輪的關係題附完整定義與關鍵點定義；第一輪寫明沒有一對點時為 false；每題寫出實際倍率，不一律說放大。
+  - `first_side_model` 只接受單行識別字；Python 3.9 的結果檔也有這個欄位；Limitations 寫明封存前未讀、未重跑靠流程。
+  - 原始檔名與中性檔名衝突時，訊息只給做得到的補救。
+  - [after: 8.5]
+- [ ] 8.7 文件（T8、T9、L9、L16）。
+  - SKILL、vocab-format、README、CHANGELOG 與結果檔契約依第三輪更正；e2e-checklist §F 的兩次紀錄分開。
+  - bundle 產生器略過 `__pycache__`。
+  - 驗證：SKILL 契約檢查；`bash tests/run.sh` 只剩 #24。
+  - [after: 8.6]
+- [ ] 8.8 真實後端端到端（第三次）。
+  - 合成圖涵蓋 max_count 與放大輪夾出答案的情境。
+  - 驗證：紀錄寫進 e2e-checklist §F。
+  - [after: 8.7]

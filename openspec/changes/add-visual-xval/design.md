@@ -88,7 +88,7 @@ Claude 的逐格答案先寫到 run 目錄 `.codex-pro/visual-xval-run-<timestam
 ### 一輪一批，第二輪只送放大圖
 
 - 第一輪：一次送整批圖片（上限 12 張，用 `--image` 重複帶入），要 Codex 依 JSON schema 回答。超過 12 張時 `init` 以 `target_invalid` 拒絕；要判讀更多張就分成多次 run。
-- 第二輪：只針對分歧，由 skill 用 macOS `sips` 依分歧位置裁切、放大 2 倍，產生新圖送出。數量題的裁切範圍涵蓋兩邊在該格該類別的全部關鍵點，否則裁切區內的數量不能拿來裁決整張影格的數量；位置題要求列出裁切區內該類別的全部關鍵點，再依物件配對判斷分歧點對應哪一個物件。沒有關鍵點可圈、或範圍等於整張畫面時不出放大題，因為那不是新的證據。
+- 第二輪：只針對分歧，由 skill 用 macOS `sips` 依分歧位置裁切、縮放，產生新圖送出。倍率最多 2 倍，而且長邊不超過 2048 px（`codex-call` 會把更長的圖縮小，所以更大的倍率不是 Codex 看到的），題目檔寫出每張裁切圖的實際倍率。數量題的裁切範圍涵蓋兩邊在該格該類別的全部關鍵點，否則裁切區內的數量不能拿來裁決整張影格的數量；位置題要求列出裁切區內該類別的全部關鍵點，再依物件配對判斷分歧點對應哪一個物件。沒有關鍵點可圈、或範圍等於整張畫面時不出放大題，因為那不是新的證據。
 
 替代方案是讓 Codex 自己裁切（`codex exec`）。不採用：違反 Design constraint #1，使用者選擇由 skill 先裁好。
 
@@ -108,7 +108,7 @@ Claude 的逐格答案先寫到 run 目錄 `.codex-pro/visual-xval-run-<timestam
 
 關係詞（例如「會合」）寫成 `{"between": [類別, 類別], "definition": "<量> <比較> <數字>"}`。定義只接受「量的名稱、比較符號、數字」這個形式，`between` 指明量的是哪兩類物件的關鍵點。原本的接觸物欄位（`touching`）拿掉，「碰到什麼」一律寫成有門檻的關係詞。
 
-量只接受 `distance_pct`，定義為「第一類的一個關鍵點與第二類另一個關鍵點之間的最小距離」，所以某類物件不是剛好兩個時也有確定的答案。
+量只接受 `distance_pct`，定義為「第一類的一個關鍵點與第二類另一個關鍵點之間的最小距離」，所以某類物件不是剛好兩個時也有確定的答案；一對這樣的點都沒有時，關係為 false。放大輪的關係題沿用同一個完整定義，並附上兩個類別的關鍵點定義，因為作答的 subagent 只看得到題目檔（第三輪 T7）。
 
 理由：第一版只檢查定義裡有沒有「符號＋數字」，`很近（< 5）` 也能通過，而且沒說量哪兩點，兩個模型可以各量各的；SAM 也因此拿兩支器械的距離去裁決不相干的關係（verify 第一輪 I5、B5）。第二輪又發現 `closeness < 5` 這種沒有定義的量名仍能通過（第二輪 S7）。`touching` 有收集卻從不比對，等於一個沒有門檻的關係詞。
 
@@ -149,11 +149,36 @@ Claude 的逐格答案先寫到 run 目錄 `.codex-pro/visual-xval-run-<timestam
 第二輪補上三條：
 - 放大輪或 SAM 看到的數量只能證實較高的一方。裁切區外或沒有錨定的物件看不到，所以看到的數量等於較低的一方時，什麼也證明不了；第一版會因此在一方重複標記時判錯方（第二輪 R1）。
 - 放大輪推翻雙方原答時，該分歧為 `unverifiable`，其他證據不得改判（第二輪 R3）。
-- 違反 max_count 只排除一方。Claude 數 3、上限 2、Codex 數 1 時，真值可能是 2，所以單獨存在時是 `unverifiable` 並註明被排除的一方；與其他證據一致時才裁決（第二輪 R4）。
+- 違反 max_count 只排除一方。Claude 數 3、上限 2、Codex 數 1 時，真值可能是 2，所以單獨存在時是 `unverifiable` 並註明被排除的一方（第二輪 R4）。
+
+### 證據只用來證明它證得出來的事
+
+第二輪的三條規則各自正確，合起來卻互相矛盾（第三輪 T3、T5）：
+- 放大輪數到的數量比雙方都低時，被寫成「推翻雙方」並壓過 SAM。但依 R1 的理由，看到的數量只是下限，低於雙方什麼也推翻不了。
+- 只有一方超過上限時，被排除的一定是較高的一方，而看到的數量只能證實較高的一方，所以 `max_count` 永遠促成不了裁決；DA 窮舉 1152 種組合，0 種得到裁決。
+
+第三輪把三種分歧都改成「證據給出的上下界」：
+- **數量**：放大輪兩邊一致的數量、SAM 追蹤到且存在的物件數都是下限；`max_count` 是上限。低於下限或高於上限的一方被排除。只有在另一方被排除、而且這一方的數量正好等於最高的下限時才裁決；兩方都被排除、或下限高於上限時是 `unverifiable`。例：Claude 3、Codex 2、上限 2、放大輪兩邊都數到 2 → 判 Codex。使用者選擇這個做法（2026-10-07），理由是推理嚴格成立、能多裁決一些案例。
+- **位置**：兩個分歧點對到同一個物件、而且那個物件離兩點都超出門檻時，推翻雙方；放大輪在裁切區裡沒有找到靠近任一點的物件時也是。第二輪的「推翻雙方」只檢查數量與關係，位置分歧被推翻時 SAM 照樣判給一方（第三輪 T3）。
+- **關係**：SAM 只量到被錨定的物件，放大輪只框到兩邊標過的點，量到的最小距離只是整格最小距離的上界，所以「< 門檻」證得出來，「≥ 門檻」證不出來。只有雙方在該格對這兩類的數量一致（SAM 另外要求追蹤到的物件數等於那個數量）時，才兩個方向都採用（第三輪 T4）。
+
+任何證據推翻雙方時，其他證據都不得改判。只比數量的類別沒有放大題，SAM 也不追蹤，所以它們的數量分歧只會被排除、永遠不會被裁決；這寫進詞彙表說明與結果檔的 Limitations，不另外設計證據（使用者選擇，2026-10-07，第三輪 T8）。
 
 ### 送出後的錯誤另立一類
 
-`codex-call` 在送出後失敗（HTTP 400／500、連線中斷）記為 `backend_error`。原本落到 `runtime_unavailable`，而那一類的說明是「沒有送出請求」，結果檔還把它標成 preflight（第二輪 R5）。被拒絕的重跑（重封、同一輪再送）只進錯誤歷史，不取代這個 run 的錯誤（第二輪 R6）。
+`codex-call` 在送出後失敗（HTTP 400／500、連線中斷）記為 `backend_error`。原本落到 `runtime_unavailable`，而那一類的說明是「沒有送出請求」，結果檔還把它標成 preflight（第二輪 R5）。被拒絕的重跑（重封、同一輪再送）只進錯誤歷史，不取代這個 run 的錯誤（第二輪 R6）；「已經做過」的檢查排在其他檢查之前，否則被拒的重跑會先撞上別的檢查而寫進錯誤（第三輪 T6）。
+
+### 看不出有沒有送出時，一律當成送出
+
+第二輪的修法讓 `runtime_unavailable` 撤回請求紀錄，理由是「沒送出的請求不該記成送出」。但 `runtime_unavailable` 是分類的預設值，而 `codex-call` 在收到回應之前的任何失敗都只印 `HTTP 0: (no body)`：離線（確實沒送）與上傳完才斷線、逾時（已經送出）印的是同一行字。後端串流的 error 事件也沒有固定字樣。結果是圖片已經送出、紀錄卻被刪掉，同一輪可以再送一次（第三輪 T1）。這一輪的 verify，Codex 腿本身就是這樣失敗的。
+
+改成 fail-closed：只有一份封閉列舉裡的錯誤算「沒有送出」，其餘一律保留紀錄、記為 `backend_error`（或可辨認的 rate_limit、oauth_invalid、timeout）。列舉是 `codex-call` 在任何網路請求之前就會停下的那幾種：圖片檢查（`--image …`）、未知選項或不合法的 `--max-time`、讀不到或空白的 prompt、讀不到或缺欄位的 `auth.json`、token refresh 的鎖檔、refresh 沒拿到 token、refresh 被拒（`invalid_grant`）。不得依字面相似類推第九類。
+
+代價：離線時這一輪也會被鎖住，要另開一個 run。要精確分辨，得由 `codex-call` 印出原始錯誤碼與已送出的位元組數，這交給上游 PsychQuant/parallel-ai-agents#89（使用者選擇，2026-10-07）。
+
+### 放大輪不採用不是 run 的錯誤
+
+Claude 的放大輪答案格式不合時，SKILL 說放大輪不採用、照樣往下走，程式卻把它記成 run 的錯誤（`seal`，看不出是哪一輪），完整跑完的 run 被標成失敗（第三輪 T6）。改為：放大輪封存失敗只記進錯誤歷史並在結果檔註明「放大輪未採用」，不設定 run 的錯誤；錯誤的步驟名稱一律帶上輪次（`seal --zoom`、`ask --round zoom`）。
 
 ### 記錄第一方的實際模型
 
@@ -189,14 +214,14 @@ spec 不再逐字寫死 commit、blob、大小與 SHA-256，改規定這些值�
 
 **介面與資料形狀**
 
-- 主張 JSON（每格一筆）：`{"frame": "<中性檔名>", "objects": {"<類別>": <數量>}, "points": [{"class": "<類別>", "x_pct": <0–100>, "y_pct": <0–100>}], "relations": {"<關係名>": <true|false>}}`；每個類別的點數等於它的數量。
-- 清單檔：`classes`（類別與說明）、`constraints`（物理約束，文字）、`max_count`（各類別上限，裁決用）、`relations`（關係名對應 `{"between": [類別, 類別], "definition": "distance_pct < 5"}`）、`position_threshold_pct`（預設 5）、`track_class`、`sam_margin_pct`。
+- 主張 JSON（每格一筆）：`{"frame": "<中性檔名>", "objects": {"<類別>": <數量>}, "points": [{"class": "<類別>", "x_pct": <0–100>, "y_pct": <0–100>}], "relations": {"<關係名>": <true|false>}}`；`key_points` 列出的類別，點數等於它的數量，其他類別不給點。
+- 清單檔：`classes`（類別與說明）、`key_points`（有關鍵點的類別與關鍵點定義）、`constraints`（物理約束，文字）、`max_count`（各類別上限，裁決用）、`relations`（關係名對應 `{"between": [類別, 類別], "definition": "distance_pct < 5"}`，兩個類別都要有關鍵點）、`position_threshold_pct`（預設 5）、`track_class`（必須有關鍵點）、`sam_margin_pct`。
 - 結果檔：frontmatter 如 Decisions 所列；內文依序是「一致率與分歧摘要」「逐格分歧與裁決」「SAM 狀態（未安裝、無效格數、錨點）」「封存驗證」「限制」。
 - 比對腳本與 SAM 腳本放在 skill 的 `scripts/` 底下，輸入輸出都是 JSON，可單獨執行與測試。
 
 **失敗模式**
 
-- `runtime_unsupported`、`target_invalid`、`parse_failed`、`rate_limit`、`oauth_invalid`、`timeout`、`runtime_unavailable`、`package_corruption`、`internal_error`：一律寫結果檔、不 retry。
+- `runtime_unsupported`、`target_invalid`、`parse_failed`、`rate_limit`、`oauth_invalid`、`timeout`、`runtime_unavailable`、`package_corruption`、`backend_error`、`internal_error`：一律寫結果檔、不 retry。放大輪封存失敗不在其中：它只讓放大輪不採用。
 - SAM 未安裝或使用者拒絕安裝：不算失敗，`sam_status: not_installed`，分歧中需要 SAM 的標為 `unverifiable`。
 - 圖片超過 20 MB 或不是圖片：由上游 `codex-call` 報錯，skill 以 `target_invalid` 記錄。
 

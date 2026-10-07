@@ -278,7 +278,7 @@ code:
 
 ### Requirement: Cross-harness version consistency
 
-The Codex manifest, Claude plugin manifest, and Claude marketplace entry SHALL all declare version `0.9.0`. A version change MUST update all three in the same commit, and the release notes SHALL identify Codex native plugin distribution as the 0.9.0 feature.
+The Codex manifest, Claude plugin manifest, and Claude marketplace entry SHALL all declare version `0.9.0`. A version change MUST update all three in the same commit, and the release notes SHALL name what the version adds: for 0.9.0 that is visual cross-validation (`codex-visual-xval`), while Codex native plugin distribution stays recorded as the 0.8.0 feature.
 
 #### Scenario: Version drift blocks the release gate
 
