@@ -267,6 +267,18 @@ profile `gpt-6.1-sol`／`medium`（global）。
   「no third evidence」，像是放大輪沒跑；已改為列出放大輪的答案與不能用的原因。
 - 結果檔：沒有 error；Limitations 點名 SQUARE 只比數量、數量判給一方的意義、封存前未讀靠流程。
 
+第四次紀錄：2026-10-07，codex-pro `72c97ba`（第四輪 verify 的修正之後），同一個 runtime 與 profile，`--first-side claude-opus-5-5`。
+詞彙表同第三次；f03 改用 WebP 輸入，驗證複本重新編碼成 PNG。
+
+- 植入三個錯誤：f01 把同一個紅點標兩次；f02 兩點相距約 6% 卻答「不近」；f03 兩點相距很遠卻答「近」。
+- 第一輪 9.9 秒，分歧四筆（f01 數量與關係、f02 關係、f03 關係），全是植入的錯誤。放大輪 subagent 立刻封存，
+  Codex 拿到逐字相同的題目檔（8.4 秒）。
+- f01 數量（T5）：放大輪數到 2、上限 2 → `resolved_codex`。
+- f02 關係（U2 證得出來的方向）：兩邊都答 true → `resolved_codex`。
+- f01、f03 關係（U2）：放大輪答 false，不採用 → `unverifiable`，結果檔寫明「只有看到一對靠近的點才證得出整格的答案」。
+  f03 的真值其實是 Codex 對；「很遠」這一側在沒有 SAM 時證不出來，是使用者選擇的取捨。
+- 影格複本：三張都由 sips 重新編碼（WebP → PNG），不含 EXIF 或文字區塊；結果檔沒有 error。
+
 ## Post-test cleanup checklist
 
 - [ ] B 段使用的 disposable account／VM 沒有污染日常 Codex home
