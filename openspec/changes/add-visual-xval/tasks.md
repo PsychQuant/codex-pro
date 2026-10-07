@@ -305,3 +305,20 @@
 - [x] 11.7 真實後端端到端（第六次）。
   - 驗證：紀錄寫進 e2e-checklist §F。
   - [after: 11.6]
+
+## 12. Verify 第七輪修正（#23 第七輪 report 的 X1–X2、Y1–Y10）
+
+- [x] 12.1 規格與 design 依第七輪更新（design「第七輪：檢查要做到文件說的程度」；Privacy reminder before sending images 的 PNG 結構與寫入目錄清單、Structured result file 的路徑過濾與結果檔穩健性、Blind Codex judgment 的登入檢查、Sealed Claude answers 的 sam 情境）。
+  - 驗證：`spectra validate` 與 `spectra analyze` 無 warning。
+- [ ] 12.2 PNG 結構檢查：串流結尾與 checksum、超出資料的上限、只看關鍵 chunk 的 CRC、位元深度；原解析度複本的位置在裁切前核對（X1、Y8）。
+  - [after: 12.1]
+- [ ] 12.3 路徑過濾與錯誤細節：只保留 SAM 環境的固定位置、家目錄的邊界、含引號括號的目錄名、不吃掉網址與自己的訊息、逾時與 compare_claims 的路徑與措辭（X2、Y1、Y2、Y9）。
+  - [after: 12.2]
+- [ ] 12.4 結果檔與紀錄：型別不對照樣寫結果檔、result 失敗不取代 run 的錯誤、雜湊不讀 run 以外的檔、重算不符寫進 frontmatter、核對比對結果與裁決、缺參考雜湊不放行；送出邊界與登入檢查（Y3、Y4、Y6、Y7）。
+  - [after: 12.3]
+- [ ] 12.5 文件：寫入目錄清單、sam 的情境、SKILL Step 4.2 的放大輪檢查、design 的措辭、CHANGELOG 與 #89 的「body」（Y5、Y10）。
+  - 驗證：`bash tests/run.sh` 只剩 #24。
+  - [after: 12.4]
+- [ ] 12.6 真實後端端到端（第七次）。
+  - 驗證：紀錄寫進 e2e-checklist §F。
+  - [after: 12.5]
