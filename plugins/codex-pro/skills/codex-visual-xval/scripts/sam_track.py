@@ -24,6 +24,7 @@ import os
 import sys
 from typing import Any
 
+sys.dont_write_bytecode = True   # no __pycache__ next to the bundled scripts
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 COLLAPSE_IOU = 0.5

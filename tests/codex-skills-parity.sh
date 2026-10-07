@@ -389,7 +389,7 @@ assert_bundle_contract() {
   else
     actual_skills=""
   fi
-  assert_eq "$(cat "$EXPECTED_SKILLS_FILE")" "$actual_skills" "$label contains exactly the explicit nine skill directories"
+  assert_eq "$(cat "$EXPECTED_SKILLS_FILE")" "$actual_skills" "$label contains exactly the explicit ten skill directories"
 
   while IFS=$'\t' read -r source_resource publish_resource; do
     [ -n "$source_resource" ] && [ -n "$publish_resource" ] || continue
@@ -592,7 +592,7 @@ if [ -x "$GENERATOR" ]; then
       fi
 
       skill_only_count="$(find "$tmp_out" -type f -name SKILL.md | wc -l | tr -d '[:space:]')"
-      assert_eq "${#EXPECTED[@]}" "$skill_only_count" "legacy --output still writes exactly nine SKILL.md files"
+      assert_eq "${#EXPECTED[@]}" "$skill_only_count" "legacy --output still writes exactly ten SKILL.md files"
       assert_no_file "$tmp_out/$INVENTORY_NAME" "legacy --output remains skill-only (no bundle inventory)"
     else
       fail "generator exited non-zero when writing to a temp dir"
@@ -1001,7 +1001,7 @@ PY
 
   # SKILL.md is a file write target, not a container. If an expected skill has
   # a directory at that path, mv would otherwise place its temporary output
-  # inside the directory and falsely report a successful nine-skill run. The
+  # inside the directory and falsely report a successful ten-skill run. The
   # invalid target must be rejected before any expected skill is generated.
   SKILL_DIRECTORY_OUTPUT="$TEST_TMP_ROOT/output SKILL directory"
   SKILL_DIRECTORY_BEFORE="$TEST_TMP_ROOT/output SKILL directory before"

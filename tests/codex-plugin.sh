@@ -198,8 +198,8 @@ if native is not None:
             if path.is_dir() and (path / "SKILL.md").is_file()
         )
         emit(
-            len(expected_skills) == 9,
-            "scripts/codex-skills.manifest declares exactly nine skills",
+            len(expected_skills) == 10,
+            "scripts/codex-skills.manifest declares exactly ten skills",
             f"actual={len(expected_skills)}",
         )
         emit(
@@ -433,7 +433,7 @@ required_tokens = {
         "marketplace upgrade",
         "plugin remove",
         "Codex App",
-        "九個 skill",
+        "十個 skill",
         "獨立 macOS 登入帳號或 disposable VM",
         "不讀 `CODEX_HOME`",
         "完全結束並重啟 Codex App",

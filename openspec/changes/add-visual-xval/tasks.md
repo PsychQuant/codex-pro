@@ -63,7 +63,7 @@
   - 八種失敗類別都寫結果檔、不 retry。
   - 驗證：behavioral 測試解析產生的結果檔，欄位與段落順序符合 spec；timeout 情境也有結果檔。
   - [after: 4.2]
-- [ ] 4.4 原生 bundle 的 Skill-relative runtime resolution 與 Platform-scoped producer capability 涵蓋新 skill。
+- [x] 4.4 原生 bundle 的 Skill-relative runtime resolution 與 Platform-scoped producer capability 涵蓋新 skill。
   - `scripts/codex-skills.manifest` 與 `scripts/codex-bundle-resources.manifest` 加入 `codex-visual-xval` 與其腳本，重新產生 `.codex/skills` 鏡像。
   - 非 macOS 主機在讀取 OAuth 前回 `unsupported_platform`。
   - 驗證：`tests/codex-skills-parity.sh` 與 resolver 矩陣測試包含新 skill 且通過。

@@ -93,6 +93,6 @@ codex plugin marketplace add PsychQuant/codex-pro --ref main --json
 codex plugin add codex-pro@codex-pro --json
 ```
 
-安裝後必須開新 task 讓 Codex 重新探索九個 skill，再先跑 `$codex-setup`。完整的安裝、
+安裝後必須開新 task 讓 Codex 重新探索十個 skill，再先跑 `$codex-setup`。完整的安裝、
 更新、producer smoke 與回復流程見 `tests/e2e-checklist.md`；runtime 的 OAuth side effect、
 private backend 與已知上游限制見 `README.md`。

@@ -11,6 +11,9 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 # shellcheck disable=SC1091
 source "$SCRIPT_DIR/lib/assert.sh"
 
+# The bundle generator requires the skill directory to hold exactly the manifest's files.
+export PYTHONDONTWRITEBYTECODE=1
+
 XVAL_DIR="$REPO_ROOT/plugins/codex-pro/skills/codex-visual-xval"
 SCRIPTS="$XVAL_DIR/scripts"
 WORK=$(mktemp -d)
@@ -725,5 +728,64 @@ result_in "$WORK/run8"
 seal_file=$(ls -t "$WORK"/project/.codex-pro/visual-xval-*.md | head -1)
 assert_eq "true" "$(fm "$seal_file" seal_broken)" "an edited answer file is reported as seal_broken: true"
 assert_contains "$(cat "$seal_file")" "seal failed" "the conclusion says the seal failed"
+
+# ── Native Codex bundle: resolver writes the runtime files in its own shell (task 4.4) ──
+for native in "$REPO_ROOT/.codex/skills/codex-visual-xval/SKILL.md" "$REPO_ROOT/skills/codex-visual-xval/SKILL.md"; do
+  assert_file "$native" "native visual-xval skill exists: ${native#"$REPO_ROOT"/}"
+done
+NATIVE="$REPO_ROOT/.codex/skills/codex-visual-xval/SKILL.md"
+python3 - "$NATIVE" "$WORK/native_resolver.sh" > "$WORK/native_check.txt" <<'PY'
+import re, sys
+text = open(sys.argv[1], encoding="utf-8").read()
+sec = re.search(r"### Step 4\.2: Resolve bundled Codex runtime\n(.*?)\n### Step 4\.3", text, re.DOTALL)
+block = re.findall(r"```bash\n(.*?)\n```", sec.group(1), re.DOTALL)[0] if sec else ""
+open(sys.argv[2], "w").write(block + "\n")
+def guarded(b):
+    m = re.search(r'if \[ -z "\$CODEX_RUNTIME_ERROR" \]; then\n  printf \'%s\\n\' "\$CODEX_CALL" > "\$RUN/runtime\.txt"\nfi\s*$', b)
+    return m is not None and b.count('"$RUN/runtime.txt"') == 1
+mutated = block.replace('if [ -z "$CODEX_RUNTIME_ERROR" ]; then\n  printf', 'if true; then\n  printf')
+step5 = text[text.find("## Step 5: Handle exit code"):]
+checks = {
+    "resolver": "BUNDLE_ROOT" in block and "bin/codex-pro-call" in block and 'CODEX_RUNTIME_ERROR=""' in block,
+    "error_file_in_resolver": '> "$RUN/runtime_error.txt"' in block,
+    "runtime_file_guarded": guarded(block),
+    "guard_mutation_rejected": not guarded(mutated),
+    "no_source_path_lookup": 'CODEX_CALL="$(command -v codex-call)"' not in text,
+    "failure_rows": "runtime_unavailable" in step5 and "package_corruption" in step5,
+    "error_enum": bool(re.search(r"error: <[^>]*runtime_unavailable[^>]*package_corruption[^>]*>", text)),
+    "detail_contract": "Runtime preflight detail:" in text,
+}
+print(" ".join(f"{k}={'ok' if v else 'MISSING'}" for k, v in checks.items()))
+PY
+native_check=$(cat "$WORK/native_check.txt")
+case "$native_check" in
+  *MISSING*) fail "native visual-xval resolver contract: $native_check" ;;
+  *) pass "native visual-xval resolver contract ($native_check)" ;;
+esac
+
+# Run the generated resolver against a fixture bundle whose wrapper reports an
+# unsupported platform: the error lands in the run directory, no runtime path is
+# written, and xval.py then stops before invoking anything.
+FIX="$WORK/native_bundle"
+mkdir -p "$FIX/bin" "$FIX/skills/codex-visual-xval" "$FIX/.codex-plugin"
+printf '{}\n' > "$FIX/.codex-plugin/plugin.json"
+printf '#!/bin/sh\necho "error=unsupported_platform os=Linux"\nexit 1\n' > "$FIX/bin/codex-pro-call"
+chmod +x "$FIX/bin/codex-pro-call"
+new_run "$WORK/run9"
+rm -f "$WORK/run9/runtime.txt" "$WORK/run9/runtime_error.txt" "$WORK/mock.log"
+( SKILL_DIR="$FIX/skills/codex-visual-xval" RUN="$WORK/run9" PATH="$WORK/stubbin:$PATH" bash "$WORK/native_resolver.sh" ) 2>/dev/null
+assert_eq "runtime_unavailable" "$(head -1 "$WORK/run9/runtime_error.txt" 2>/dev/null)" \
+  "an unsupported platform is recorded as runtime_unavailable by the native resolver"
+assert_no_file "$WORK/run9/runtime.txt" "no runtime path is written when the resolver fails"
+xval ask --run "$WORK/run9" --round 1 --model m --effort e --max-time 30
+assert_contains "$RUN_OUT" '"error": "runtime_unavailable"' "xval.py stops on the native preflight error"
+assert_no_file "$WORK/mock.log" "nothing is sent after a native preflight failure (no PATH fallback in a native bundle)"
+
+printf '#!/bin/sh\necho "ok runtime=x sha256=y swift=z"\n' > "$FIX/bin/codex-pro-call"
+rm -f "$WORK/run9/runtime.txt" "$WORK/run9/runtime_error.txt"
+( SKILL_DIR="$FIX/skills/codex-visual-xval" RUN="$WORK/run9" bash "$WORK/native_resolver.sh" ) 2>/dev/null
+assert_eq "$(cd "$FIX/bin" && pwd -P)/codex-pro-call" "$(cat "$WORK/run9/runtime.txt" 2>/dev/null)" \
+  "a healthy bundle records its own wrapper as the runtime"
+assert_eq "" "$(head -1 "$WORK/run9/runtime_error.txt" 2>/dev/null)" "a healthy bundle records no runtime error"
 
 report_summary "visual-xval"

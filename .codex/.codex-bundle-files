@@ -13,3 +13,12 @@ skills/codex-result/SKILL.md
 skills/codex-review/SKILL.md
 skills/codex-setup/SKILL.md
 skills/codex-status/SKILL.md
+skills/codex-visual-xval/SKILL.md
+skills/codex-visual-xval/references/claim-schema.md
+skills/codex-visual-xval/references/vocab-format.md
+skills/codex-visual-xval/scripts/adjudicate.py
+skills/codex-visual-xval/scripts/compare_claims.py
+skills/codex-visual-xval/scripts/sam_env.sh
+skills/codex-visual-xval/scripts/sam_track.py
+skills/codex-visual-xval/scripts/seal.py
+skills/codex-visual-xval/scripts/xval.py

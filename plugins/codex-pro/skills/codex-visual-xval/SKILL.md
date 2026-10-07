@@ -143,14 +143,14 @@ Codex 的答案寫在 `$RUN/codex.json`。
 `xval.py` 任何一步以 exit 5 結束，代表 run 停止；stdout 與 `$RUN/error.json` 都有 `error` 與 `detail`。
 照下表回報，然後直接跳到 Step 9 寫結果檔：
 
-| `error` 值 | 回報訊息 |
-|---|---|
-| `rate_limit` | 「Codex 限額耗盡。等待重置後再跑。**不會自動 retry**。」 |
-| `oauth_invalid` | 「OAuth token 失效。跑 /codex-pro:codex-setup。」 |
-| `timeout` | 「超過 hard timeout。減少圖片張數，或檢查 Codex tier。」 |
-| `target_invalid` | 「輸入不合格：<detail>。沒有送出請求。」 |
-| `runtime_unsupported` | 「codex-call 不支援 --image。更新 parallel-ai-agents 到 2.24.0 以上。沒有送出請求。」 |
-| `parse_failed` | 「Codex 的回覆不是符合 schema 的 JSON。**不會自動 retry**。」 |
+| 來源 | `error` 值 | 回報訊息 |
+|---|---|---|
+| `codex-call` 回報 rate limit／429 | `rate_limit` | 「Codex 限額耗盡。等待重置後再跑。**不會自動 retry**。」 |
+| `codex-call` 回報 401／unauthorized | `oauth_invalid` | 「OAuth token 失效。跑 /codex-pro:codex-setup。」 |
+| `codex-call` 逾時 | `timeout` | 「超過 hard timeout。減少圖片張數，或檢查 Codex tier。」 |
+| 送出前的輸入檢查 | `target_invalid` | 「輸入不合格：<detail>。沒有送出請求。」 |
+| `codex-call --help` 沒有 `--image` | `runtime_unsupported` | 「codex-call 不支援 --image。更新 parallel-ai-agents 到 2.24.0 以上。沒有送出請求。」 |
+| Codex 回覆不合 schema | `parse_failed` | 「Codex 的回覆不是符合 schema 的 JSON。**不會自動 retry**。」 |
 
 **所有 failure 仍寫 result file**，**所有 failure 都不 retry**。
 

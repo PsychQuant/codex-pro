@@ -60,13 +60,13 @@ Vendored Swift runtime 以 `FileManager.homeDirectoryForCurrentUser` 取得
 - [ ] 安裝：`codex plugin add codex-pro@codex-pro --json`。再以 `codex plugin list
   --marketplace codex-pro --json` 確認 installed 與 enabled 狀態。
 
-### N2. 新 task、九個 skills 與 setup
+### N2. 新 task、十個 skills 與 setup
 
 - [ ] 在相同隔離 OS 帳號內，以限縮 PATH 與已清除的 Claude variables 啟動一個**新
   Codex task**。安裝前已存在的 task 不算驗收證據。
-- [ ] 在新 task 確認可探索以下九個名稱：`$codex-setup`、`$codex-review`、
+- [ ] 在新 task 確認可探索以下十個名稱：`$codex-setup`、`$codex-review`、
   `$codex-adversarial-review`、`$codex-rescue`、`$codex-batch`、`$codex-status`、
-  `$codex-result`、`$codex-config`、`$codex-cancel`。
+  `$codex-result`、`$codex-config`、`$codex-cancel`、`$codex-visual-xval`。
 - [ ] 跑 `$codex-setup`。預期 OAuth 可讀，runtime source 為 bundled wrapper，SHA-256 與
   provenance 相符，producer readiness 為 ready；輸出不得提議安裝 Claude Code 或
   `parallel-ai-agents`。
@@ -88,7 +88,7 @@ Vendored Swift runtime 以 `FileManager.homeDirectoryForCurrentUser` 取得
 
 - [ ] 跑 `codex plugin marketplace upgrade codex-pro --json`，確認 Git snapshot refresh 成功。
 - [ ] 跑 `codex plugin remove codex-pro@codex-pro --json` 後，再跑 `codex plugin add
-  codex-pro@codex-pro --json`；開**另一個新 task**，再確認版本、九個 skill 與
+  codex-pro@codex-pro --json`；開**另一個新 task**，再確認版本、十個 skill 與
   `$codex-setup`。
 - [ ] 驗證 rollback 順序：先跑 `codex plugin remove codex-pro@codex-pro --json`，再跑
   `codex plugin marketplace remove codex-pro --json`。確認 listing 與已安裝狀態消失，但
@@ -103,7 +103,7 @@ Vendored Swift runtime 以 `FileManager.homeDirectoryForCurrentUser` 取得
   PsychQuant/codex-pro --ref main --json`；完全結束並重啟 Codex App。
 - [ ] 開啟 Plugins Directory，選擇 `codex-pro` marketplace，確認 listing 顯示同名 plugin
   0.8.0。不要把「加入 Git marketplace」寫成 App UI 內的操作。
-- [ ] 安裝並啟用 plugin，開新 task，人工確認九個 skill 可見；跑 `$codex-setup` 與一個純
+- [ ] 安裝並啟用 plugin，開新 task，人工確認十個 skill 可見；跑 `$codex-setup` 與一個純
   本機 consumer。App 仍需遵守 macOS＋Swift 與 OAuth 前提。
 - [ ] 走一次 update 或 reinstall UI，開新 task 確認仍載入 0.8.0。
 - [ ] 從 App 解除安裝 plugin，必要時移除 marketplace；確認新 task 不再列出 skills，既有

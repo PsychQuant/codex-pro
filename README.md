@@ -1,6 +1,6 @@
 # codex-pro
 
-對 [`openai/codex-plugin-cc`](https://github.com/openai/codex-plugin-cc) 的進階重寫，同時提供 **Codex 原生 plugin** 與 **Claude Code plugin**。兩種安裝方式共用九個 skill、profile 契約與結構化 `.codex-pro/` 結果檔。
+對 [`openai/codex-plugin-cc`](https://github.com/openai/codex-plugin-cc) 的進階重寫，同時提供 **Codex 原生 plugin** 與 **Claude Code plugin**。兩種安裝方式共用十個 skill、profile 契約與結構化 `.codex-pro/` 結果檔。
 
 `codex-pro` 以具 hard timeout、circuit breaker 與可觀測結果檔的 Swift HTTPS runtime 取代不穩定的 IPC 路徑。0.8.0 起，Codex 原生套件內含已釘選來源與雜湊的 runtime，不需另外安裝 Claude Code 或 `parallel-ai-agents`。
 
@@ -142,7 +142,7 @@ codex plugin marketplace remove codex-pro --json
 
 Codex App 使用者要先在 Terminal 執行 `codex plugin marketplace add
 PsychQuant/codex-pro --ref main --json`，完全結束並重啟 App，再從 Plugins Directory 選擇
-`codex-pro` marketplace 與同名 plugin 安裝；開新 task 後檢查九個 skill。App 的可見性、
+`codex-pro` marketplace 與同名 plugin 安裝；開新 task 後檢查十個 skill。App 的可見性、
 更新與解除安裝仍是發行前的人工 gate。本專案尚未宣稱已進入 OpenAI 官方 plugin
 directory；0.8.0 發布後仍須依[官方 plugin 提交流程](https://developers.openai.com/plugins/deploy/submission)
 另行完成 directory submission 與審核，實際要求以提交當時的官方文件為準。
@@ -183,13 +183,13 @@ Codex 原生套件分發的 `codex-call` 是從 `PsychQuant/parallel-ai-agents` 
 scripts/generate-codex-skills.sh
 ```
 
-會同步產生 repo 根層與 `.codex/` 兩個完整 bundle，包含九個 skills、nested resources、shared references、runtime wrapper、runtime snapshot 與 `.codex-bundle-files` inventory。不要直接編輯這些受管產物；修改來源後重生，並以 `bash tests/codex-skills-parity.sh` 檢查漂移。
+會同步產生 repo 根層與 `.codex/` 兩個完整 bundle，包含十個 skills、nested resources、shared references、runtime wrapper、runtime snapshot 與 `.codex-bundle-files` inventory。不要直接編輯這些受管產物；修改來源後重生，並以 `bash tests/codex-skills-parity.sh` 檢查漂移。
 
 ## Tests
 
 自動與人工測試在 `tests/`：
 
-- **Codex package contract** — `tests/codex-plugin.sh` 驗原生 manifest、repo marketplace、九個 skills、版本與 plugin-creator validator
+- **Codex package contract** — `tests/codex-plugin.sh` 驗原生 manifest、repo marketplace、十個 skills、版本與 plugin-creator validator
 - **Codex bundle parity** — `tests/codex-skills-parity.sh` 驗兩個完整 bundle、暫存重生、相對連結、ownership 與冪等性
 - **Codex runtime** — `tests/codex-runtime.sh` 驗 provenance、wrapper、resolver matrix；`--smoke` 在 macOS 執行真 Swift 離線檢查
 - **Layer 1 (static)** — Claude manifest JSON schema、SKILL.md frontmatter、`bash -n`、batch template byte-identical sha256、namespace consistency

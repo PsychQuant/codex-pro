@@ -100,7 +100,7 @@ fi
 
 > **Claude Code 專用 manifest self-check 已由 Codex bundle 完整性檢查取代。**
 >
-> producer（review、adversarial-review、rescue）需要 macOS 與 Xcode Command Line
+> producer（review、adversarial-review、rescue、visual-xval）需要 macOS 與 Xcode Command Line
 > Tools Swift；consumer（`$codex-status`、`$codex-result`、`$codex-config`、
 > `$codex-cancel`）只讀本機檔案，在 producer unavailable 時仍可使用。
 

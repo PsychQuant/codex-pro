@@ -579,8 +579,14 @@ PRODUCER_SKILLS = {
     "codex-adversarial-review",
     "codex-rescue",
 }
+# visual-xval (#23) sends every request from scripts/xval.py, which reads the runtime
+# from files in its run directory. Those files are written inside the resolver's own
+# code block: a later block starts a fresh shell and would not see its variables.
+RUN_DIR_PRODUCER_SKILLS = {
+    "codex-visual-xval",
+}
 
-if skill in PRODUCER_SKILLS:
+if skill in PRODUCER_SKILLS or skill in RUN_DIR_PRODUCER_SKILLS:
     PRODUCER_RUNTIME_SECTION = r"""### Step 4.2: Resolve bundled Codex runtime
 
 Codex 載入本 skill 時會提供 active `SKILL.md` 的絕對路徑。先以該實際路徑的
@@ -641,18 +647,36 @@ OAuth 或連網前停止；`$codex-status`、`$codex-result`、`$codex-config` �
 
 ### Step 4.3: codex-call invocation"""
 
-    sub_exact(r"### Step 4\.2: codex-call invocation", PRODUCER_RUNTIME_SECTION, 1,
-              "producer invocation heading")
-    old_invocation = "codex-call \\\n"
-    new_invocation = 'if [ -z "$CODEX_RUNTIME_ERROR" ]; then\n  "$CODEX_CALL" \\\n'
-    if text.count(old_invocation) != 1:
-        fatal("producer command: expected exactly one bare codex-call invocation")
-    text = text.replace(old_invocation, new_invocation)
-    invocation_start = text.index(new_invocation)
-    invocation_end = text.find("\n```", invocation_start)
-    if invocation_end < 0:
-        fatal("producer command: closing code fence not found")
-    text = text[:invocation_end] + "\nfi" + text[invocation_end:]
+    if skill in RUN_DIR_PRODUCER_SKILLS:
+        runtime_files = (
+            "\nprintf '%s\\n' \"$CODEX_RUNTIME_ERROR\" \"$CODEX_RUNTIME_DETAIL\" > \"$RUN/runtime_error.txt\""
+            "\nif [ -z \"$CODEX_RUNTIME_ERROR\" ]; then"
+            "\n  printf '%s\\n' \"$CODEX_CALL\" > \"$RUN/runtime.txt\""
+            "\nfi"
+        )
+        anchor = "\n```\n\n若 bundled wrapper"
+        if PRODUCER_RUNTIME_SECTION.count(anchor) != 1:
+            fatal("run-dir producer: resolver block end not found")
+        sub_exact(r"### Step 4\.2: codex-call invocation",
+                  PRODUCER_RUNTIME_SECTION.replace(anchor, runtime_files + anchor), 1,
+                  "run-dir producer invocation heading")
+        sub_exact(r"```bash\nprintf '%s\\n' \"\$\{CODEX_RUNTIME_ERROR:-\}\".*?```\n\n", "", 1,
+                  "run-dir producer: source runtime-file block", flags=re.DOTALL)
+        if 'CODEX_CALL="$(command -v codex-call)"' in text:
+            fatal("run-dir producer: the source PATH lookup of codex-call remains in the native skill")
+    else:
+        sub_exact(r"### Step 4\.2: codex-call invocation", PRODUCER_RUNTIME_SECTION, 1,
+                  "producer invocation heading")
+        old_invocation = "codex-call \\\n"
+        new_invocation = 'if [ -z "$CODEX_RUNTIME_ERROR" ]; then\n  "$CODEX_CALL" \\\n'
+        if text.count(old_invocation) != 1:
+            fatal("producer command: expected exactly one bare codex-call invocation")
+        text = text.replace(old_invocation, new_invocation)
+        invocation_start = text.index(new_invocation)
+        invocation_end = text.find("\n```", invocation_start)
+        if invocation_end < 0:
+            fatal("producer command: closing code fence not found")
+        text = text[:invocation_end] + "\nfi" + text[invocation_end:]
 
     if skill == "codex-rescue":
         runtime_failure_rows = """| native preflight：套件缺檔、不可執行或 hash mismatch | `package_corruption` | unclear | 「codex-pro 套件損壞。重新安裝 plugin。**不會自動 retry**。」 |
@@ -737,7 +761,7 @@ fi
 
 > **Claude Code 專用 manifest self-check 已由 Codex bundle 完整性檢查取代。**
 >
-> producer（review、adversarial-review、rescue）需要 macOS 與 Xcode Command Line
+> producer（review、adversarial-review、rescue、visual-xval）需要 macOS 與 Xcode Command Line
 > Tools Swift；consumer（`$codex-status`、`$codex-result`、`$codex-config`、
 > `$codex-cancel`）只讀本機檔案，在 producer unavailable 時仍可使用。
 """

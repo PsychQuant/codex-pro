@@ -27,6 +27,7 @@ import subprocess
 import sys
 from typing import Any
 
+sys.dont_write_bytecode = True   # no __pycache__ next to the bundled scripts
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 
