@@ -254,6 +254,19 @@ profile `gpt-6.1-sol`／`medium`（global）。
   的一方，裁決 `resolved_codex`。SQUARE 沒有關鍵點，不出放大題，結果檔寫明原因，裁決 `unverifiable`。
 - 結果檔：`first_side_model: claude-opus-5-5`；兩輪的請求都列出時間與回覆雜湊，回覆檔都仍相符，封存都早於請求。
 
+第三次紀錄：2026-10-07，codex-pro `6ec0255`（第三輪 verify 的修正之後），同一個 runtime 與 profile，`--first-side claude-opus-5-5`。
+詞彙表 DOT 有關鍵點、上限 2，SQUARE 只比數量；關係 `dots_close` 為 `distance_pct < 10`。
+
+- 植入兩個錯誤：f01 把同一個紅點標兩次（數成 3，依自己的標記關係為 true）；f02 兩個紅點相距約 6%，卻答 false。
+- 第一輪 9.0 秒。分歧正好三筆：f01 數量、f01 關係、f02 關係。放大輪題目檔的關係題帶完整定義與關鍵點定義，
+  每行寫實際倍率（shown at 2x）；subagent 結束後立刻封存，Codex 拿到逐字相同的題目檔（10.4 秒）。
+- f01 數量（T5）：放大輪兩邊都數到 2，上限 2 → Claude 被排除、2 被看見 → `resolved_codex`。第三輪之前這一型
+  永遠是 unverifiable。
+- f02 關係（T4、T7）：雙方數量一致，裁切區含全部標記點，兩邊都答 true → `resolved_codex`。
+- f01 關係（T4）：雙方數量不一致，放大輪答 false 證不出整格的答案 → `unverifiable`。這次發現結果檔只寫
+  「no third evidence」，像是放大輪沒跑；已改為列出放大輪的答案與不能用的原因。
+- 結果檔：沒有 error；Limitations 點名 SQUARE 只比數量、數量判給一方的意義、封存前未讀靠流程。
+
 ## Post-test cleanup checklist
 
 - [ ] B 段使用的 disposable account／VM 沒有污染日常 Codex home

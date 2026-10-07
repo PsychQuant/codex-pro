@@ -690,6 +690,10 @@ run_py adjudicate.py "$WORK/vocab_limits.json" "$WORK/disputes_r3.json" --sam "$
 assert_eq "resolved_claude" "$(verdict d8)" "3.5% between two tracked tips shows together even when objects may be missing"
 run_py adjudicate.py "$WORK/vocab_limits.json" "$WORK/disputes_r3.json" --zoom "$WORK/zoom_r3_false.json"
 assert_eq "unverifiable" "$(verdict d8)" "a crop answering 'not together' cannot show it for the frame when the counts differ"
+assert_contains "$(json_get "$RUN_OUT" "[a['evidence'] for a in d['adjudications'] if a['id'] == 'd8'][0]")" "counts differ" \
+  "a zoom answer that cannot be used is still listed, with the reason (third end-to-end run)"
+assert_contains "$(json_get "$RUN_OUT" "[a['note'] for a in d['adjudications'] if a['id'] == 'd8'][0]")" "settles neither" \
+  "the note does not say there was no evidence when the zoom round answered"
 assert_eq "resolved_codex" "$(verdict d12)" "with the counts agreed, every marked point is in the crop, so 'not together' holds"
 run_py adjudicate.py "$WORK/vocab_limits.json" "$WORK/disputes_r3.json" --zoom "$WORK/zoom_r3_true.json"
 assert_eq "resolved_claude" "$(verdict d8)" "a crop answering 'together' shows it for the frame"

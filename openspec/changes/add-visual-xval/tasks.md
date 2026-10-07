@@ -236,7 +236,7 @@
   - bundle 產生器略過 `__pycache__`。
   - 驗證：SKILL 契約檢查；`bash tests/run.sh` 只剩 #24。
   - [after: 8.6]
-- [ ] 8.8 真實後端端到端（第三次）。
+- [x] 8.8 真實後端端到端（第三次）。
   - 合成圖涵蓋 max_count 與放大輪夾出答案的情境。
   - 驗證：紀錄寫進 e2e-checklist §F。
   - [after: 8.7]

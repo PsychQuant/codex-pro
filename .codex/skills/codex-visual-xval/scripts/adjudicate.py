@@ -68,6 +68,12 @@ def sam_frame(item: dict, sam: dict | None) -> dict | None:
     return frame if frame and not frame.get("invalid") else None
 
 
+def unused_zoom(reason: str) -> dict:
+    """A zoom answer that settles nothing is still listed, so the result file does not read as if the
+    zoom round never ran (third end-to-end run, 2026-10-07)."""
+    return {"source": "zoom", "detail": f"{reason}; not used"}
+
+
 # ── counts ───────────────────────────────────────────────────────────
 
 def count_evidence(item: dict, zoom: dict, sam: dict | None, vocab: dict) -> list[dict]:
@@ -77,6 +83,8 @@ def count_evidence(item: dict, zoom: dict, sam: dict | None, vocab: dict) -> lis
         n = answer["claude"]
         evidence.append({"source": "zoom", "at_least": n,
                          "detail": f"both models counted {n} on the crop, so the frame holds at least {n}"})
+    elif answer:
+        evidence.append(unused_zoom(f"the two zoom answers differ ({answer.get('claude')!r} and {answer.get('codex')!r})"))
     frame = sam_frame(item, sam)
     if frame and sam.get("class") == item.get("class"):
         n = len(present(frame))
@@ -170,7 +178,7 @@ def zoom_position(item: dict, answer: dict, limit: float) -> dict | None:
     pairs = pair_points(a, b, aspect)
     if len(a) != len(b) or any(math.hypot(p["x_pct"] - q["x_pct"], (p["y_pct"] - q["y_pct"]) * aspect) > limit
                                for p, q in pairs):
-        return None   # the two zoom answers do not agree with each other
+        return unused_zoom("the two zoom answers place the objects differently")
     found = [[(p["x_pct"] + q["x_pct"]) / 2, (p["y_pct"] + q["y_pct"]) / 2] for p, q in pairs]
     return position_evidence(item, found, limit, 0.0, "zoom", exhaustive=True)
 
@@ -198,14 +206,17 @@ def counts_agree(item: dict) -> bool:
 def zoom_relation(item: dict, answer: dict) -> dict | None:
     parsed = DEFINITION.match(item.get("definition", ""))
     value = answer.get("claude")
-    if not parsed or not isinstance(value, bool) or value != answer.get("codex"):
+    if not parsed or not isinstance(value, bool):
         return None
+    if value != answer.get("codex"):
+        return unused_zoom(f"the two zoom answers differ ({value!r} and {answer.get('codex')!r})")
     op = parsed.group(2)
     if not counts_agree(item):
         # Points the sides did not mark are outside the crop and may be closer: a crop shows
         # `distance_pct < N` for the frame, but not that the objects are apart.
         if not ((op in ("<", "<=") and value) or (op in (">", ">=") and not value)):
-            return None
+            return unused_zoom(f"both models answered {value!r} on the crop, but the sides' counts differ, so objects "
+                               "outside the marked points could be closer and the crop cannot show the frame's answer")
         detail = f"both models answered {value!r} on the crop; other objects could only be closer"
     else:
         detail = f"both models answered {value!r} on the crop, which holds every point both sides marked"
@@ -260,7 +271,7 @@ def settle(evidence: list[dict]) -> tuple[str, str]:
         return "unverifiable", "conflicting evidence"
     if confirming:
         return confirming.pop(), ""
-    return "unverifiable", "no third evidence"
+    return "unverifiable", "the evidence settles neither answer" if evidence else "no third evidence"
 
 
 def adjudicate(vocab: dict, comparison: dict, zoom: dict, sam: dict | None) -> dict:
