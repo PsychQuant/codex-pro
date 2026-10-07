@@ -299,7 +299,7 @@
   - [after: 11.3]
 - [x] 11.5 損毀或截斷的圖拒收；SAM 塌陷格與量不到距離列為沒用上；JPEG 只壓縮一次的測試（Q10、Q12、Q13）。
   - [after: 11.4]
-- [ ] 11.6 文件：SKILL Step 4.2 與 Step 5、README、media.py、design 的指向、CHANGELOG 與 #89、refresh 失效、測試註解（Q2、Q3、Q5、Q11、Q14、Q15）。
+- [x] 11.6 文件：SKILL Step 4.2 與 Step 5、README、media.py、design 的指向、CHANGELOG 與 #89、refresh 失效、測試註解（Q2、Q3、Q5、Q11、Q14、Q15）。
   - 驗證：`bash tests/run.sh` 只剩 #24。
   - [after: 11.5]
 - [ ] 11.7 真實後端端到端（第六次）。

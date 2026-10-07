@@ -4,11 +4,13 @@
 The copies are what both models see, so they must carry nothing the neutral file names were
 meant to hide. Two steps, because neither is enough alone:
 
-1. sips decodes the image and encodes it again into a new file, with colours converted to sRGB
-   and the longer side at most 2048 pixels (what codex-call would send anyway, so both models see
-   the same pixels). Every byte of the copy then comes from the encoder: data hidden in a block an
-   allowlist keeps, or past where a byte-level parser stops reading, does not survive (background
-   security review after #23 verify round 4).
+1. sips decodes the image and encodes it again into a new file, with colours converted to sRGB.
+   The copy both models judge in the first round has the longer side at most 2048 pixels; the copy
+   the zoom round crops from keeps the full resolution (#23 verify round 5, V7). Every byte of a copy
+   comes from the encoder: data hidden in a block an allowlist keeps, or past where a byte-level parser
+   stops reading, does not survive (background security review after #23 verify round 4). Before
+   that, the file's structure is checked, since sips decodes damaged or cut-short files without
+   complaint (round 6, Q13), and an image larger than MAX_PIXELS is refused.
 2. sips writes EXIF and XMP of its own and copies the capture time (measured 2026-10-07), so the
    new file is then stripped at the byte level. Only the blocks a decoder needs are kept (an
    allowlist: a list of what to drop missed C2PA content credentials, round 3, L14), and the copy

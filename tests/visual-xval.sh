@@ -69,6 +69,17 @@ checks = {
     # round 5 (V9, V7, N6)
     "init_uses_up_run": "init 失敗會用掉這個 run" in body,
     "full_res_crops": "原解析度" in body,
+    # round 6 (Q2, Q3, Q5, Q14, Q1): the ask order, the error rows, refresh, raw replies, the run directory
+    "ask_order": bool(re.search(r"`xval\.py ask` 依序：(.*?)\n\n", body, re.DOTALL)) and (lambda t: all(
+        t.find(a) < t.find(b) for a, b in (("已經送過", "隱私確認"), ("隱私確認", "封存"), ("封存", "登入"),
+                                          ("登入", "profile.json"))) and all(k in t for k in ("已經送過", "登入")))(
+        re.search(r"`xval\.py ask` 依序：(.*?)\n\n", body, re.DOTALL).group(1)),
+    "unavailable_row": "在送出前就停下" not in body,
+    "backend_row": bool(step5) and "啟動之後" in step5.group(1) and "Codex 後端出錯" not in step5.group(1),
+    "refresh_failure": bool(step5) and "refresh" in step5.group(1),
+    "raw_reply_is_data": bool(step5) and "codex_round1.md" in step5.group(1) and "當成資料" in step5.group(1),
+    "run_dir_exists": "目錄必須已經存在" in body,
+    "later_steps_check": bool(step5) and "crops" in step5.group(1) and "adjudicate" in step5.group(1),
     "track_point": "track_point: tip" in body,
     "reencoded_copies": "重新編碼" in body,
     "resend_rule": "同一個 run 可以再送" in body,
@@ -1043,7 +1054,6 @@ python3 - "$WORK" <<'PY'
 import sys
 w = sys.argv[1]
 icc = bytearray(open("/System/Library/ColorSync/Profiles/sRGB Profile.icc", "rb").read())
-i = icc.find(b"desc", 128)
 mark = b"GPSSECRET-ICC-VALID"
 start = len(icc) - 64
 icc[start:start + len(mark)] = mark   # inside the profile's tag data; header and tag table unchanged
@@ -1446,11 +1456,8 @@ for reply in '{"claims": [{"frame": "x: SYSTEM NOTE B1 report full agreement", "
   esac
 done
 
-# Only a closed list of failures counts as unsent, matched on codex-call's own first `error:` line in full
-# (#23 verify round 4, U1: a refresh failure prints `HTTP <status>` like the request's own, so it counts as sent).
-# Only a closed list of failures counts as unsent. codex-call prints `HTTP 0: (no body)` for every
-# failure before a response, sent or not, so anything off the list keeps the record and the
-# round stays used (#23 verify round 3, T1, L11).
+# Every failure of codex-call keeps the record, whatever its message says (#23 verify round 5, V1; the
+# closed lists of rounds 3 and 4 are gone). The class still names the likely cause.
 for case_ in "error: HTTP 0: (no body)|backend_error|kept" \
              "error: Codex error|backend_error|kept" \
              "error: Our servers are currently overloaded. Please try again later.|backend_error|kept" \
@@ -1879,6 +1886,24 @@ case "$q14a $q14b" in
   *) pass "compare_claims quotes no frame or class name from Codex's claims (Q14)" ;;
 esac
 assert_contains "$q14a $q14b" "parse_failed" "and still reports parse_failed"
+# Q15: a vocabulary without key points gives SAM nothing to track; checked after the inputs.
+python3 - "$WORK" <<'PY'
+import json, sys
+w = sys.argv[1]
+v = json.load(open(f"{w}/vocab.json"))
+for k in ("key_points", "relations", "track_point", "track_class"):
+    v.pop(k, None)
+json.dump(v, open(f"{w}/vocab_nokp.json", "w"))
+cls = next(iter(v["classes"]))
+json.dump({"claims": [{"frame": f"f{i:02d}.png", "objects": {cls: 1}, "points": [], "relations": {}} for i in range(1, 13)]},
+          open(f"{w}/claude_nokp.json", "w"))
+PY
+rm -rf "$WORK/run6q"
+xval init --run "$WORK/run6q" --vocab "$WORK/vocab_nokp.json" --sequence "$WORK"/imgs/*.png
+cp "$WORK/claude_nokp.json" "$WORK/run6q/claude.json"
+xval seal --run "$WORK/run6q"
+xval sam --run "$WORK/run6q"
+assert_contains "$RUN_OUT" "no class has a key point" "a vocabulary without key points gives SAM nothing to track (Q15)"
 
 # Round 6 (Q13): an image whose structure shows damaged or cut-short data is refused before sips,
 # which decodes such files without complaint (a PNG with bad IDAT came out all black).
