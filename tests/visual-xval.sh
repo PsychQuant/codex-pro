@@ -87,6 +87,7 @@ cat > "$WORK/vocab.json" <<'JSON'
   "classes": {"INST": "laparoscopic instrument", "THREAD": "suture thread", "PAD": "practice pad"},
   "constraints": ["INST count is at most 2"],
   "max_count": {"INST": 2},
+  "key_points": {"INST": "the tip of the jaws"},
   "relations": {"tips_together": {"between": ["INST", "INST"], "definition": "distance_pct < 5"}},
   "position_threshold_pct": 5
 }
@@ -144,9 +145,15 @@ variant("unknown_max_count", lambda v: v.update(max_count={"SCALPEL": 1}))
 variant("bad_track_class", lambda v: v.update(track_class="SCALPEL"))
 variant("bad_margin", lambda v: v.update(sam_margin_pct=-1))
 variant("bad_constraints", lambda v: v.update(constraints="INST count is at most 2"))
+variant("other_quantity", lambda v: v["relations"]["tips_together"].update(definition="closeness < 5"))
+variant("relation_without_key_point", lambda v: v["relations"]["tips_together"].update(between=["INST", "PAD"]))
+variant("unknown_key_point_class", lambda v: v.update(key_points={"SCALPEL": "the tip"}))
+variant("empty_key_point", lambda v: v.update(key_points={"INST": ""}))
+variant("track_without_key_point", lambda v: v.update(track_class="PAD"))
 PY
 for bad in string_relation loose_definition unknown_between one_between bad_max_count unknown_max_count \
-           bad_track_class bad_margin bad_constraints; do
+           bad_track_class bad_margin bad_constraints other_quantity relation_without_key_point \
+           unknown_key_point_class empty_key_point track_without_key_point; do
   run_py compare_claims.py check-vocab "$WORK/vocab_$bad.json"
   assert_eq "2" "$RUN_STATUS" "an invalid vocabulary is target_invalid ($bad)"
 done
@@ -227,13 +234,28 @@ c = json.load(open(f"{w}/codex.json"))
 c["claims"][0]["points"] = [p for p in c["claims"][0]["points"] if p["class"] != "INST"]
 json.dump(c, open(f"{w}/codex_no_points.json", "w"))
 c = json.load(open(f"{w}/codex.json"))
-c["claims"][0]["points"].append({"class": "PAD", "x_pct": 10, "y_pct": 10})
+c["claims"][0]["points"].append({"class": "INST", "x_pct": 10, "y_pct": 10})   # 3 INST points, count 2
 json.dump(c, open(f"{w}/codex_point_without_object.json", "w"))
+# A class without a key-point definition is compared by count only (#23 verify round 2, R2).
+c = json.load(open(f"{w}/codex.json")); m = json.load(open(f"{w}/claude.json"))
+for claims, xy in ((m, (10, 10)), (c, (90, 90))):
+    claims["claims"][0]["objects"]["PAD"] = 1
+    claims["claims"][0]["points"].append({"class": "PAD", "x_pct": xy[0], "y_pct": xy[1]})
+claims_nopad = json.loads(json.dumps(c)); claims_nopad["claims"][0]["points"] = [p for p in claims_nopad["claims"][0]["points"] if p["class"] != "PAD"]
+json.dump(m, open(f"{w}/claude_pad.json", "w")); json.dump(c, open(f"{w}/codex_pad.json", "w"))
+json.dump(claims_nopad, open(f"{w}/codex_pad_nopoint.json", "w"))
 PY
 for bad in codex_no_points codex_point_without_object; do
   run_py compare_claims.py compare "$WORK/vocab.json" "$WORK/claude.json" "$WORK/$bad.json"
   assert_eq "3" "$RUN_STATUS" "key points that do not match the counts are parse_failed from Codex ($bad)"
 done
+run_py compare_claims.py compare "$WORK/vocab.json" "$WORK/claude_pad.json" "$WORK/codex_pad.json"
+assert_eq "0" "$RUN_STATUS" "points for a class without a key-point definition are accepted and ignored"
+assert_eq "" "$(json_get "$RUN_OUT" '" ".join(x["frame"] for x in d["disagreements"] if x.get("class") == "PAD")')" \
+  "a class without a key-point definition never gives a position mismatch"
+run_py compare_claims.py compare "$WORK/vocab.json" "$WORK/claude_pad.json" "$WORK/codex_pad_nopoint.json"
+assert_eq "0" "$RUN_STATUS" "a class without a key-point definition needs no key points"
+
 run_py compare_claims.py compare "$WORK/vocab.json" "$WORK/codex_no_points.json" "$WORK/codex.json"
 assert_eq "2" "$RUN_STATUS" "key points that do not match the counts are target_invalid from Claude"
 
@@ -788,8 +810,10 @@ prompt=$(cat "$WORK/prompts.txt" 2>/dev/null)
 assert_contains "$prompt" "f01.png" "the prompt names the frames by their neutral names"
 assert_contains "$prompt" "tips_together" "the prompt carries the vocabulary's relations"
 assert_contains "$prompt" "at most 2 objects of class INST" "the prompt carries the vocabulary's maximum counts"
-assert_contains "$prompt" "between the key points of INST and INST" "the prompt says which key points a relation measures"
-assert_contains "$prompt" "one key point for every object you count" "the prompt asks for one key point per counted object"
+assert_contains "$prompt" "smallest distance between a key point of INST and a different key point of INST" \
+  "the prompt defines distance_pct as the smallest distance between the two classes' key points"
+assert_contains "$prompt" "INST: the tip of the jaws" "the prompt gives the key-point definition of each class that has one"
+assert_contains "$prompt" "one key point for every object you count" "the prompt asks for one key point per counted object of those classes"
 case "$prompt" in
   *touching*) fail "the prompt no longer asks what each point touches" ;;
   *) pass "the prompt no longer asks what each point touches" ;;

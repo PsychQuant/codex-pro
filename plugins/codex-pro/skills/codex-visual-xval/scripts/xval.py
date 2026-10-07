@@ -229,8 +229,10 @@ def round1_prompt(run: str) -> str:
     names = neutral_names(run)
     constraints = [f"- {c}" for c in vocab.get("constraints", [])]
     constraints += [f"- There are at most {n} objects of class {c} in any image." for c, n in vocab.get("max_count", {}).items()]
-    relations = "\n".join(f"- {k}: true when {r['definition']}, measured between the key points of "
-                          f"{r['between'][0]} and {r['between'][1]}" for k, r in vocab.get("relations", {}).items())
+    relations = "\n".join(f"- {k}: true when {r['definition']}, where distance_pct is the smallest distance between a key "
+                          f"point of {r['between'][0]} and a different key point of {r['between'][1]}"
+                          for k, r in vocab.get("relations", {}).items())
+    key_points = "\n".join(f"- {c}: {d}" for c, d in vocab.get("key_points", {}).items())
     return f"""You are given {len(names)} images, in this order: {", ".join(names)}.
 
 Closed vocabulary (anything else is class "other", with "other_description"):
@@ -239,12 +241,16 @@ Closed vocabulary (anything else is class "other", with "other_description"):
 Physical constraints that always hold:
 {chr(10).join(constraints) or "- (none)"}
 
+Key points (only these classes get points):
+{key_points or "- (none: give no points)"}
+
 Relations to judge for every image (distance_pct is in percent of the image width):
 {relations or "- (none)"}
 
-For every image, report the count of each class you see and one key point for every object you count
-(for instruments: the tip) as percentages of the image width (x_pct) and height (y_pct), so a class with
-count 2 has exactly 2 points. Then judge every relation as true or false.
+For every image, report the count of each class you see. For the classes listed under key points,
+give one key point for every object you count, as percentages of the image width (x_pct) and height (y_pct),
+so a class with count 2 has exactly 2 points; give no points for other classes. Then judge every relation
+as true or false.
 
 Reply with JSON only:
 {{"claims": [{{"frame": "{names[0]}", "objects": {{"<CLASS>": <count>}},
@@ -517,7 +523,7 @@ def question(item: dict, box: list[float]) -> str:
                 "enlarged 2x. value: true or false.")
     if item["kind"] == "count":
         return f"How many objects of class {item['class']} are visible in this crop? value: an integer."
-    return (f"List the key point (for an instrument: the tip) of every object of class {item['class']} in this crop. "
+    return (f"List the key point ({item.get('key_point', 'the key point')}) of every object of class {item['class']} in this crop. "
             "value: [{\"x_pct\": <0-100>, \"y_pct\": <0-100>}, ...] in percent of this crop; [] if there is none.")
 
 
@@ -556,6 +562,8 @@ def crops(run: str) -> None:
             subprocess.run(["sips", "-Z", str(2 * max(cw, ch)), target, "--out", target], capture_output=True, check=True)
         except (OSError, subprocess.CalledProcessError) as exc:
             raise Stop("target_invalid", f"cannot crop {item['frame']}: {exc}")
+        if item["kind"] == "position":
+            item = {**item, "key_point": vocab.get("key_points", {}).get(item["class"], "its key point")}
         entry = {"crop": crop, "frame": item["frame"], "kind": item["kind"], "box_pct": box, "box_px": px,
                  "question": question(item, box)}
         for key in ("class", "relation", "definition", "between"):
@@ -584,7 +592,9 @@ def sam(run: str) -> None:
     if check.returncode != 0:
         return record("not_installed", check.stdout.strip())
     vocab = load(os.path.join(run, "vocab.json"))
-    cls = vocab.get("track_class") or next(iter(vocab["classes"]))
+    if not vocab.get("key_points"):
+        return record("not_applicable", "no class has a key point, so there is nothing to track")
+    cls = vocab.get("track_class") or next(iter(vocab["key_points"]))
     frames = load(os.path.join(run, "frames.json"), {})
     aspects = {n: f["height"] / f["width"] for n, f in frames.items() if f.get("width") and f.get("height")}
     plan = sam_track.anchors(load(os.path.join(run, "comparison.json")), load(os.path.join(run, "claude.json")),

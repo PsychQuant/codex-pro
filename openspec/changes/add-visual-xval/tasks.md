@@ -152,7 +152,7 @@
   - visual-xval delta spec：Claim schema and closed vocabulary（key_points、distance_pct 為唯一的量、最小距離）、Adjudication without majority vote（放大輪數量只能證實較高的一方、推翻雙方即 unverifiable、約束單獨存在時只排除）、Structured result file（first_side_model、backend_error、放大輪紀錄）、Built-in SAM evidence（只下載需要的權重）。
   - design.md 補上第二輪的決定與理由。
   - 驗證：`spectra validate` 與 `spectra analyze` 無 warning。
-- [ ] 7.2 關鍵點由詞彙表指定（R2、S7）。
+- [x] 7.2 關鍵點由詞彙表指定（R2、S7）。
   - 詞彙表 `key_points`：類別 → 關鍵點定義；只有列出的類別要給點、比位置，其他類別只比數量。
   - 關係詞的 `between` 與 SAM 的 `track_class` 都必須是有關鍵點的類別；量只接受 `distance_pct`，定義為兩類關鍵點之間的最小距離。
   - 兩個 prompt 列出各類別的關鍵點定義。
