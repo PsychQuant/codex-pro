@@ -49,7 +49,7 @@ skill 屬 mutating producer。流程：解析參數 → 讀 profile → 前景�
 - `runtime_unsupported`：runtime 不支援 `--image`。
 - `parse_failed`：Codex 回覆不是符合 schema 的 JSON。
 
-原生 bundle 另沿用 `runtime_unavailable`、`package_corruption`。全部不 retry，一律寫結果檔。
+原生 bundle 另沿用 `runtime_unavailable`、`package_corruption`。腳本內部的意外例外記為 `internal_error`，讓「每次 run 都寫結果檔」沒有例外。全部不 retry，一律寫結果檔。
 
 ### Runtime 圖片能力在送出前檢查
 
@@ -61,12 +61,34 @@ skill 屬 mutating producer。流程：解析參數 → 讀 profile → 前景�
 
 Claude 的逐格答案先寫到 `.codex-pro/visual-xval-<timestamp>/claude.json`，計算 SHA-256 並記錄時間，**之後**才呼叫 Codex。比對前重新計算 SHA-256，不符就在結果檔標示 `seal_broken: true`，比對照做，但結論欄註明封存失效。
 
+先後由程式強制，不靠流程約定：`ask` 在沒有封存或封存不符時不送請求，封存一旦寫下就不能重寫。第一版只寫了封存，`ask` 卻不檢查它，先送 Codex、事後才封存的 run 產出的結果檔與正確流程一模一樣（verify 第一輪 B1）。紀錄只有在某個閘門依賴它時才是保證。
+
 替代方案是只靠流程約定。不採用：使用者選擇可事後驗證。
+
+### 答案只記一次
+
+每一輪只送一次請求：送出前記下請求時間，Codex 的回覆存檔並記錄 SHA-256。同一輪再送一次，程式直接停下。結果檔列出 Codex 的請求時間與回覆雜湊，讀者可以核對「封存早於請求」與「回覆沒被改過」。
+
+理由：spec 規定已記錄的答案不得被同一模型後來的答案取代。第一版的 `ask` 每次都覆寫 `codex.json`，等於允許重問到兩邊一致為止，這就是用重試做多數決（verify 第一輪 B3）。
+
+### 放大輪由不知情的 subagent 作答
+
+放大輪 Claude 這一側不由執行 skill 的 Claude 作答，改由一個全新的 subagent 作答。它只拿到 `crops` 寫出的題目檔與裁切圖，不知道原答、不知道分歧內容，與 Codex 拿到的完全相同。答案以裁切圖檔名為鍵，用與 Codex 回覆相同的規則驗證，封存後才送 Codex；裁決前重算這份封存，不符就不採用放大輪證據。
+
+理由：執行 skill 的 Claude 知道哪裡有分歧，也記得自己的原答。布林關係只有真假兩種值，它知道「這裡有分歧」與自己的原答，就等於知道 Codex 的答案，可以翻成同一個值讓裁決判給 Codex（verify 第一輪 B4）。
+
+替代方案：關係分歧不走放大輪（沒有 SAM 時多半停在 unverifiable）；只採信 Codex 改答的一側（不對稱，裁決偏向 Claude）。使用者選擇 subagent（2026-10-07）。
+
+### Python 3.10 以上
+
+腳本需要 Python 3.10 以上。`xval.py` 在載入任何其他模組之前檢查版本；版本不符時照樣寫結果檔（`runtime_unavailable`），不會在 import 時崩潰而留下空白。
+
+理由：macOS 內建的 `/usr/bin/python3` 是 3.9，第一版在那裡 import 就崩潰，連結果檔都沒有（verify 第一輪 B10）。替代方案是改寫成相容 3.9；使用者選擇宣告需求（2026-10-07），由 #25 的 setup 檢查補上事前提示。
 
 ### 一輪一批，第二輪只送放大圖
 
-- 第一輪：一次送整批圖片（上限 12 張，用 `--image` 重複帶入），要 Codex 依 JSON schema 回答。
-- 第二輪：只針對分歧，由 skill 用 Python（PIL）依分歧位置裁切、放大 2 倍，產生新圖送出。
+- 第一輪：一次送整批圖片（上限 12 張，用 `--image` 重複帶入），要 Codex 依 JSON schema 回答。超過 12 張時 `init` 以 `target_invalid` 拒絕；要判讀更多張就分成多次 run。
+- 第二輪：只針對分歧，由 skill 用 macOS `sips` 依分歧位置裁切、放大 2 倍，產生新圖送出。數量題的裁切範圍涵蓋兩邊在該格該類別的全部關鍵點，否則裁切區內的數量不能拿來裁決整張影格的數量；位置題要求列出裁切區內該類別的全部關鍵點，再依物件配對判斷分歧點對應哪一個物件。沒有關鍵點可圈、或範圍等於整張畫面時不出放大題，因為那不是新的證據。
 
 替代方案是讓 Codex 自己裁切（`codex exec`）。不採用：違反 Design constraint #1，使用者選擇由 skill 先裁好。
 
@@ -74,7 +96,15 @@ Claude 的逐格答案先寫到 `.codex-pro/visual-xval-<timestamp>/claude.json`
 
 ### 主張的 JSON schema 與量化門檻
 
-每格的主張都是封閉清單裡的物體，以及它們的數量、關鍵點位置（畫面寬高的百分比）、接觸物；關係詞（例如「會合」）必須附量化定義。比對分三類：
+每格的主張都是封閉清單裡的物體，以及它們的數量與關鍵點位置（畫面寬高的百分比）。每個被計數的物件都要有一個關鍵點，點數與數量不符的答案不合格：第一版允許省略關鍵點，缺的點在比對時靜默消失，一致率因此虛高（verify 第一輪 B7）。
+
+### 關係詞綁定兩個類別
+
+關係詞（例如「會合」）寫成 `{"between": [類別, 類別], "definition": "<量> <比較> <數字>"}`。定義只接受「量的名稱、比較符號、數字」這個形式，`between` 指明量的是哪兩類物件的關鍵點。原本的接觸物欄位（`touching`）拿掉，「碰到什麼」一律寫成有門檻的關係詞。
+
+理由：第一版只檢查定義裡有沒有「符號＋數字」，`很近（< 5）` 也能通過，而且沒說量哪兩點，兩個模型可以各量各的；SAM 也因此拿兩支器械的距離去裁決不相干的關係（verify 第一輪 I5、B5）。`touching` 有收集卻從不比對，等於一個沒有門檻的關係詞。
+
+比對分三類：
 
 - 數量不同。
 - 同類物體依最近距離配對後，位置差超過門檻（預設畫面寬 5%）。
@@ -89,15 +119,24 @@ Claude 的逐格答案先寫到 `.codex-pro/visual-xval-<timestamp>/claude.json`
 - **環境**：skill 附 `sam_env.sh`，在 `~/.codex-pro/sam-env/` 用 uv 建 venv，鎖定 transformers 5.19 以上與相容的 torch。模型用 `facebook/sam2.1-hiera-large`（Hugging Face 上不需申請權限）。第一次安裝前先顯示預估下載量，取得使用者同意才進行。
 - **錨點**：取兩邊判讀一致的影格當錨點，用一致的位置當提示點；每一段一致的影格都重新錨定，縮短傳遞距離。
 - **塌陷偵測**：兩個物件遮罩的 IoU 超過 0.5，該格標為 invalid，不拿來裁決。實測中只錨定一格時，909 格裡有 332 格塌成同一支器械，所以多錨點與塌陷偵測都必要。
+- **證據範圍**：SAM 只追蹤一個類別（`track_class`），所以數量與位置證據只用於同一類別的分歧，關係證據只用於 `between` 兩邊都是追蹤類別的關係。位置證據先把追蹤到的尖端與兩邊的全部關鍵點配對，看分歧點各自對應哪一個物件，不取「離任一方最近的尖端」（verify 第一輪 B5、B6）。物件是否存在以模型的 object score 判定，不只看遮罩面積。
 - **長影片**：影格存在 CPU 記憶體（`video_storage_device="cpu"`），避開 MPS 的張量上限。
 
 替代方案：
 - 可選的外部步驟：使用者原本選這個，後改為內建，理由是準度。
 - SAM 3：可用文字提示，但 Hugging Face 上需申請權限，目前取得不到。
 
+### 送出前確認與影格清理
+
+- 隱私提醒是閘門：使用者確認後，skill 才記錄確認時間，`ask` 沒有這筆紀錄就不送。
+- `init` 重新編碼影格，去除 EXIF／XMP（拍攝時間、GPS）並套用方向；中性檔名之外不帶任何時間線索。
+- run 目錄寫入 `.gitignore`，影格複本不會被 `git add -A` 帶上 remote。
+
+理由：第一版只在 SKILL.md 寫提醒，程式沒有關卡；影格原樣複製，EXIF 隨圖送出；run 目錄留在使用者專案裡（verify 第一輪 I2、I3）。
+
 ### 裁決規則
 
-每個分歧的結果只有三種：`resolved_claude`、`resolved_codex`、`unverifiable`。SAM 的量測值離門檻不到 1%（寬度百分比，可用詞彙表的 `sam_margin_pct` 改）時不算證據：實測（2026-10-07，12 格腹腔鏡影格）SAM 量出的兩尖端距離與標註相差中位 0.28%、最大 0.91%，曾有一格兩者正好跨在 5% 門檻兩側。多項證據互相矛盾時判 `unverifiable`。只有第三種證據（放大後兩邊重答一致、SAM 有效格的量測、違反物理約束）能裁決；沒有有效證據就是 `unverifiable`。不用多數決，也不讓任何一方看到另一方的答案後改答。
+每個分歧的結果只有三種：`resolved_claude`、`resolved_codex`、`unverifiable`。SAM 的量測值離門檻不到 1%（寬度百分比，可用詞彙表的 `sam_margin_pct` 改）時不算證據：實測（2026-10-07，12 格腹腔鏡影格）SAM 量出的兩尖端距離與標註相差中位 0.28%、最大 0.91%，曾有一格兩者正好跨在 5% 門檻兩側。多項證據互相矛盾時判 `unverifiable`。只有第三種證據（放大後兩邊重答一致、SAM 有效格的量測、違反物理約束）能裁決；沒有有效證據就是 `unverifiable`。不用多數決，也不讓任何一方看到另一方的答案後改答。物理約束只能排除超過上限的一方，裁決照樣判給另一方，但證據註明這是排除法、不是確認。
 
 ### 重新 vendor 接受上游漂移
 
@@ -129,14 +168,14 @@ spec 不再逐字寫死 commit、blob、大小與 SHA-256，改規定這些值�
 
 **介面與資料形狀**
 
-- 主張 JSON（每格一筆）：`{"frame": "<中性檔名>", "objects": {"<類別>": <數量>}, "points": [{"class": "<類別>", "x_pct": <0–100>, "y_pct": <0–100>, "touching": "<類別或 null>"}], "relations": {"<關係名>": <true|false>}}`。
-- 清單檔：`classes`（類別與說明）、`constraints`（物理約束）、`relations`（關係名與量化定義，例如 `tips_together: distance_pct < 5`）、`position_threshold_pct`（預設 5）。
+- 主張 JSON（每格一筆）：`{"frame": "<中性檔名>", "objects": {"<類別>": <數量>}, "points": [{"class": "<類別>", "x_pct": <0–100>, "y_pct": <0–100>}], "relations": {"<關係名>": <true|false>}}`；每個類別的點數等於它的數量。
+- 清單檔：`classes`（類別與說明）、`constraints`（物理約束，文字）、`max_count`（各類別上限，裁決用）、`relations`（關係名對應 `{"between": [類別, 類別], "definition": "distance_pct < 5"}`）、`position_threshold_pct`（預設 5）、`track_class`、`sam_margin_pct`。
 - 結果檔：frontmatter 如 Decisions 所列；內文依序是「一致率與分歧摘要」「逐格分歧與裁決」「SAM 狀態（未安裝、無效格數、錨點）」「封存驗證」「限制」。
 - 比對腳本與 SAM 腳本放在 skill 的 `scripts/` 底下，輸入輸出都是 JSON，可單獨執行與測試。
 
 **失敗模式**
 
-- `runtime_unsupported`、`target_invalid`、`parse_failed`、`rate_limit`、`oauth_invalid`、`timeout`、`runtime_unavailable`、`package_corruption`：一律寫結果檔、不 retry。
+- `runtime_unsupported`、`target_invalid`、`parse_failed`、`rate_limit`、`oauth_invalid`、`timeout`、`runtime_unavailable`、`package_corruption`、`internal_error`：一律寫結果檔、不 retry。
 - SAM 未安裝或使用者拒絕安裝：不算失敗，`sam_status: not_installed`，分歧中需要 SAM 的標為 `unverifiable`。
 - 圖片超過 20 MB 或不是圖片：由上游 `codex-call` 報錯，skill 以 `target_invalid` 記錄。
 
@@ -158,10 +197,10 @@ spec 不再逐字寫死 commit、blob、大小與 SHA-256，改規定這些值�
 
 ## Risks / Trade-offs
 
-- [後端未公開，多張圖的 payload 上限不明] → #87 實測多張圖；超過上限時改分批，結果檔合併。
+- [後端未公開，多張圖的 payload 上限不明] → #87 實測多張圖；單次 run 上限 12 張，超過時拒絕並請使用者分次執行。
 - [上游漂移帶入未經 codex-pro 測試的程式碼] → 重新 vendor 後跑完整測試與 e2e；背景執行功能不接到任何 skill。
 - [SAM 依賴重：模型 856 MB（實測）、總下載約 1 GB（估計），首次慢，MPS 有坑] → 安裝前取得同意；鎖版本；長片存 CPU；未安裝時降級為 `unverifiable`，不讓整個 skill 失敗。
-- [SAM 追蹤會塌陷或換身分] → 多錨點、IoU 塌陷偵測、無效格不裁決；物件都離開畫面後重新錨定。
+- [SAM 追蹤會塌陷、換身分或在物件離開畫面後漂到別的東西上] → 多錨點、IoU 塌陷偵測、無效格不裁決；物件存在以 object score 判定，不存在的物件不算證據。
 - [圖片外送的隱私風險] → 送出前提醒；skill 不自動判斷該遮什麼。
 - [兩邊一致仍可能都錯] → 結果檔的限制段明寫；不以一致率宣稱準度。
 
@@ -177,4 +216,4 @@ spec 不再逐字寫死 commit、blob、大小與 SHA-256，改規定這些值�
 ## Open Questions
 
 - ~~後端一次可收幾張圖、總 payload 上限是多少~~：已在上游 #87（PR #88）實測。24 張、13.45 MB 與 8 張、109.10 MB 都成功，上限未量到。若日後單批需要超過 24 張或 110 MB，要先再量一次。
-- SAM 2.1 的授權條款要在實作時確認，並寫進 `THIRD_PARTY_NOTICES.md`。
+- ~~SAM 2.1 的授權條款~~：Hugging Face metadata 為 Apache-2.0，已寫進 `THIRD_PARTY_NOTICES.md`；模型不隨 plugin 散布。

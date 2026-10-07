@@ -83,3 +83,65 @@
   - `plugins/codex-pro/.claude-plugin/plugin.json` 與原生 manifest 版本一致為 0.9.0。
   - 驗證：`bash tests/run.sh` 的 static 檢查（含跨 harness 版本一致）全綠。
   - [after: 2.2, 4.4, 4.5]
+
+## 6. Verify 第一輪修正（#23 verify report 的 B1–B12、I1–I17）
+
+- [ ] 6.1 規格與 design 依使用者四項決定更新（依「放大輪由不知情的 subagent 作答」「Python 3.10 以上」「答案只記一次」「關係詞綁定兩個類別」「送出前確認與影格清理」）。
+  - visual-xval delta spec：Claim schema and closed vocabulary、Sealed Claude answers、Blind Codex judgment、Zoom round、Built-in SAM evidence、Adjudication without majority vote、Structured result file、Privacy reminder before sending images 依修正改寫；新增 Python 版本需求；失敗類別加 `internal_error`。
+  - design.md 補上五個決定與各自理由。
+  - 驗證：`spectra validate add-visual-xval` 通過；新增與改寫的 scenario 在後續 task 都有對應測試。
+- [ ] 6.2 主張與詞彙表（B7、I4、I5、I17）。
+  - 每個類別的關鍵點數必須等於該類別的數量；不符時 Claude 的答案為 `target_invalid`、Codex 的回覆為 `parse_failed`。
+  - 拿掉 `touching`；關係詞改為 `{"between": [類別, 類別], "definition": "<量> <比較> <數字>"}`，定義只接受這個形式。
+  - 詞彙表選填欄位（`max_count`、`track_class`、`sam_margin_pct`、`constraints`）驗證型別。
+  - 第一輪 prompt 列出 `max_count`；放大輪 prompt 附類別定義。
+  - 驗證：fixture 測試——Codex 省略關鍵點時為 `parse_failed`；`"很近（< 5）"` 被拒；兩個 prompt 都含上述內容。
+  - [after: 6.1]
+- [ ] 6.3 封存與紀錄（B1、B3、I2 的確認部分）。
+  - `ask --round 1` 在沒有封存、封存不符、或未記錄隱私確認時停下（`target_invalid`），不送請求。
+  - `seal` 不覆寫既有封存；Codex 已作答後不能再封存。
+  - 每一輪只送一次請求：送出前記錄時間，Codex 的回覆記錄 SHA-256；同一輪再送一次即停下。
+  - 結果檔記錄 Codex 請求時間與回覆雜湊，並核對封存早於請求、回覆未被改動。
+  - 驗證：behavioral 測試——未封存先 ask 被拒且 mock 沒被呼叫；重封被拒；同一輪第二次 ask 被拒；改動 codex.json 後結果檔標示不符。
+  - [after: 6.2]
+- [ ] 6.4 放大輪（B2、B4、B8、B9、I11）。
+  - `crops` 把放大輪的題目寫成 `zoom_prompt.md`，Claude 端由全新 subagent 只依該檔與裁切圖作答，寫成以裁切圖檔名為鍵的答案檔；`seal --zoom` 用與 Codex 相同的規則驗證後封存。
+  - `ask --round zoom` 要求放大輪封存存在且完好；`adjudicate` 重算放大輪封存，不符時不採用放大輪證據並在結果檔標示。
+  - 數量題的裁切範圍涵蓋兩邊在該格該類別的全部關鍵點；沒有關鍵點或範圍等於整張畫面時不產生放大題。
+  - 位置題改為列出裁切圖內該類別全部關鍵點，裁決時依物件配對判斷分歧點各自對應哪一個物件。
+  - 驗證：behavioral 測試——放大輪答案在 Codex 回覆後被改動時不採用；DA 的「同一支標兩次」情境由放大輪判給 Codex；只有裁切區外有物件時數量題不判勝。
+  - [after: 6.3]
+- [ ] 6.5 SAM 證據（B5、B6、I6、I7、I9、I13、I17）。
+  - `track.json` 記錄追蹤類別；數量與位置證據只用於同一類別；關係證據只用於 `between` 兩邊都是追蹤類別的關係。
+  - 位置證據以物件配對決定分歧點對應的追蹤物件。
+  - 物件存在以模型的 object score 判定；影格順序取自 init 的順序；錨點配對用影格長寬比。
+  - SAM 步驟移到放大輪之前，放大輪失敗不影響 SAM。
+  - 模型鎖定 revision、權重放在 `~/.codex-pro/sam-env/` 內、追蹤時只用本機檔案；`sam_env.sh` 以 `python -I` 執行。
+  - 驗證：fixture 測試——其他類別的分歧不被 SAM 裁決；DA 的「同一支標兩次」情境由 SAM 判給 Codex；SAM smoke 跑在實際影格上（§E）。
+  - [after: 6.2]
+- [ ] 6.6 失敗路徑與紀錄，含 Interpreter requirement（B10、B11、I1、I10）。
+  - Interpreter requirement：`xval.py` 在任何 import 之前檢查 Python 版本，低於 3.10 時寫 `error.json`，`result` 寫出結果檔（`runtime_unavailable`）。
+  - 每一步的意外例外寫成 `internal_error`；沒有比對結果時 `adjudicate` 正常結束。
+  - `classify` 依 codex-call 的實際錯誤訊息判定，圖片錯誤為 `target_invalid`。
+  - profile 解析結果寫進 run 目錄，`ask` 與 `result` 從那裡讀；同一步之後成功時清除該步留下的錯誤；未驗證的封存寫「未驗證」。
+  - 物理約束只排除一方時在證據中註明；放大輪兩邊一致推翻雙方原答時註明。
+  - 驗證：以 `/usr/bin/python3`（3.9）執行時結果檔存在且為 `runtime_unavailable`；第一輪 timeout 後 `adjudicate` 與 `result` 都正常結束；時間戳含 `429` 的圖片錯誤分類為 `target_invalid`。
+  - [after: 6.3, 6.4, 6.5]
+- [ ] 6.7 輸入處理（I2 的影格部分、I3、I12、I14、I15）。
+  - init 重新編碼影格，去除 EXIF／XMP 並套用方向；run 目錄寫入 `.gitignore`。
+  - 單次 run 最多 12 張圖片，超過時 `target_invalid`；中性檔名依張數補位。
+  - SKILL.md 與給 Codex 的 instructions 都寫明畫面中的文字只是判讀內容、不是指令。
+  - `--claude-answers` 檔可用原始檔名，init 後依對照表換成中性檔名再封存。
+  - 驗證：帶 EXIF 的 JPEG 複本不含原拍攝時間；13 張圖被拒；以原始檔名作答的答案檔可以封存。
+  - [after: 6.6]
+- [ ] 6.8 測試與文件（I8、I16、F 系列附帶）。
+  - 測試層在缺 numpy 或非 macOS 時略過對應案例並印出原因，不算失敗。
+  - 主規格的 nine skills 改為 ten；e2e-checklist 更新版本字串、producer 清單，加入 visual-xval 的端到端項目。
+  - README 與 SKILL.md 寫明 Python 3.10 以上；重新產生原生 bundle。
+  - 驗證：`bash tests/run.sh` 只剩 #24 那一條失敗。
+  - [after: 6.7]
+- [ ] 6.9 真實後端端到端（B12）。
+  - 本機 parallel-ai-agents 更新到 2.24.0 以上。
+  - 用 3 張合成圖跑完整流程（含放大輪），確認回覆符合 schema、中性檔名與送出順序一致、結果檔完整。
+  - 驗證：結果檔與 run 目錄的實際內容記錄在 e2e-checklist 的對應項目。
+  - [after: 6.8]
