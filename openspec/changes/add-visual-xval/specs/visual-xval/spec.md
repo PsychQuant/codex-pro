@@ -1,6 +1,6 @@
 ## Purpose
 
-Visual cross-validation lets Claude and Codex judge the same set of images independently, compares their per-frame claims with deterministic code, and settles disagreements only with a third kind of evidence. It exists because a single model misreading an image does not notice its own error.
+Visual cross-validation (`/codex-pro:codex-visual-xval`) lets Claude and Codex judge the same set of images independently, compares their per-frame claims with deterministic code, and settles disagreements only with a third kind of evidence. It exists because a single model misreading an image does not notice its own error.
 
 ## ADDED Requirements
 

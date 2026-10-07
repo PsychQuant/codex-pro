@@ -1,6 +1,6 @@
 {
   "name": "codex-pro",
-  "version": "0.8.0",
+  "version": "0.9.0",
   "description": "v0.8.0: Native Codex plugin distribution with two complete generated bundles, pinned macOS Swift runtime provenance, fail-closed skill-relative resolution, self-hosted marketplace metadata, and release gates. Claude Code compatibility, structured results, profile governance, hard timeouts, and circuit breakers remain supported.",
   "author": {
     "name": "Che Cheng"

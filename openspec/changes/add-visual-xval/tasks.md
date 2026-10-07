@@ -77,7 +77,7 @@
 
 ## 5. 文件與版本
 
-- [ ] 5.1 文件與版本一致。
+- [x] 5.1 文件與版本一致。
   - `CLAUDE.md` 的指令表與 skill 類別表（mutating producer）加入新 skill。
   - README、CHANGELOG 記錄 0.9.0。
   - `plugins/codex-pro/.claude-plugin/plugin.json` 與原生 manifest 版本一致為 0.9.0。

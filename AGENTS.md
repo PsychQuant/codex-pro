@@ -68,6 +68,7 @@ bash tests/codex-skills-parity.sh
 | `$codex-adversarial-review` | 對設計或 code 跑 hostile challenge（找盲點，非找 bug）|
 | `$codex-rescue` | 把單一任務委派給 Codex |
 | `$codex-batch` | 平行批次處理大型 reference doc |
+| `$codex-visual-xval` | Claude 與 Codex 對同一批圖片各自判讀、比對，只用第三種證據裁決分歧 |
 | `$codex-config` | 顯示解析後的 profile（model / effort / max_time）|
 | `$codex-cancel` | Informational only — 目前為 stateless single-shot |
 
@@ -75,7 +76,7 @@ bash tests/codex-skills-parity.sh
 
 | 類別 | Skills | Codex 原生版需求／行為 |
 |---|---|---|
-| Producer | `$codex-review`、`$codex-adversarial-review`、`$codex-rescue` | macOS、可執行的 Swift、`codex login` OAuth；優先使用 bundle 內 `bin/codex-pro-call`，損壞時 fail-closed |
+| Producer | `$codex-review`、`$codex-adversarial-review`、`$codex-rescue`、`$codex-visual-xval` | macOS、可執行的 Swift、`codex login` OAuth；優先使用 bundle 內 `bin/codex-pro-call`，損壞時 fail-closed |
 | Consumer | `$codex-status`、`$codex-result`、`$codex-config`、`$codex-cancel` | 純本機讀取；不需要 macOS、Swift 或 runtime |
 | 診斷 | `$codex-setup` | 任何平台都可執行；唯讀檢查 OAuth 與 producer readiness，不連網 |
 | Batch 例外 | `$codex-batch` | 使用 `codex exec --full-auto` subprocess 並寫 output dir，不使用 bundle 內 Swift runtime |

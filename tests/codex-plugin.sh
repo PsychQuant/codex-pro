@@ -14,7 +14,7 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 source "$SCRIPT_DIR/lib/assert.sh"
 
 EXPECTED_NAME="codex-pro"
-EXPECTED_VERSION="0.8.0"
+EXPECTED_VERSION="0.9.0"
 
 if ! command -v python3 >/dev/null 2>&1; then
   echo "FATAL: python3 not on PATH (required for JSON contract checks)" >&2
@@ -409,7 +409,7 @@ required_tokens = {
         "Consumer",
     ),
     "CHANGELOG.md": (
-        "## 0.8.0",
+        "## 0.9.0",
         "Issue: [#10]",
         "self-hosted repository marketplace",
         "已知限制",

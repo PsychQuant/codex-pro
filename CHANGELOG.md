@@ -1,5 +1,28 @@
 # Changelog
 
+## 0.9.0 — 2026-10-07
+
+Issue: [#23](https://github.com/PsychQuant/codex-pro/issues/23)
+
+- 新增 `/codex-pro:codex-visual-xval`（原生版 `$codex-visual-xval`）：Claude 與 Codex 對同一批圖片各自判讀、
+  用程式比對、只用第三種證據裁決分歧。Claude 的答案在呼叫 Codex 前封存（SHA-256＋時間）；Codex 透過
+  `codex-call --image` 盲答，請求只含圖片（中性檔名）、詞彙表與 schema。分歧分數量、位置、關係三類，
+  只由放大輪、SAM 2.1 量測或物理約束裁決，不用多數決；結果寫入 `.codex-pro/visual-xval-<ts>.md`。
+- 內建 SAM 2.1 追蹤：`sam_env.sh` 在使用者同意後安裝到 `~/.codex-pro/sam-env/`（約 1 GB，版本鎖定），
+  每段一致影格各自錨定，兩物件遮罩 IoU > 0.5 的格不當證據，量測值離門檻不到 1% 不算證據。
+- 重新 vendor `codex-call`（parallel-ai-agents `19564c1`，PR #88）：支援 `--image`，並拒絕不認得的旗標。
+  provenance 改以 `references/codex-call-provenance.json` 為唯一來源，測試從它讀取，不再寫死指紋。
+- `/codex-pro:codex-status` 的 `--skill` 與 `/codex-pro:codex-result` 的 `--latest` 接受 `visual-xval`；
+  status 以一致率顯示該列。
+- 產生器新增 run 目錄型 producer 的原生改寫；skill 數由九個增為十個。
+
+### 已知限制
+
+- SAM 追蹤只用在同一支影片依時間排序的影格（`--sequence`），只量 `distance_pct`。
+- Claude 在放大輪知道哪裡有分歧，它的放大輪答案不是完全盲答；Codex 的放大輪請求不帶任何一方的答案。
+- 兩個模型一致不代表正確；準度要靠人工標準答案。
+- `tests/codex-plugin.sh` 的 plugin-creator validator 檢查在 Codex CLI 0.160.1 下必定失敗（#24），與本版無關。
+
 ## 0.8.0 — 2026-08-10
 
 Issue: [#10](https://github.com/PsychQuant/codex-pro/issues/10)
