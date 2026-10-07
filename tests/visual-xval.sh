@@ -868,9 +868,9 @@ xval() {   # xval <args...> — mock runtime, isolated HOME
 profile_in() {   # profile_in <run> — the profile Step 4.1 records in the run directory
   printf '{"model": "gpt-test", "effort": "high", "max_time": 30, "profile_source": "default"}\n' > "$1/profile.json"
 }
-new_run() {   # new_run <dir> — init a run on the twelve images and seal Claude's marked claims
+new_run() {   # new_run <dir> — init a run on the twelve images and seal Claude's marked claims (SEQ=1: a sequence)
   rm -rf "$1" "$WORK/mock.log" "$WORK/prompts.txt"
-  xval init --run "$1" --vocab "$WORK/vocab.json" --first-side claude-test "$WORK"/imgs/*.png
+  xval init --run "$1" --vocab "$WORK/vocab.json" --first-side claude-test ${SEQ:+--sequence} "$WORK"/imgs/*.png
   xval confirm-privacy --run "$1"
   profile_in "$1"
   cp "$WORK/claude_marked.json" "$1/claude.json"
@@ -1498,7 +1498,16 @@ new_run "$WORK/run4c"
 RUN_OUT=$(HOME="$WORK/home" MOCK_REPLY="$WORK/codex_reply.md" MOCK_LOG="$WORK/mock.log" MOCK_PROMPTS="$WORK/prompts.txt" \
   PATH="$WORK/stubbin:$PATH" python3 "$SCRIPTS/xval.py" ask --run "$WORK/run4c" --round 1 2>&1)
 xval compare --run "$WORK/run4c"
-printf '{' > "$WORK/run4c/claude.json"   # frames.json is now checked against the seal first (round 5, V8)
+# Every record crops reads is checked first (round 5, V8; round 6, W2), so the unexpected case is a
+# comparison whose record matches but whose content has the wrong shape.
+python3 - "$WORK/run4c" <<'PY'
+import hashlib, json, sys
+run = sys.argv[1]
+json.dump({"disagreements": [{"id": "d1"}]}, open(f"{run}/comparison.json", "w"))
+record = json.load(open(f"{run}/comparison_record.json"))
+record["sha256"] = hashlib.sha256(open(f"{run}/comparison.json", "rb").read()).hexdigest()
+json.dump(record, open(f"{run}/comparison_record.json", "w"))
+PY
 xval crops --run "$WORK/run4c"
 assert_eq "5" "$RUN_STATUS" "an unexpected exception stops the run with exit 5, not a traceback"
 assert_contains "$RUN_OUT" '"error": "internal_error"' "an unexpected exception is internal_error"
@@ -1637,12 +1646,11 @@ esac
 xval sam --run "$WORK/run5"
 assert_eq "0" "$RUN_STATUS" "the SAM step never stops the run"
 assert_contains "$RUN_OUT" '"sam_status": "not_applicable"' "images that are not a sequence get sam_status not_applicable"
-python3 - "$WORK/run5/meta.json" <<'PY'
-import json, sys
-m = json.load(open(sys.argv[1])); m["sequence"] = True; json.dump(m, open(sys.argv[1], "w"))
-PY
+SEQ=1 new_run "$WORK/run5s"   # a sequence from init on: meta.json is an input (round 6, W2)
+ask_with "$WORK/codex_reply.md" "$WORK/run5s" 1
+xval compare --run "$WORK/run5s"
 rm -rf "$WORK/home/.codex-pro"
-xval sam --run "$WORK/run5"
+xval sam --run "$WORK/run5s"
 assert_eq "0" "$RUN_STATUS" "a missing SAM environment does not stop the run"
 assert_contains "$RUN_OUT" '"sam_status": "not_installed"' "a missing SAM environment is recorded as not_installed"
 
@@ -1699,17 +1707,13 @@ assert_contains "$RUN_OUT" "already" "crops still refuses as already done first"
 # Round 5 (V6): without track_point: tip, SAM could settle only counts, so a run with no count disagreement
 # of the tracked class does not ask for the download.
 rm -rf "$WORK/run5v"
-xval init --run "$WORK/run5v" --vocab "$WORK/vocab_notip.json" --first-side claude-test "$WORK"/imgs/*.png
+xval init --run "$WORK/run5v" --vocab "$WORK/vocab_notip.json" --first-side claude-test --sequence "$WORK"/imgs/*.png
 xval confirm-privacy --run "$WORK/run5v"; profile_in "$WORK/run5v"
 cp "$WORK/claude_marked.json" "$WORK/run5v/claude.json"
 printf '%s\n' "$WORK/stubbin/codex-call" > "$WORK/run5v/runtime.txt"; : > "$WORK/run5v/runtime_error.txt"
 xval seal --run "$WORK/run5v"
 ask_with "$WORK/codex_reply.md" "$WORK/run5v" 1
 xval compare --run "$WORK/run5v"
-python3 - "$WORK/run5v/meta.json" <<'PY'
-import json, sys
-m = json.load(open(sys.argv[1])); m["sequence"] = True; json.dump(m, open(sys.argv[1], "w"))
-PY
 xval sam --run "$WORK/run5v"
 assert_contains "$RUN_OUT" '"sam_status": "not_applicable"' "SAM that could settle nothing without track_point does not ask for the download (V6)"
 # Round 5 (V5, N2): no step but init writes into a directory that is not a run; a missing file is a broken record.
@@ -1738,11 +1742,80 @@ run = sys.argv[1]
 c = json.load(open(f"{run}/comparison.json")); c["disagreements"][0]["relation"] = "renamed"
 json.dump(c, open(f"{run}/comparison.json", "w"))
 digest = hashlib.sha256(open(f"{run}/comparison.json", "rb").read()).hexdigest()
-json.dump({"sha256": digest}, open(f"{run}/comparison_record.json", "w"))
+record = json.load(open(f"{run}/comparison_record.json")); record["sha256"] = digest
+json.dump(record, open(f"{run}/comparison_record.json", "w"))
 PY
 xval adjudicate --run "$WORK/run5o"
 assert_eq "True" "$(json_get "$(cat "$WORK/run5o/adjudication.json" 2>/dev/null)" 'd.get("zoom_plan_broken")')" \
   "zoom answers made against another comparison are not used"
+
+# Round 6 (W2): after the comparison, the answer files and the run's settings are still checked.
+SEQ=1 new_run "$WORK/run6w"   # a sequence, so sam reaches the answer files
+ask_with "$WORK/codex_reply.md" "$WORK/run6w" 1
+xval compare --run "$WORK/run6w"
+edit_json() {   # edit_json <file> <python expression on d> — rewrite a JSON file in place
+  python3 - "$1" "$2" <<'PY'
+import json, sys
+d = json.load(open(sys.argv[1])); exec(sys.argv[2]); json.dump(d, open(sys.argv[1], "w"))
+PY
+}
+for side in claude codex; do
+  for cmd in crops sam adjudicate; do
+    rm -rf "$WORK/run6$side"; cp -R "$WORK/run6w" "$WORK/run6$side"
+    edit_json "$WORK/run6$side/$side.json" 'd["claims"][0]["points"] = [{"class": "INST", "x_pct": 80, "y_pct": 50}] + d["claims"][0].get("points", [])[1:]'
+    xval "$cmd" --run "$WORK/run6$side"
+    assert_contains "$RUN_OUT" "$side.json changed after" "$cmd stops when $side.json changed after compare read it (W2)"
+  done
+done
+assert_no_file "$WORK/run6codex/adjudication.json" "and no verdict is written from it"
+rm -rf "$WORK/run6m"; cp -R "$WORK/run6w" "$WORK/run6m"; edit_json "$WORK/run6m/meta.json" 'd["order"] = list(reversed(d["order"]))'
+xval sam --run "$WORK/run6m"
+assert_contains "$RUN_OUT" '"error": "target_invalid"' "a frame order changed after sealing is refused (W2, meta.json is an input)"
+rm -rf "$WORK/run6k"; cp -R "$WORK/run6w" "$WORK/run6k"; edit_json "$WORK/run6k/vocab.json" 'd.pop("key_points")'
+xval sam --run "$WORK/run6k"
+assert_contains "$RUN_OUT" '"error": "target_invalid"' "sam checks the vocabulary before deciding it is not applicable"
+rm -rf "$WORK/run6v"; cp -R "$WORK/run6w" "$WORK/run6v"; rm "$WORK/run6v/vocab.json"
+xval adjudicate --run "$WORK/run6v"
+assert_contains "$RUN_OUT" '"error": "target_invalid"' "adjudicate without the vocabulary after a comparison stops, rather than settling nothing in silence"
+rm -rf "$WORK/run6f"; cp -R "$WORK/run6w" "$WORK/run6f"; printf '[1]' > "$WORK/run6f/frames.json"
+xval crops --run "$WORK/run6f"
+assert_contains "$RUN_OUT" '"error": "target_invalid"' "frames.json of the wrong shape is a changed input, not an internal error (Q8)"
+rm -rf "$WORK/run6r"; cp -R "$WORK/run6w" "$WORK/run6r"
+xval adjudicate --run "$WORK/run6r"
+edit_json "$WORK/run6r/claude.json" 'd["claims"][0]["objects"] = {"INST": 9}'
+( cd "$WORK/project" && python3 "$SCRIPTS/xval.py" result --run "$WORK/run6r" --out "$WORK/run6r_result.md" >/dev/null 2>&1 )
+assert_contains "$(cat "$WORK/run6r_result.md" 2>/dev/null)" "changed after the comparison" \
+  "the result file reports an answer file changed after the comparison (W2)"
+# N1: a run whose init record lacks the input digest is not sealed.
+rm -rf "$WORK/run6n"
+xval init --run "$WORK/run6n" --vocab "$WORK/vocab.json" "$WORK"/imgs/*.png
+edit_json "$WORK/run6n/meta.json" 'd.pop("inputs_sha256")'
+cp "$WORK/claude_marked.json" "$WORK/run6n/claude.json"
+xval seal --run "$WORK/run6n"
+assert_contains "$RUN_OUT" '"error": "target_invalid"' "a run without the input digest from init is not sealed (N1)"
+assert_no_file "$WORK/run6n/seal.json" "and no seal is written"
+# Q9: the full-resolution copy must lie in the run's hires directory, also when the digests were redone.
+rm -rf "$WORK/run6h"
+xval init --run "$WORK/run6h" --vocab "$WORK/vocab.json" --first-side claude-test "$WORK"/imgs/*.png
+cp "$IMG1" "$WORK/outside.png"
+python3 - "$WORK/run6h" "$SCRIPTS" <<'PY'
+import json, sys
+run = sys.argv[1]; sys.path.insert(0, sys.argv[2])
+import run_files
+f = json.load(open(f"{run}/frames.json")); f["f08.png"]["hires"] = "../outside.png"
+json.dump(f, open(f"{run}/frames.json", "w"))
+m = json.load(open(f"{run}/meta.json")); m["inputs_sha256"] = run_files.inputs_digest(run)
+json.dump(m, open(f"{run}/meta.json", "w"))
+PY
+xval confirm-privacy --run "$WORK/run6h"; profile_in "$WORK/run6h"
+cp "$WORK/claude_marked.json" "$WORK/run6h/claude.json"
+printf '%s\n' "$WORK/stubbin/codex-call" > "$WORK/run6h/runtime.txt"; : > "$WORK/run6h/runtime_error.txt"
+xval seal --run "$WORK/run6h"
+ask_with "$WORK/codex_reply.md" "$WORK/run6h" 1
+xval compare --run "$WORK/run6h"
+xval crops --run "$WORK/run6h"
+assert_contains "$RUN_OUT" "outside the run's hires directory" "a full-resolution copy outside the run is not cropped (Q9)"
+assert_no_file "$WORK/run6h/zoom_plan.json" "and no zoom plan is written"
 rm -rf "$WORK/run5t"; cp -R "$WORK/run5" "$WORK/run5t"
 python3 - "$WORK/run5t" <<'PY'
 import json, sys
@@ -1903,7 +1976,7 @@ assert_eq "12 12 0.917" "$(fm "$result_file" n_images) $(fm "$result_file" n_cla
 assert_eq "$(shasum -a 256 "$WORK/run5/claude.json" | cut -d' ' -f1)" "$(fm "$result_file" claude_answers_sha256)" \
   "frontmatter: claude_answers_sha256 is the digest of Claude's answers"
 assert_eq "false" "$(fm "$result_file" seal_broken)" "frontmatter: seal_broken"
-assert_eq "not_installed" "$(fm "$result_file" sam_status)" "frontmatter: sam_status"
+assert_eq "not_applicable" "$(fm "$result_file" sam_status)" "frontmatter: sam_status (run5 is not a sequence)"
 assert_eq "$(shasum -a 256 "$WORK/run5/codex_round1.md" | cut -d' ' -f1)" "$(fm "$result_file" codex_reply_sha256)" \
   "frontmatter: codex_reply_sha256 is the digest of Codex's round-1 reply"
 case "$(fm "$result_file" codex_requested_at)" in

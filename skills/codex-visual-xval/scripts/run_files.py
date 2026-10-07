@@ -92,14 +92,20 @@ def safe_digest(path: str) -> str | None:
 
 
 def inputs_digest(run: str) -> str:
-    """One digest over the vocabulary, frames.json and every frame copy (#23 verify round 2, S2)."""
+    """One digest over the vocabulary, frames.json, every frame copy (#23 verify round 2, S2) and the
+    settings init recorded in meta.json, which decide whether SAM runs and in what order (round 6, W2).
+    A frames.json of another shape is hashed as it is, so it reads as a changed input, not a crash (Q8)."""
     import hashlib
     h = hashlib.sha256()
     # Only the frames the run lists: a file Finder adds (.DS_Store) is not an input (round 3, L2).
-    frames = load(os.path.join(run, "frames.json"), {}) or {}
-    hires = [frames[n]["hires"] for n in sorted(frames) if isinstance(frames[n], dict) and frames[n].get("hires")]
-    for name in ["vocab.json", "frames.json"] + [os.path.join("frames", n) for n in neutral_names(run)] + hires:
+    frames = load(os.path.join(run, "frames.json"), {})
+    names = sorted(frames) if isinstance(frames, dict) and all(isinstance(k, str) for k in frames) else []
+    hires = [frames[n]["hires"] for n in names if isinstance(frames[n], dict) and isinstance(frames[n].get("hires"), str)]
+    for name in ["vocab.json", "frames.json"] + [os.path.join("frames", n) for n in names] + hires:
         h.update(name.encode() + b"\0" + (safe_digest(os.path.join(run, name)) or "missing").encode() + b"\n")
+    meta = load(os.path.join(run, "meta.json"))
+    settings = {k: v for k, v in meta.items() if k != "inputs_sha256"} if isinstance(meta, dict) else "missing"
+    h.update(b"meta\0" + json.dumps(settings, sort_keys=True).encode() + b"\n")
     return h.hexdigest()
 
 
@@ -118,14 +124,28 @@ def seal_intact(run: str, zoom: bool) -> bool:
 
 
 def checked_comparison(run: str) -> dict:
-    """The comparison as `compare` wrote it; an edited one would change what is cropped and settled (L3)."""
+    """The comparison as `compare` wrote it; an edited one would change what is cropped and settled (L3).
+    Both answer files must still be the ones it read: crops frame their points and SAM anchors on
+    them, so an edited point would move the evidence (#23 verify round 6, W2)."""
     path = os.path.join(run, "comparison.json")
     comparison = load(path)
-    if comparison is None:
+    record = load(os.path.join(run, "comparison_record.json"), {})
+    if comparison is None and not record:
         raise Stop("target_invalid", "no comparison: run `compare` first")
-    if load(os.path.join(run, "comparison_record.json"), {}).get("sha256") != sealing.digest(path):
+    if not isinstance(record, dict) or record.get("sha256") != safe_digest(path):
         raise Stop("target_invalid", "comparison.json changed after `compare` wrote it")
+    for name in ("claude.json", "codex.json"):
+        if record.get(name) != safe_digest(os.path.join(run, name)):
+            raise Stop("target_invalid", f"{name} changed after `compare` read it")
     return comparison
+
+
+def answers_changed(run: str) -> list[str]:
+    """The answer files that no longer match what `compare` read; empty when nothing was compared."""
+    record = load(os.path.join(run, "comparison_record.json"), {})
+    if not isinstance(record, dict) or not record:
+        return []
+    return [n for n in ("claude.json", "codex.json") if record.get(n) != safe_digest(os.path.join(run, n))]
 
 
 def zoom_record_intact(run: str, plan: dict) -> bool:

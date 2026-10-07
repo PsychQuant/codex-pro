@@ -13,6 +13,7 @@ from typing import Any
 
 import compare_claims
 import seal as sealing
+from run_files import answers_changed, inputs_digest
 
 
 def load(path: str, default: Any = None) -> Any:
@@ -196,6 +197,13 @@ def result(run: str, argv: list[str]) -> None:
     for rnd, label, reply_name, seal_name in (("1", "round 1", "codex_round1.md", "seal.json"),
                                               ("zoom", "zoom round", "codex_zoom.md", "zoom_seal.json")):
         lines += request_lines(run, rnd, label, reply_name, load(os.path.join(run, seal_name), {}))
+    if seal_record.get("inputs_sha256") and seal_record["inputs_sha256"] != inputs_digest(run):
+        lines += ["", "**The vocabulary, the image copies or the run's settings changed after Claude's answers were "
+                  "sealed** (checked when the result was written)."]
+    changed = answers_changed(run)
+    if changed:   # rechecked now, not only when compare ran (#23 verify round 6, W2)
+        lines += ["", f"**{' and '.join(changed)} changed after the comparison read {'them' if len(changed) > 1 else 'it'}**, "
+                  "so the answers in the run directory are not the ones compared and settled above."]
     if codex_check.get("codex_record_broken"):
         lines += ["", "**Codex's answers changed after they were recorded**: the comparison used a file whose "
                   "digest no longer matches the one recorded when Codex answered."]

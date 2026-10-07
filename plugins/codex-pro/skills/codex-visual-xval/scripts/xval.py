@@ -168,13 +168,14 @@ def init(run: str, vocab_path: str, images: list[str], sequence: bool, first_sid
             frames[name]["hires"] = os.path.join("hires", hires)
     dump(os.path.join(run, "frames.json"), frames)
     dump(os.path.join(run, "vocab.json"), vocab)
-    dump(os.path.join(run, "meta.json"), {
+    meta = {
         "started_at": datetime.datetime.now().astimezone().isoformat(timespec="seconds"),
         "sequence": sequence, "n_images": len(images), "order": list(frames),
         # who gave the first side's answers: in the native Codex bundle it is the Codex host model (round 2, F1)
-        "first_side_model": first_side,
-        # the inputs as init wrote them, checked when the answers are sealed (round 5, N1)
-        "inputs_sha256": inputs_digest(run)})
+        "first_side_model": first_side}
+    dump(os.path.join(run, "meta.json"), meta)   # its settings are part of the inputs (round 6, W2)
+    # the inputs as init wrote them, checked when the answers are sealed (round 5, N1)
+    dump(os.path.join(run, "meta.json"), {**meta, "inputs_sha256": inputs_digest(run)})
     print(json.dumps({"ok": True, "frames": sorted(frames)}))
 
 
@@ -215,8 +216,10 @@ def seal_answers(run: str, zoom: bool) -> None:
             raise Stop(stop.error, f"{stop.detail}; the zoom round is not used and the run continues", record=False)
     elif not os.path.isfile(answers):
         raise Stop("target_invalid", f"Claude's answers are missing: {os.path.basename(answers)}")
-    if not zoom and load(os.path.join(run, "meta.json"), {}).get("inputs_sha256") not in (None, inputs_digest(run)):
-        raise Stop("target_invalid", "the image copies or the vocabulary changed after init; start a new run")   # N1
+    if not zoom and (load(os.path.join(run, "meta.json"), {}) or {}).get("inputs_sha256") != inputs_digest(run):
+        # init always records it, so a missing digest is a changed record, not a pass (N1; round 6, W2)
+        raise Stop("target_invalid", "the image copies, the vocabulary or the run's settings changed after init; "
+                   "start a new run")
     if not zoom:
         map_source_names(run, answers)
         vocab = load(os.path.join(run, "vocab.json"))
@@ -405,13 +408,14 @@ def before_request(run: str, rnd: str) -> None:
     if problem:
         raise Stop("oauth_invalid", f"{problem}; run /codex-pro:codex-setup to log in; nothing was sent")
     if rnd == "1":   # what is sent is what was sealed, and it lies in the run (#23 verify round 4, U6)
+        # the digest first: it reads frames.json of any shape, the name check below does not (round 6, Q8)
+        if load(os.path.join(run, "seal.json"), {}).get("inputs_sha256") != inputs_digest(run):
+            raise Stop("target_invalid", "the vocabulary, the image copies or the run's settings changed after "
+                       "Claude's answers were sealed; nothing was sent")
         frames_dir = os.path.realpath(os.path.join(run, "frames"))
         if any(os.path.basename(n) != n or os.path.dirname(os.path.realpath(os.path.join(run, "frames", n))) != frames_dir
                for n in neutral_names(run)):
             raise Stop("target_invalid", "an image copy lies outside the run's frames directory; nothing was sent")
-        if load(os.path.join(run, "seal.json"), {}).get("inputs_sha256") != inputs_digest(run):
-            raise Stop("target_invalid", "the vocabulary or the image copies changed after Claude's answers were sealed; "
-                       "nothing was sent")
 
 
 def record_request(run: str, rnd: str, **fields: Any) -> None:
@@ -509,7 +513,11 @@ def compare(run: str) -> None:
     aspects = {n: f["height"] / f["width"] for n, f in frames.items() if f.get("width") and f.get("height")}
     result = compare_claims.compare(vocab, claude, codex, aspects)
     dump(os.path.join(run, "comparison.json"), result)
-    dump(os.path.join(run, "comparison_record.json"), {"sha256": sealing.digest(os.path.join(run, "comparison.json"))})
+    dump(os.path.join(run, "comparison_record.json"), {
+        "sha256": sealing.digest(os.path.join(run, "comparison.json")),
+        # the answer files it read, checked by every later step (round 6, W2)
+        "claude.json": sealing.digest(os.path.join(run, "claude.json")),
+        "codex.json": sealing.digest(os.path.join(run, "codex.json"))})
     disputes = [{k: d[k] for k in ("id", "frame", "kind", "class", "relation") if k in d} for d in result["disagreements"]]
     print(json.dumps({"agreement_rate": result["agreement_rate"], "n_frames": result["n_frames"],
                       "n_disagreements": len(disputes), "seal_broken": check["seal_broken"],
@@ -544,7 +552,11 @@ def crops(run: str) -> None:
             skipped.append({"id": item["id"], "frame": item["frame"], "reason": "the crop would cover the whole image"})
             continue
         n += 1
-        # the full-resolution copy when there is one, so the zoom round sees real detail (round 5, V7)
+        # the full-resolution copy when there is one, so the zoom round sees real detail (round 5, V7);
+        # like the first round's copies, it must lie in the run (round 6, Q9)
+        if info.get("hires") and not (isinstance(info["hires"], str) and os.path.dirname(os.path.realpath(
+                os.path.join(run, info["hires"]))) == os.path.realpath(os.path.join(run, "hires"))):
+            raise Stop("target_invalid", "a full-resolution copy lies outside the run's hires directory; nothing was cropped")
         source = os.path.join(run, info["hires"]) if info.get("hires") else os.path.join(run, "frames", item["frame"])
         w, h = (None, None) if info.get("hires") else (info.get("width"), info.get("height"))
         if not w or not h:
@@ -593,6 +605,7 @@ def sam(run: str) -> None:
     def record(status: str, detail: str = "") -> None:
         dump(os.path.join(run, "sam.json"), {"sam_status": status, "detail": detail})
         print(json.dumps({"sam_status": status, "detail": detail}, ensure_ascii=False))
+    checked_inputs(run)   # before anything is read from them, the settings in meta.json included (V8; round 6, W2)
     meta = load(os.path.join(run, "meta.json"), {})
     if not meta.get("sequence"):
         return record("not_applicable", "the images are not frames of one video in time order (init --sequence)")
@@ -602,7 +615,6 @@ def sam(run: str) -> None:
     if not vocab.get("key_points"):
         return record("not_applicable", "no class has a key point, so there is nothing to track")
     cls = vocab.get("track_class") or next(iter(vocab["key_points"]))
-    checked_inputs(run)   # V8
     comparison = checked_comparison(run)
     # Positions and relations need the tip to be the key point; counts do not (round 5, V6).
     tip = vocab.get("track_point") == "tip"
@@ -669,13 +681,15 @@ def zoom_evidence(run: str) -> tuple[dict, dict]:
 
 
 def adjudicate(run: str) -> None:
-    comparison, vocab = load(os.path.join(run, "comparison.json")), load(os.path.join(run, "vocab.json"))
-    if comparison is None or vocab is None:   # the run stopped before comparing: nothing to settle
+    if not os.path.exists(os.path.join(run, "comparison.json")) and not os.path.exists(os.path.join(run, "comparison_record.json")):
+        # the run stopped before comparing: nothing to settle. Anything else is checked, so a missing
+        # vocabulary after a comparison is a changed input, not "no comparison" (round 6, W2)
         dump(os.path.join(run, "adjudication.json"), {"counts": {}, "adjudications": [], "note": "no comparison"})
         print(json.dumps({"counts": {}, "note": "no comparison"}))
         return
     checked_inputs(run)   # V8
     comparison = checked_comparison(run)
+    vocab = load(os.path.join(run, "vocab.json"))
     zoom, zoom_status = zoom_evidence(run)
     sam_state = load(os.path.join(run, "sam.json"), {})
     track = load(os.path.join(run, "track.json")) if sam_state.get("sam_status") == "ok" else None
