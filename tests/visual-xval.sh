@@ -1021,6 +1021,7 @@ rm -rf "$WORK/runr4e"
 xval init --run "$WORK/runr4e" --vocab "$WORK/vocab.json" "$WORK/no_eoi.jpg"
 assert_eq "0" "$(cat "$WORK"/runr4e/frames/* 2>/dev/null | grep -c 121.5654 || true)" \
   "a JPEG without an end-of-image marker leaves nothing appended in its copy"
+assert_contains "$RUN_OUT" '"error": "target_invalid"' "and is refused, since its structure cannot show the image ended (round 6, Q13)"
 # Round 4, background security review: the copies are decoded and encoded again before the allowlist,
 # so data hidden inside an allowed block (ICC profile, Adobe APP14) cannot ride along.
 python3 - "$WORK" <<'PY'
@@ -1878,6 +1879,105 @@ case "$q14a $q14b" in
   *) pass "compare_claims quotes no frame or class name from Codex's claims (Q14)" ;;
 esac
 assert_contains "$q14a $q14b" "parse_failed" "and still reports parse_failed"
+
+# Round 6 (Q13): an image whose structure shows damaged or cut-short data is refused before sips,
+# which decodes such files without complaint (a PNG with bad IDAT came out all black).
+sips -s format gif "$WORK/plain.jpg" --out "$WORK/plain.gif" >/dev/null 2>&1
+python3 - "$WORK" <<'PY'
+import struct, sys, zlib
+w = sys.argv[1]
+def chunk(t, d): return struct.pack(">I", len(d)) + t + d + struct.pack(">I", zlib.crc32(t + d) & 0xffffffff)
+sig = b"\x89PNG\r\n\x1a\n"
+ihdr = lambda width, height, colour=2, interlace=0: chunk(b"IHDR", struct.pack(">IIBBBBB", width, height, 8, colour, 0, 0, interlace))
+raw = b"".join(b"\x00" + bytes([200, 30, 30]) * 100 for _ in range(80))
+comp = zlib.compress(raw)
+open(f"{w}/bad_idat.png", "wb").write(sig + ihdr(100, 80) + chunk(b"IDAT", b"not zlib data at all") + chunk(b"IEND", b""))
+open(f"{w}/trunc_idat.png", "wb").write(sig + ihdr(100, 80) + chunk(b"IDAT", comp[:len(comp) // 3]) + chunk(b"IEND", b""))
+bad_crc = bytearray(sig + ihdr(100, 80) + chunk(b"IDAT", comp) + chunk(b"IEND", b"")); bad_crc[-20] ^= 0xFF
+open(f"{w}/bad_crc.png", "wb").write(bytes(bad_crc))
+open(f"{w}/no_iend.png", "wb").write(sig + ihdr(100, 80) + chunk(b"IDAT", comp))
+# an interlaced PNG that is complete must still pass: Adam7 sizes per pass
+def adam7(width, height, bpp=3):
+    out = b""
+    for x0, y0, dx, dy in ((0, 0, 8, 8), (4, 0, 8, 8), (0, 4, 4, 8), (2, 0, 4, 4), (0, 2, 2, 4), (1, 0, 2, 2), (0, 1, 1, 2)):
+        pw, ph = (width - x0 + dx - 1) // dx, (height - y0 + dy - 1) // dy
+        if pw > 0 and ph > 0:
+            out += (b"\x00" + bytes([60, 120, 200]) * pw) * ph
+    return out
+open(f"{w}/interlaced.png", "wb").write(sig + ihdr(37, 23, interlace=1) + chunk(b"IDAT", zlib.compress(adam7(37, 23))) + chunk(b"IEND", b""))
+jpg = open(f"{w}/plain.jpg", "rb").read()
+open(f"{w}/trunc.jpg", "wb").write(jpg[: len(jpg) * 2 // 3])
+gif = open(f"{w}/plain.gif", "rb").read()
+open(f"{w}/trunc.gif", "wb").write(gif[: len(gif) * 2 // 3])
+import base64
+tiny = base64.b64decode("UklGRh4AAABXRUJQVlA4TBEAAAAvA8AAAAdQjyLXo/+BiOh/AAA=")
+open(f"{w}/trunc.webp", "wb").write(tiny[:-6])
+PY
+for bad in bad_idat.png trunc_idat.png bad_crc.png no_iend.png trunc.jpg trunc.gif trunc.webp; do
+  rm -rf "$WORK/runq13"
+  xval init --run "$WORK/runq13" --vocab "$WORK/vocab.json" "$WORK/$bad"
+  assert_contains "$RUN_OUT" '"error": "target_invalid"' "$bad is refused as damaged or cut short (Q13)"
+  assert_eq "0" "$(ls "$WORK/runq13/frames" 2>/dev/null | wc -l | tr -d ' ')" "and no copy of $bad is written"
+done
+cgbi=$(python3 -B - "$SCRIPTS" <<'PY'
+import struct, sys, zlib
+sys.path.insert(0, sys.argv[1])
+import media
+def chunk(t, d): return struct.pack(">I", len(d)) + t + d + struct.pack(">I", zlib.crc32(t + d) & 0xffffffff)
+raw = b"".join(b"\x00" + bytes([30, 60, 200, 255]) * 9 for _ in range(7))
+deflate = zlib.compressobj(9, zlib.DEFLATED, -15)
+body = deflate.compress(raw) + deflate.flush()
+png = (b"\x89PNG\r\n\x1a\n" + chunk(b"CgBI", b"\x50\x00\x20\x02") + chunk(b"IHDR", struct.pack(">IIBBBBB", 9, 7, 8, 6, 0, 0, 0))
+       + chunk(b"IDAT", body) + chunk(b"IEND", b""))
+print(media.integrity_problem(png, "png"))
+PY
+)
+assert_eq "None" "$cgbi" "an Apple CgBI PNG (raw deflate) is not mistaken for damaged data"
+rm -rf "$WORK/runq13ok"
+xval init --run "$WORK/runq13ok" --vocab "$WORK/vocab.json" "$WORK/interlaced.png" "$WORK/plain.gif" "$WORK/plain.jpg"
+assert_eq "0" "$RUN_STATUS" "a complete interlaced PNG, a GIF and a JPEG are still accepted"
+# Round 6 (Q12): a JPEG turned upright is compressed once, at quality 95, and leaves no staged file.
+mkdir -p "$WORK/logsips"
+cat > "$WORK/logsips/sips" <<'SH'
+#!/bin/sh
+printf '%s\n' "$*" >> "$SIPS_LOG"
+case " $* " in *" format jpeg "*) [ -n "${SIPS_FAIL_JPEG:-}" ] && exit 13 ;; esac
+exec /usr/bin/sips "$@"
+SH
+chmod +x "$WORK/logsips/sips"
+rm -rf "$WORK/runq12" "$WORK/sips.log"
+HOME="$WORK/home" SIPS_LOG="$WORK/sips.log" PATH="$WORK/logsips:$PATH" python3 "$SCRIPTS/xval.py" init --run "$WORK/runq12" \
+  --vocab "$WORK/vocab.json" "$WORK/rotated_exif.jpg" >/dev/null 2>&1
+assert_eq "1" "$(grep -c ' format jpeg ' "$WORK/sips.log" 2>/dev/null || echo 0)" "the upright JPEG is encoded as JPEG once (N8, Q12)"
+assert_contains "$(grep ' format jpeg ' "$WORK/sips.log" 2>/dev/null)" "formatOptions 95" "at quality 95"
+assert_eq "0" "$(ls "$WORK/runq12/frames" | grep -c staged || true)" "and no staged file is left after success"
+rm -rf "$WORK/runq12f"
+HOME="$WORK/home" SIPS_LOG="$WORK/sips.log" SIPS_FAIL_JPEG=1 PATH="$WORK/logsips:$PATH" python3 "$SCRIPTS/xval.py" init \
+  --run "$WORK/runq12f" --vocab "$WORK/vocab.json" "$WORK/rotated_exif.jpg" >/dev/null 2>&1
+assert_eq "0" "$(ls "$WORK/runq12f/frames" 2>/dev/null | grep -c staged || true)" "nor after a failed encode"
+# Round 6 (Q10): SAM that ran on the frame but gave nothing is listed as not used.
+q10=$(python3 -B - "$SCRIPTS" <<'PY'
+import sys
+sys.path.insert(0, sys.argv[1])
+import adjudicate
+vocab = {"classes": {"INST": "instrument"}, "key_points": {"INST": "tip"}, "track_point": "tip",
+         "relations": {"tips_together": {"between": ["INST", "INST"], "definition": "distance_pct < 5"}}}
+count = {"id": "d1", "frame": "f02.png", "kind": "count", "class": "INST", "claude": 3, "codex": 2}
+rel = {"id": "d2", "frame": "f03.png", "kind": "relation", "relation": "tips_together", "between": ["INST", "INST"],
+       "definition": "distance_pct < 5", "claude": True, "codex": False, "counts": {"INST": [1, 1]}}
+sam = {"class": "INST", "frames": {"f02.png": {"invalid": True, "objects": {}},
+       "f03.png": {"invalid": False, "distance_pct": None, "objects": {"1": {"present": True, "tip_pct": [10, 10]}}}}}
+r = {a["id"]: a for a in adjudicate.adjudicate(vocab, {"disagreements": [count, rel]}, {}, sam)["adjudications"]}
+print("count:", "sam" in [e["source"] for e in r["d1"]["evidence"]], r["d1"]["note"])
+print("rel:", "sam" in [e["source"] for e in r["d2"]["evidence"]], r["d2"]["note"])
+PY
+)
+assert_contains "$q10" "count: True" "a count on a frame where SAM's masks collapsed lists SAM as not used (Q10)"
+assert_contains "$q10" "rel: True" "a relation SAM could not measure lists SAM as not used (Q10)"
+case "$q10" in
+  *"no third evidence"*) fail "and neither reads as if SAM never ran" ;;
+  *) pass "and neither reads as if SAM never ran" ;;
+esac
 rm -rf "$WORK/run5t"; cp -R "$WORK/run5" "$WORK/run5t"
 python3 - "$WORK/run5t" <<'PY'
 import json, sys

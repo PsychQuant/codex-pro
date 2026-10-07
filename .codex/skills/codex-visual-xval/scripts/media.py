@@ -28,6 +28,7 @@ both models see the image the right way up and in the same coordinates.
 import os
 import re
 import struct
+import zlib
 import subprocess
 
 PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
@@ -91,6 +92,114 @@ def kind_of(data: bytes) -> str:
     if data[:6] in (b"GIF87a", b"GIF89a"):
         return "gif"
     raise MediaError("not a PNG, JPEG, WebP or GIF file (judged by its header)")
+
+
+# ── damaged or cut-short files ───────────────────────────────────
+# sips decodes them without complaint: with --matchTo, a PNG whose IDAT is not compressed data comes
+# out all black, and a cut-short PNG or JPEG comes out partly drawn, so both models would judge an
+# image that is not the one given (#23 verify round 6, Q13). The structure is checked first. What
+# this cannot see is damage inside the compressed data of a JPEG, GIF or WebP that still ends properly.
+PNG_CHANNELS = {0: 1, 2: 3, 3: 1, 4: 2, 6: 4}
+ADAM7 = ((0, 0, 8, 8), (4, 0, 8, 8), (0, 4, 4, 8), (2, 0, 4, 4), (0, 2, 2, 4), (1, 0, 2, 2), (0, 1, 1, 2))
+
+
+def _png_raw_size(width: int, height: int, depth: int, colour: int, interlace: int) -> int:
+    """Bytes of filtered image data the IHDR promises: one filter byte per row, per Adam7 pass."""
+    bits = depth * PNG_CHANNELS[colour]
+    row = lambda w: 1 + (w * bits + 7) // 8
+    if not interlace:
+        return height * row(width)
+    total = 0
+    for x0, y0, dx, dy in ADAM7:
+        pw, ph = (width - x0 + dx - 1) // dx, (height - y0 + dy - 1) // dy
+        if pw > 0 and ph > 0:
+            total += ph * row(pw)
+    return total
+
+
+def _png_problem(data: bytes) -> str | None:
+    pos, ihdr, idat, ended, cgbi = 8, None, [], False, False
+    while pos + 12 <= len(data):
+        length = struct.unpack(">I", data[pos:pos + 4])[0]
+        kind, body = data[pos + 4:pos + 8], data[pos + 8:pos + 8 + length]
+        crc = data[pos + 8 + length:pos + 12 + length]
+        if len(body) < length or len(crc) < 4:
+            return "the file ends inside a chunk"
+        if struct.unpack(">I", crc)[0] != zlib.crc32(kind + body) & 0xFFFFFFFF:
+            return "a chunk fails its checksum"
+        if kind == b"CgBI":   # Apple's iOS PNG: raw deflate, without the zlib header (sips decodes it)
+            cgbi = True
+        elif kind == b"IHDR":
+            ihdr = body
+        elif kind == b"IDAT":
+            idat.append(body)
+        elif kind == b"IEND":
+            ended = True
+            break
+        pos += 12 + length
+    if not ended:
+        return "the file ends before IEND"
+    if not ihdr or len(ihdr) != 13 or not idat:
+        return "no image header or no image data"
+    width, height, depth, colour, _, _, interlace = struct.unpack(">IIBBBBB", ihdr)
+    if colour not in PNG_CHANNELS:
+        return "an unknown colour type"
+    expected = _png_raw_size(width, height, depth, colour, interlace)
+    inflate, pending, total = zlib.decompressobj(-15 if cgbi else zlib.MAX_WBITS), b"".join(idat), 0
+    try:   # counted in pieces, so a large image is never held decompressed
+        while pending and total <= expected:
+            total += len(inflate.decompress(pending, 1 << 20))
+            pending = inflate.unconsumed_tail
+        total += len(inflate.flush())
+    except zlib.error:
+        return "the image data is not a valid compressed stream"
+    if not inflate.eof or total < expected:
+        return "the image data is cut short"
+    return None
+
+
+def _gif_problem(data: bytes) -> str | None:
+    if len(data) < 13:
+        return "the file ends inside its header"
+    pos = 13 + (3 * (2 << (data[10] & 7)) if data[10] & 0x80 else 0)
+
+    def sub_blocks(p: int) -> int | None:
+        while p < len(data):
+            n = data[p]
+            p += 1 + n
+            if n == 0:
+                return p
+        return None
+
+    while pos is not None and pos < len(data):
+        block = data[pos]
+        if block == 0x3B:   # trailer
+            return None
+        if block == 0x21:   # extension: label, then sub-blocks
+            pos = sub_blocks(pos + 2)
+        elif block == 0x2C:   # image: descriptor, local colour table, LZW code size, then sub-blocks
+            if pos + 10 > len(data):
+                return "the image data is cut short"
+            flags = data[pos + 9]
+            pos = sub_blocks(pos + 10 + (3 * (2 << (flags & 7)) if flags & 0x80 else 0) + 1)
+        else:
+            return "an unknown GIF block"
+    return "the file ends before the GIF trailer"
+
+
+def integrity_problem(data: bytes, kind: str) -> str | None:
+    """Why the file's structure shows damaged or cut-short image data, or None."""
+    if kind == "png":
+        return _png_problem(data)
+    if kind == "jpeg":
+        _, rest = _jpeg_segments(data)
+        return None if b"\xff\xd9" in rest else "the image data ends without an end-of-image marker"
+    if kind == "gif":
+        return _gif_problem(data)
+    if kind == "webp":
+        size = struct.unpack("<I", data[4:8])[0] if len(data) >= 8 else 0
+        return None if 8 + size <= len(data) else "the file is shorter than its RIFF length"
+    return None
 
 
 def tiff_orientation(tiff: bytes) -> int:
@@ -212,6 +321,9 @@ def prepare_copy(src: str, frames_dir: str, stem: str, max_edge: int | None = MA
     with open(src, "rb") as fh:
         data = fh.read()
     kind = kind_of(data)
+    problem = integrity_problem(data, kind)
+    if problem:
+        raise MediaError(f"the image data is damaged or cut short: {problem}")
     turn = orientation(data)
     w, h = image_size(src)
     if not w or not h:

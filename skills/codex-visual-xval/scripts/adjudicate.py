@@ -94,6 +94,9 @@ def count_evidence(item: dict, zoom: dict, sam: dict | None, vocab: dict) -> lis
         n = len(present(frame))
         evidence.append({"source": "sam", "at_least": n,
                          "detail": f"SAM tracked {n} objects that are present, so the frame holds at least {n}"})
+    raw = (sam or {}).get("frames", {}).get(item["frame"])
+    if raw and raw.get("invalid") and (sam or {}).get("class") == item.get("class"):   # round 6, Q10
+        evidence.append({"source": "sam", "detail": "SAM's masks collapsed in this frame; not used"})
     limit = vocab.get("max_count", {}).get(item.get("class"))
     if limit is not None:
         evidence.append({"source": "constraint", "at_most": limit, "detail": f"the vocabulary allows at most {limit}"})
@@ -240,9 +243,11 @@ def sam_relation(item: dict, frame: dict, tracked: str, margin: float) -> dict |
     parsed = DEFINITION.match(item.get("definition", ""))
     measured = frame.get("distance_pct")
     objects = present(frame)
-    if (not parsed or parsed.group(1) != "distance_pct" or measured is None or len(objects) < 2
-            or item.get("between") != [tracked, tracked]):
+    if not parsed or parsed.group(1) != "distance_pct" or item.get("between") != [tracked, tracked]:
         return None
+    if measured is None or len(objects) < 2:   # SAM ran on the frame but measured nothing (round 6, Q10)
+        return {"source": "sam", "detail": f"SAM tracked {len(objects)} present object(s) here, so it measured no "
+                                           "distance; not used"}
     op, threshold = parsed.group(2), float(parsed.group(3))
     if abs(measured - threshold) <= margin:   # strictly farther than the margin, both ways (round 4, M2)
         return {"source": "sam", "detail": f"distance_pct={measured} is within {margin} of the threshold {threshold}; not used"}
