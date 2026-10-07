@@ -707,6 +707,17 @@ if [ -x "$GENERATOR" ]; then
   mkdir -p -- "$MANIFEST_REPO/plugins"
   if cp -R "$REPO_ROOT/scripts" "$MANIFEST_REPO/scripts" \
       && cp -R "$SOURCE_BUNDLE" "$MANIFEST_REPO/plugins/codex-pro"; then
+    # Python leaves __pycache__ next to bundled scripts it imports. It is not a resource, and it used
+    # to stop the generator in the middle of a change (codex-pro#23 verify round 3, L16).
+    PYC_DIR="$MANIFEST_REPO/plugins/codex-pro/skills/codex-visual-xval/scripts/__pycache__"
+    mkdir -p -- "$PYC_DIR" && : > "$PYC_DIR/xval.cpython-314.pyc"
+    PYC_OUTPUT="$MANIFEST_REPO/pyc output"
+    PYC_STATUS=0
+    PYC_TEXT=$("$MANIFEST_REPO/scripts/generate-codex-skills.sh" --output "$PYC_OUTPUT" 2>&1) || PYC_STATUS=$?
+    assert_eq 0 "$PYC_STATUS" "a __pycache__ left in the source tree does not stop the generator"
+    assert_eq 0 "$(find "$PYC_OUTPUT" -name '*.pyc' -print 2>/dev/null | wc -l | tr -d '[:space:]')" \
+      "no bytecode reaches the generated skills"
+    rm -rf -- "$PYC_DIR" "$PYC_OUTPUT"
     MANIFEST_OUTPUT="$MANIFEST_REPO/output"
     duplicate_skill="${EXPECTED[0]}"
     printf '%s\n' "$duplicate_skill" >> "$MANIFEST_REPO/scripts/codex-skills.manifest"

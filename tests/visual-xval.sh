@@ -55,6 +55,13 @@ checks = {
     "zoom_seal_at_once": "立刻封存" in body and "不要讀" in body and "不要重跑" in body,
     "no_zoom_branch": "沒有任何放大題" in body,
     "per_run_blind": "另開一個 run" in body,
+    # round 3 (T9, T1, T6, T8)
+    "fail_fast_in_description": all(c in fm for c in ("backend_error", "runtime_unavailable", "internal_error")),
+    "contract_first_side": "first_side_model:" in body,
+    "no_fixed_2x": "放大 2 倍" not in body,
+    "fail_closed": "HTTP 0" in body and "一律當成已送出" in body,
+    "zoom_dropped": "放大輪未採用" in body,
+    "count_only_unsettled": "只比數量" in body and "無法裁決" in body,
     "all_failures_anchor": "\n\n**所有 failure 仍寫 result file**" in body,
     "no_retry": "所有 failure 都不 retry" in body,
     "one_error_enum": len(re.findall(r"error: <[^>\n]+>", body)) == 1,
@@ -71,6 +78,20 @@ PY
 case "$skill_check" in
   *MISSING*) fail "SKILL.md states the visual-xval contract: $skill_check" ;;
   *) pass "SKILL.md states the visual-xval contract ($skill_check)" ;;
+esac
+# Round 3 (T8, T9): the other documents say what the program does.
+case "$(cat "$XVAL_DIR/references/vocab-format.md")" in
+  *"其他分歧只能靠"*) fail "vocab-format no longer implies that the zoom round settles count-only classes (T8)" ;;
+  *"無法裁決"*) pass "vocab-format no longer implies that the zoom round settles count-only classes (T8)" ;;
+  *) fail "vocab-format no longer implies that the zoom round settles count-only classes (T8)" ;;
+esac
+case "$(cat "$REPO_ROOT/README.md")" in
+  *"Fail-fast 6 類"*) fail "the README does not count six failure classes (T9)" ;;
+  *) pass "the README does not count six failure classes (T9)" ;;
+esac
+case "$(cat "$REPO_ROOT/CHANGELOG.md")" in
+  *"不是完全盲答"*) fail "the CHANGELOG no longer says Claude's zoom answers are not blind (T9)" ;;
+  *) pass "the CHANGELOG no longer says Claude's zoom answers are not blind (T9)" ;;
 esac
 for ref in references/vocab-format.md references/claim-schema.md; do
   assert_file "$XVAL_DIR/$ref" "SKILL.md reference exists: $ref"

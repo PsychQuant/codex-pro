@@ -231,7 +231,7 @@
   - `first_side_model` 只接受單行識別字；Python 3.9 的結果檔也有這個欄位；Limitations 寫明封存前未讀、未重跑靠流程。
   - 原始檔名與中性檔名衝突時，訊息只給做得到的補救。
   - [after: 8.5]
-- [ ] 8.7 文件（T8、T9、L9、L16）。
+- [x] 8.7 文件（T8、T9、L9、L16）。
   - SKILL、vocab-format、README、CHANGELOG 與結果檔契約依第三輪更正；e2e-checklist §F 的兩次紀錄分開。
   - bundle 產生器略過 `__pycache__`。
   - 驗證：SKILL 契約檢查；`bash tests/run.sh` 只剩 #24。

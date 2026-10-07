@@ -19,7 +19,11 @@ Issue: [#23](https://github.com/PsychQuant/codex-pro/issues/23)
 ### 已知限制
 
 - SAM 追蹤只用在同一支影片依時間排序的影格（`--sequence`），只量 `distance_pct`。
-- Claude 在放大輪知道哪裡有分歧，它的放大輪答案不是完全盲答；Codex 的放大輪請求不帶任何一方的答案。
+- 放大輪 Claude 一側由全新的 subagent 作答；它是否真的全新啟動、答案是否在被讀之前就封存，靠 skill 的流程，
+  程式無法檢查。Codex 的放大輪請求不帶任何一方的答案。
+- 只比數量的類別（詞彙表沒有給關鍵點）沒有放大題、SAM 也不追蹤，它們的數量分歧無法裁決。
+- `codex-call` 在收到回應之前的失敗都只印 `HTTP 0`，看不出有沒有送出，所以一律當成已送出；離線時這一輪會被鎖住，
+  要另開一個 run（上游改進：PsychQuant/parallel-ai-agents#89）。
 - 兩個模型一致不代表正確；準度要靠人工標準答案。
 - `tests/codex-plugin.sh` 的 plugin-creator validator 檢查在 Codex CLI 0.160.1 下必定失敗（#24），與本版無關。
 

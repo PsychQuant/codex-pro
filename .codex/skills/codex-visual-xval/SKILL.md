@@ -6,7 +6,8 @@ description: |
   比對分成數量、位置、關係三類分歧，分歧只用放大輪、SAM 2.1 追蹤量測、物理約束裁決，不用多數決。
   結果寫入 .codex-pro/visual-xval-<timestamp>.md 結構化檔案。
   需要支援 --image 的 codex-call（parallel-ai-agents 2.24.0 以上）；SAM 2.1 為內建步驟，首次使用前徵得同意才安裝（約 1 GB）。
-  Fail-fast：rate_limit / oauth_invalid / timeout / target_invalid / runtime_unsupported / parse_failed，**不 retry**。
+  Fail-fast：rate_limit / oauth_invalid / timeout / target_invalid / runtime_unsupported / parse_failed /
+  runtime_unavailable / package_corruption / backend_error / internal_error，**不 retry**。
   Use when: 使用者輸入 $codex-visual-xval、要從圖片或影格下判斷而且要求準確（例如替訓練影片評分前核對判讀）、
   要兩個 AI 用視覺互相核對、懷疑自己看錯圖。
   Trigger keywords: codex visual cross-validation, visual xval, 視覺交叉驗證, 兩個 AI 看圖核對, check my image reading with codex
@@ -44,9 +45,11 @@ allowed-tools:
 2. `target_invalid`：沒有圖片、圖片讀不到、詞彙表的關係詞沒有量化門檻、Claude 的答案不合 schema
 3. `runtime_unsupported`：`codex-call --help` 沒有列出 `--image`（舊版會把不認得的旗標當成 prompt 吞掉）
 4. `parse_failed`：Codex 的回覆不是符合 schema 的 JSON
-5. `runtime_unavailable`：找不到 `codex-call`，或 `python3` 比 3.10 舊
+5. `runtime_unavailable`：找不到 `codex-call`、`python3` 比 3.10 舊，或 `codex-call` 在任何網路請求之前就停下（讀不到 prompt、鎖檔錯誤等）
 6. `internal_error`：腳本內部的意外例外。照樣寫結果檔，detail 是例外類型與訊息
-7. `backend_error`：請求已經送出，後端回錯誤（例如 HTTP 500）或連線中斷。這一輪已經用掉，不重送
+7. `backend_error`：請求可能已經送出：後端回錯誤（例如 HTTP 500）、連線中斷，或 `codex-call` 沒說明原因（`HTTP 0`）。
+   `codex-call` 在收到回應之前的失敗都只印 `HTTP 0`，看不出有沒有送出，所以一律當成已送出；這一輪已經用掉，不重送。
+   只有一份封閉列舉裡的送出前錯誤（圖片檢查、未知選項、讀不到 prompt 或 `auth.json`、refresh 鎖檔、refresh 被拒）才算沒送出
 
 ## Step 1: Parse arguments
 
@@ -241,12 +244,12 @@ python3 "$SKILL_DIR/scripts/xval.py" ask --run "$RUN" --round 1
 | `codex-call` 回報 rate limit／429 | `rate_limit` | 「Codex 限額耗盡。等待重置後再跑。**不會自動 retry**。」 |
 | `codex-call` 回報 401／unauthorized | `oauth_invalid` | 「OAuth token 失效。跑 $codex-setup。」 |
 | `codex-call` 逾時 | `timeout` | 「超過 hard timeout。減少圖片張數，或檢查 Codex tier。」 |
-| 送出前的輸入檢查 | `target_invalid` | 「輸入不合格：<detail>。沒有送出請求。」 |
+| 輸入檢查（多半在送出前；`compare` 發現詞彙表或影格被改過時，第一輪已經送出） | `target_invalid` | 「輸入不合格：<detail>。」 |
 | `codex-call --help` 沒有 `--image` | `runtime_unsupported` | 「codex-call 不支援 --image。更新 parallel-ai-agents 到 2.24.0 以上。沒有送出請求。」 |
 | Codex 回覆不合 schema | `parse_failed` | 「Codex 的回覆不是符合 schema 的 JSON。**不會自動 retry**。」 |
-| 找不到 `codex-call`，或 `python3` 比 3.10 舊 | `runtime_unavailable` | 「執行環境不足：<detail>。沒有送出請求。」 |
+| 找不到 `codex-call`、`python3` 比 3.10 舊，或 `codex-call` 在送出前就停下 | `runtime_unavailable` | 「執行環境不足：<detail>。沒有送出請求。」 |
 | 腳本內部的意外例外 | `internal_error` | 「skill 的腳本發生意外錯誤：<detail>。這是 skill 的問題，請回報。」 |
-| 請求送出後後端出錯或連線中斷 | `backend_error` | 「Codex 後端出錯：<detail>。請求已經送出，這一輪不會重送。」 |
+| 後端出錯、連線中斷，或 `codex-call` 沒說明原因（`HTTP 0`） | `backend_error` | 「Codex 後端出錯：<detail>。看不出有沒有送出時一律當成已送出，這一輪不會重送；要重來就另開一個 run。」 |
 | native preflight：套件缺檔、不可執行或 hash mismatch | `package_corruption` | 「codex-pro 套件損壞。重新安裝 plugin。**不會自動 retry**。」 |
 | native preflight：unsupported platform、缺 Swift 或 runtime unavailable | `runtime_unavailable` | 「Producer runtime 不可用。跑 $codex-setup 查看 remediation；consumer skills 仍可使用。**不會自動 retry**。」 |
 
@@ -290,7 +293,8 @@ python3 "$SKILL_DIR/scripts/xval.py" sam --run "$RUN"
 python3 "$SKILL_DIR/scripts/xval.py" crops --run "$RUN"
 ```
 
-每個有範圍可看的分歧裁出一張放大 2 倍的圖（`$RUN/crops/z01.png`…），所有問題與類別定義寫在題目檔
+每個有範圍可看的分歧裁出一張圖並縮放（最多 2 倍，長邊不超過 2048 px；題目檔每行寫出實際倍率）
+（`$RUN/crops/z01.png`…），所有問題與類別定義寫在題目檔
 `$RUN/zoom_prompt.md`。沒有關鍵點可圈、或裁切範圍等於整張畫面的分歧不出題，`crops` 的輸出列在 `no_zoom`。
 
 **Claude 這一側的放大輪不由你作答。** 你知道哪裡有分歧，也記得自己的原答；布林關係只有真假兩值，
@@ -308,7 +312,8 @@ gives, to <RUN>/zoom_claude.json. Do not read any other file in <RUN>.
 
 subagent 結束後**立刻封存**，再把同一份題目檔送給 Codex。封存之前**不要讀** `zoom_claude.json`、**不要重跑**
 subagent、也不要替它修格式：你知道原答，看到不同的答案而重跑或修改，就是讓 Claude 這一側重抽到合意為止。
-`seal --zoom` 因格式不合而失敗時，放大輪就不採用，照樣往下走：
+`seal --zoom` 因格式不合而失敗時，放大輪未採用，照樣往下走：之後的 `seal --zoom` 與 `ask --round zoom`
+都會被拒絕、不送出任何東西，這不是 run 的錯誤，結果檔會註明放大輪未採用。
 
 ```bash
 python3 "$SKILL_DIR/scripts/xval.py" seal --run "$RUN" --zoom
@@ -321,8 +326,11 @@ python3 "$SKILL_DIR/scripts/xval.py" ask --run "$RUN" --round zoom
 這一次的結果，不再是盲答；結果檔的 Limitations 也寫了這一點。裁決時會重算這份封存，
 答案被改過就不採用放大輪證據。
 
-**沒有 subagent 可用時，不要自己作答**：跳過 `seal --zoom` 與 `ask --round zoom`，分歧只靠 SAM 與
-`max_count` 裁決，結果檔會顯示沒有放大輪證據。
+**沒有 subagent 可用時，不要自己作答**：跳過 `seal --zoom` 與 `ask --round zoom`，分歧只剩 SAM 與
+`max_count` 兩種證據（`max_count` 只能排除一方，要與 SAM 看到的數量一起才可能裁決），結果檔會顯示沒有放大輪證據。
+
+只比數量的類別（詞彙表沒有給關鍵點的類別）沒有放大題，SAM 也不追蹤，所以它們的數量分歧無法裁決，
+最多被 `max_count` 排除一方；結果檔的 Limitations 會點名這些類別。
 
 ## Step 9: 裁決與結果檔
 
@@ -345,6 +353,7 @@ target: <N images | N images (sequence)>
 model: <$RUN/profile.json 的 model>
 effort: <$RUN/profile.json 的 effort>
 profile_source: <default | global | project | mixed>
+first_side_model: <init --first-side 給的模型 ID；沒給時為空>
 timestamp: 2026-10-07T08:30:48+08:00
 n_images: <N>
 n_claims: <frames Claude answered>

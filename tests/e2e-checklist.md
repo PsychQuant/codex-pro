@@ -241,6 +241,9 @@ profile `gpt-6.1-sol`／`medium`（global）。
   相同，Codex 也答 3。裁決 `resolved_codex`，證據為放大輪。
 - 結果檔：frontmatter 完整，`seal_broken: false`；封存 10:21:18 早於請求 10:21:27；`profile_source: global`；
   送出的 prompt 只有中性檔名，影格複本不含 metadata 區塊。`sam_status: not_applicable`（非影片序列）。
+- 與 SKILL 的差異：這個 session 的 PATH 在更新 plugin 之前就設定好了，`command -v codex-call` 仍指向 2.23.0，
+  所以 `runtime.txt` 直接寫 2.24.0 的路徑（新 session 的 `command -v` 會解析到的位置）。第二次與第三次沿用同一做法。
+
 第二次紀錄：2026-10-07，codex-pro `dcaf036`（第二輪 verify 的修正之後），同一個 runtime 與 profile，`--first-side claude-opus-5-5`。
 
 - 輸入：3 張合成圖。詞彙表只有 DOT 有關鍵點（圓心），SQUARE 與一條細長的 BAR 只比數量。f03 **植入兩個錯誤**：
@@ -250,9 +253,6 @@ profile `gpt-6.1-sol`／`medium`（global）。
 - 放大輪：DOT 的數量題由 subagent 作答、結束後立刻封存；Codex 拿到逐字相同的題目檔。兩邊都數到 3，等於較高
   的一方，裁決 `resolved_codex`。SQUARE 沒有關鍵點，不出放大題，結果檔寫明原因，裁決 `unverifiable`。
 - 結果檔：`first_side_model: claude-opus-5-5`；兩輪的請求都列出時間與回覆雜湊，回覆檔都仍相符，封存都早於請求。
-
-- 與 SKILL 的差異：這個 session 的 PATH 在更新 plugin 之前就設定好了，`command -v codex-call` 仍指向 2.23.0，
-  所以 `runtime.txt` 直接寫 2.24.0 的路徑（新 session 的 `command -v` 會解析到的位置）。
 
 ## Post-test cleanup checklist
 

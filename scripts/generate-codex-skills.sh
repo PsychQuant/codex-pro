@@ -312,9 +312,11 @@ print(*(f"{source_path}\t{publish_path}" for source_path, publish_path in mappin
 PY
 
 {
-  find "$SOURCE_DIR" -type f ! -name SKILL.md -print
-  [ ! -d "$SOURCE_BUNDLE/references" ] || find "$SOURCE_BUNDLE/references" -type f -print
-  [ ! -d "$SOURCE_BUNDLE/runtime" ] || find "$SOURCE_BUNDLE/runtime" -type f -print
+  # __pycache__ is bytecode Python leaves next to scripts it imports, not a resource: counting it
+  # stopped the generator in the middle of a change (codex-pro#23 verify round 3, L16).
+  find "$SOURCE_DIR" -type f ! -name SKILL.md ! -path '*/__pycache__/*' -print
+  [ ! -d "$SOURCE_BUNDLE/references" ] || find "$SOURCE_BUNDLE/references" -type f ! -path '*/__pycache__/*' -print
+  [ ! -d "$SOURCE_BUNDLE/runtime" ] || find "$SOURCE_BUNDLE/runtime" -type f ! -path '*/__pycache__/*' -print
 } | sed "s#^$SOURCE_BUNDLE/##" | LC_ALL=C sort > "$ACTUAL_RESOURCES"
 
 if ! cmp -s "$RESOURCE_SOURCES" "$ACTUAL_RESOURCES"; then
