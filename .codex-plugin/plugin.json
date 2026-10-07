@@ -1,7 +1,7 @@
 {
   "name": "codex-pro",
   "version": "0.9.0",
-  "description": "Codex workflows for environment readiness, code review, adversarial review, rescue, batch processing, and local result inspection.",
+  "description": "Codex workflows for environment readiness, code review, adversarial review, rescue, batch processing, visual cross-validation of images, and local result inspection.",
   "author": {
     "name": "Che Cheng"
   },

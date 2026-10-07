@@ -145,3 +145,55 @@
   - 用 3 張合成圖跑完整流程（含放大輪），確認回覆符合 schema、中性檔名與送出順序一致、結果檔完整。
   - 驗證：結果檔與 run 目錄的實際內容記錄在 e2e-checklist 的對應項目。
   - [after: 6.8]
+
+## 7. Verify 第二輪修正（#23 第二輪 report 的 R1–R8、S1–S16、F1、F2）
+
+- [x] 7.1 規格與 design 依使用者第二輪決定更新（依「關鍵點由詞彙表指定」「記錄第一方模型」「約束只能排除」「後端錯誤另立一類」）。
+  - visual-xval delta spec：Claim schema and closed vocabulary（key_points、distance_pct 為唯一的量、最小距離）、Adjudication without majority vote（放大輪數量只能證實較高的一方、推翻雙方即 unverifiable、約束單獨存在時只排除）、Structured result file（first_side_model、backend_error、放大輪紀錄）、Built-in SAM evidence（只下載需要的權重）。
+  - design.md 補上第二輪的決定與理由。
+  - 驗證：`spectra validate` 與 `spectra analyze` 無 warning。
+- [ ] 7.2 關鍵點由詞彙表指定（R2、S7）。
+  - 詞彙表 `key_points`：類別 → 關鍵點定義；只有列出的類別要給點、比位置，其他類別只比數量。
+  - 關係詞的 `between` 與 SAM 的 `track_class` 都必須是有關鍵點的類別；量只接受 `distance_pct`，定義為兩類關鍵點之間的最小距離。
+  - 兩個 prompt 列出各類別的關鍵點定義。
+  - 驗證：詞彙表含 PAD／THREAD 而不給關鍵點時，兩邊只比數量、不產生位置分歧；`closeness < 5` 被拒。
+  - [after: 7.1]
+- [ ] 7.3 裁決規則（R1、R3、R4、S11）。
+  - 放大輪的數量答案只能證實較高的一方（與 SAM 相同），等於較低的一方時為 unverifiable。
+  - 放大輪推翻雙方時，該分歧為 unverifiable，其他證據不得改判。
+  - 違反 max_count 單獨存在時為 unverifiable，註明被排除的一方；與其他證據一致時才裁決。
+  - SAM 位置證據的 margin 同時套用在兩方。
+  - 驗證：R1 的「同一物件標兩次」情境為 unverifiable；R3、R4 的兩個實測情境為 unverifiable。
+  - [after: 7.2]
+- [ ] 7.4 紀錄與失敗分類（R5、R6、S1、S9、S12、S13）。
+  - 送出後的後端錯誤記為 `backend_error`；「refresh」只在 OAuth 字樣中才算。
+  - 被拒絕的重跑（重封、同一輪再送）不寫入 `error.json`，只進 `errors.jsonl`。
+  - Codex 原始回覆的雜湊在比對與寫結果檔時重算。
+  - codex-call 在送出前就失敗（圖片檢查）時撤回該輪的請求紀錄。
+  - 結果檔：沒有封存時不寫「封存早於請求」；列出放大輪的請求時間與雜湊；錯誤註明輪次；SAM detail 過濾本機路徑。
+  - Step 4.1 的 max_time 不合法時不寫 profile.json 並說明原因。
+  - 驗證：HTTP 500 為 backend_error；rate_limit 後重跑 ask，結果檔仍是 rate_limit；改動 codex_round1.md 被結果檔指出。
+  - [after: 7.3]
+- [ ] 7.5 輸入與放大輪檔案（R7、S2、S3、S4、S10、S14、S15）。
+  - JPEG 截到第一個 EOI，去掉附加在後面的圖片或影片；PNG 與 WebP 的 EXIF 方向先轉正再清除；格式依檔頭判斷。
+  - 封存同時記錄詞彙表與影格的雜湊，比對前核對；已封存或已送出的 run 不得重跑 init。
+  - 放大輪的 plan 與題目檔記錄雜湊，送出前核對；裁切圖必須在 run 目錄內。
+  - 放大輪 prompt 寫明裁切圖的附加順序；放大倍率讓長邊不超過 2048，題目寫出實際倍率。
+  - 原始檔名與中性檔名衝突時拒絕對照。
+  - 驗證：附加尾段的 JPEG 複本不含尾段；PNG 方向 6 被轉正；封存後改詞彙表被拒；plan 指向 run 目錄外的檔案被拒。
+  - [after: 7.4]
+- [ ] 7.6 SAM 下載與出貨路徑（R8、S16）。
+  - `snapshot_download` 只取需要的檔案；同意文字依實際大小更新。
+  - 以暫時的 HOME 讓 `~/.codex-pro/sam-env` 指向既有環境，從 `xval.py sam` 跑完出貨路徑。
+  - 驗證：stub 測試確認 allow_patterns；出貨路徑 smoke 的紀錄寫進 e2e-checklist §E。
+  - [after: 7.5]
+- [ ] 7.7 第一方模型與文件（F1、F2、S5、S6、S8），含 Cross-harness version consistency 的 0.9.0 與 manifest 描述。
+  - init 記錄第一方的實際模型（`--first-side`），結果檔 frontmatter 寫 `first_side_model`；第一方不是 Claude 時，Limitations 註明兩方可能同屬一個模型家族。
+  - SKILL：subagent 結束後立刻封存、不讀內容、不重跑；沒有放大題時跳過放大輪；Limitations 補上跨 run 不盲答。
+  - design.md 的步驟順序與 run 路徑、xval.py 用法說明、spec 的「重新編碼」字樣、0.8.0 殘留一併更正。
+  - 驗證：SKILL 契約檢查涵蓋上述內容；`bash tests/run.sh` 只剩 #24。
+  - [after: 7.6]
+- [ ] 7.8 真實後端端到端（第二次）。
+  - 詞彙表含有關鍵點的類別與只計數的類別，跑完整流程。
+  - 驗證：紀錄寫進 e2e-checklist §F。
+  - [after: 7.7]

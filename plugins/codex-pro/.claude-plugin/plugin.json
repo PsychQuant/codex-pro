@@ -1,7 +1,7 @@
 {
   "name": "codex-pro",
   "version": "0.9.0",
-  "description": "v0.8.0: Native Codex plugin distribution with two complete generated bundles, pinned macOS Swift runtime provenance, fail-closed skill-relative resolution, self-hosted marketplace metadata, and release gates. Claude Code compatibility, structured results, profile governance, hard timeouts, and circuit breakers remain supported.",
+  "description": "v0.9.0: codex-visual-xval — Claude and Codex judge the same images independently, the claims are compared in code, and disagreements are settled only by third evidence (zoomed crops, built-in SAM 2.1 tracking, physical constraints); codex-call --image re-vendored. Native Codex distribution, structured results, profile governance, hard timeouts, and circuit breakers remain supported.",
   "author": {
     "name": "Che Cheng"
   },

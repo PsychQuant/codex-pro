@@ -88,7 +88,7 @@ The plugin SHALL remain installable on supported Codex surfaces, and its pure lo
 
 ### Requirement: Native Codex plugin manifest
 
-The repository SHALL provide `.codex-plugin/plugin.json` as a valid skills-only Codex plugin manifest. The manifest SHALL declare `name` as `codex-pro`, strict SemVer `version` as `0.8.0`, `skills` as `./skills/`, a non-empty description, `author.name`, and install-surface `interface` metadata containing display name, short description, long description, developer name, category, capabilities, website URL, and one to three starter prompts. The manifest MUST NOT declare apps, MCP servers, hooks, or asset paths without corresponding package files.
+The repository SHALL provide `.codex-plugin/plugin.json` as a valid skills-only Codex plugin manifest. The manifest SHALL declare `name` as `codex-pro`, strict SemVer `version` as `0.9.0`, `skills` as `./skills/`, a non-empty description, `author.name`, and install-surface `interface` metadata containing display name, short description, long description, developer name, category, capabilities, website URL, and one to three starter prompts. The manifest MUST NOT declare apps, MCP servers, hooks, or asset paths without corresponding package files.
 
 #### Scenario: Plugin validator accepts the manifest
 
@@ -275,3 +275,43 @@ code:
 -->
 
 ---
+
+### Requirement: Cross-harness version consistency
+
+The Codex manifest, Claude plugin manifest, and Claude marketplace entry SHALL all declare version `0.9.0`. A version change MUST update all three in the same commit, and the release notes SHALL identify Codex native plugin distribution as the 0.9.0 feature.
+
+#### Scenario: Version drift blocks the release gate
+
+- **WHEN** any one of the three version values differs
+- **THEN** the automated plugin test fails and identifies every mismatched manifest path
+
+<!-- @trace
+source: add-native-codex-plugin
+updated: 2026-08-10
+code:
+  - THIRD_PARTY_NOTICES.md
+  - tests/codex-plugin.sh
+  - scripts/generate-codex-skills.sh
+  - tests/rescue.sh
+  - plugins/codex-pro/runtime/codex-pro-call
+  - skills/codex-review/SKILL.md
+  - .codex/skills/codex-setup/SKILL.md
+  - .codex/skills/codex-adversarial-review/SKILL.md
+  - tests/adversarial-review.sh
+  - tests/review.sh
+  - tests/setup.sh
+  - tests/run-dispatcher.sh
+  - plugins/codex-pro/THIRD_PARTY_NOTICES.md
+  - tests/codex-runtime.sh
+  - AGENTS.md
+  - plugins/codex-pro/runtime/codex-call
+  - skills/codex-adversarial-review/SKILL.md
+  - tests/run.sh
+  - .codex/skills/codex-review/SKILL.md
+  - tests/codex-skills-parity.sh
+  - .codex/skills/codex-rescue/SKILL.md
+  - plugins/codex-pro/LICENSE
+  - scripts/codex-bundle-resources.manifest
+  - skills/codex-setup/SKILL.md
+  - skills/codex-rescue/SKILL.md
+-->

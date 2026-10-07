@@ -9,7 +9,7 @@
       "name": "codex-pro",
       "version": "0.9.0",
       "source": "./plugins/codex-pro",
-      "description": "v0.8.0: Native Codex plugin distribution with complete generated bundles, a pinned macOS Swift runtime, fail-closed skill-relative resolution, self-hosted marketplace metadata, and release gates; Claude Code compatibility remains supported."
+      "description": "v0.9.0: codex-visual-xval visual cross-validation (independent answers, deterministic comparison, third-evidence adjudication with built-in SAM 2.1); native Codex plugin distribution and Claude Code compatibility remain supported."
     }
   ]
 }
