@@ -102,11 +102,13 @@ def kind_of(data: bytes) -> str:
 # image that is not the one given (#23 verify round 6, Q13). The structure is checked first. What
 # this cannot see is damage inside the compressed data of a JPEG, GIF or WebP that still ends properly.
 PNG_CHANNELS = {0: 1, 2: 3, 3: 1, 4: 2, 6: 4}
+PNG_DEPTHS = {0: {1, 2, 4, 8, 16}, 2: {8, 16}, 3: {1, 2, 4, 8}, 4: {8, 16}, 6: {8, 16}}   # PNG spec, table 11.1
 # The size an image may claim. Its header is the sender's, and the check below would otherwise
 # inflate whatever it promises (background security review after c1ca2d6). 250 megapixels is above
 # any phone camera; sips is not handed anything larger either.
 MAX_PIXELS = 250_000_000
 INFLATE_STEP = 1 << 20
+EXTRA_LIMIT = 1 << 20   # data beyond what IHDR promises that is still read, to find the stream's end
 ADAM7 = ((0, 0, 8, 8), (4, 0, 8, 8), (0, 4, 4, 8), (2, 0, 4, 4), (0, 2, 2, 4), (1, 0, 2, 2), (0, 1, 1, 2))
 
 
@@ -132,8 +134,10 @@ def _png_problem(data: bytes) -> str | None:
         crc = data[pos + 8 + length:pos + 12 + length]
         if len(body) < length or len(crc) < 4:
             return "the file ends inside a chunk"
-        if struct.unpack(">I", crc)[0] != zlib.crc32(kind + body) & 0xFFFFFFFF:
-            return "a chunk fails its checksum"
+        if struct.unpack(">I", crc)[0] != zlib.crc32(kind + body) & 0xFFFFFFFF and not kind[0] & 0x20:
+            # only a critical chunk (upper-case first letter) carries image data; an ancillary one
+            # is dropped from the copy anyway (#23 verify round 7, Y8)
+            return "a critical chunk fails its checksum"
         if kind == b"CgBI":   # Apple's iOS PNG: raw deflate, without the zlib header (sips decodes it)
             cgbi = True
         elif kind == b"IHDR":
@@ -151,24 +155,30 @@ def _png_problem(data: bytes) -> str | None:
     width, height, depth, colour, _, _, interlace = struct.unpack(">IIBBBBB", ihdr)
     if colour not in PNG_CHANNELS:
         return "an unknown colour type"
+    if depth not in PNG_DEPTHS[colour]:   # an invalid depth would also inflate the length promised (Y8)
+        return "a bit depth its colour type does not allow"
     if width * height > MAX_PIXELS:
         return f"the image is larger than {MAX_PIXELS // 1_000_000} megapixels"
     expected = _png_raw_size(width, height, depth, colour, interlace)
     inflate, pending, total = zlib.decompressobj(-15 if cgbi else zlib.MAX_WBITS), b"".join(idat), 0
     try:
-        # Counted at most INFLATE_STEP at a time and only up to what IHDR promises: data beyond it is
-        # not read (libpng only warns about it), and flush() is never called, since it would inflate
-        # all the rest at once (background security review after c1ca2d6).
-        while total < expected:
+        # Inflated to the stream's end, so its own checksum is checked (round 7, X1), but at most
+        # INFLATE_STEP at a time and never past EXTRA_LIMIT beyond what IHDR promises; flush() is never
+        # called, since it would inflate all the rest at once (background security review after c1ca2d6).
+        while not inflate.eof:
             out = inflate.decompress(pending, INFLATE_STEP)
             pending = inflate.unconsumed_tail
             total += len(out)
+            if total > expected + EXTRA_LIMIT:
+                return "more image data than its header promises"
             if not out and not pending:
                 break
     except zlib.error:
         return "the image data is not a valid compressed stream"
     if total < expected:
         return "the image data is cut short"
+    if not inflate.eof:
+        return "the compressed image data does not end"
     return None
 
 

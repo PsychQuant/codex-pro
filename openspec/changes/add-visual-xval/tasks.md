@@ -310,7 +310,7 @@
 
 - [x] 12.1 規格與 design 依第七輪更新（design「第七輪：檢查要做到文件說的程度」；Privacy reminder before sending images 的 PNG 結構與寫入目錄清單、Structured result file 的路徑過濾與結果檔穩健性、Blind Codex judgment 的登入檢查、Sealed Claude answers 的 sam 情境）。
   - 驗證：`spectra validate` 與 `spectra analyze` 無 warning。
-- [ ] 12.2 PNG 結構檢查：串流結尾與 checksum、超出資料的上限、只看關鍵 chunk 的 CRC、位元深度；原解析度複本的位置在裁切前核對（X1、Y8）。
+- [x] 12.2 PNG 結構檢查：串流結尾與 checksum、超出資料的上限、只看關鍵 chunk 的 CRC、位元深度；原解析度複本的位置在裁切前核對（X1、Y8）。
   - [after: 12.1]
 - [ ] 12.3 路徑過濾與錯誤細節：只保留 SAM 環境的固定位置、家目錄的邊界、含引號括號的目錄名、不吃掉網址與自己的訊息、逾時與 compare_claims 的路徑與措辭（X2、Y1、Y2、Y9）。
   - [after: 12.2]

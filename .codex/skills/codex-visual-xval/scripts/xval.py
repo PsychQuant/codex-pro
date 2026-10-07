@@ -546,6 +546,13 @@ def crops(run: str) -> None:
     claude = compare_claims.by_frame(compare_claims.claims_list(load(os.path.join(run, "claude.json"))), vocab)
     codex = compare_claims.by_frame(compare_claims.claims_list(load(os.path.join(run, "codex.json"))), vocab)
     frames = load(os.path.join(run, "frames.json"), {})
+    # like the first round's copies, a full-resolution copy must lie in the run (round 6, Q9), checked
+    # before any crop is made, so a refusal leaves nothing behind (round 7, Y8)
+    hires_dir = os.path.realpath(os.path.join(run, "hires"))
+    for info in frames.values():
+        if isinstance(info, dict) and info.get("hires") and not (isinstance(info["hires"], str) and os.path.dirname(
+                os.path.realpath(os.path.join(run, info["hires"]))) == hires_dir):
+            raise Stop("target_invalid", "a full-resolution copy lies outside the run's hires directory; nothing was cropped")
     os.makedirs(os.path.join(run, "crops"), exist_ok=True)
     plan, shown, skipped = {}, [], []
     n = 0
@@ -563,11 +570,7 @@ def crops(run: str) -> None:
             skipped.append({"id": item["id"], "frame": item["frame"], "reason": "the crop would cover the whole image"})
             continue
         n += 1
-        # the full-resolution copy when there is one, so the zoom round sees real detail (round 5, V7);
-        # like the first round's copies, it must lie in the run (round 6, Q9)
-        if info.get("hires") and not (isinstance(info["hires"], str) and os.path.dirname(os.path.realpath(
-                os.path.join(run, info["hires"]))) == os.path.realpath(os.path.join(run, "hires"))):
-            raise Stop("target_invalid", "a full-resolution copy lies outside the run's hires directory; nothing was cropped")
+        # the full-resolution copy when there is one, so the zoom round sees real detail (round 5, V7)
         source = os.path.join(run, info["hires"]) if info.get("hires") else os.path.join(run, "frames", item["frame"])
         w, h = (None, None) if info.get("hires") else (info.get("width"), info.get("height"))
         if not w or not h:

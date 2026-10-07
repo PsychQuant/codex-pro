@@ -1826,6 +1826,7 @@ xval compare --run "$WORK/run6h"
 xval crops --run "$WORK/run6h"
 assert_contains "$RUN_OUT" "outside the run's hires directory" "a full-resolution copy outside the run is not cropped (Q9)"
 assert_no_file "$WORK/run6h/zoom_plan.json" "and no zoom plan is written"
+assert_eq "0" "$(ls "$WORK/run6h/crops" 2>/dev/null | wc -l | tr -d ' ')" "and no crop is written before the check (round 7, Y8)"
 
 # Round 6 (Q1): the steps that write into a directory are a closed list.
 rm -rf "$WORK/typo"
@@ -1958,6 +1959,33 @@ print(media.integrity_problem(png, "png"))
 PY
 )
 assert_eq "None" "$cgbi" "an Apple CgBI PNG (raw deflate) is not mistaken for damaged data"
+# Round 7 (X1, Y8): the compressed stream must end and pass its checksum; only critical chunks'
+# checksums count; a bit depth the colour type does not allow is refused.
+x1=$(python3 -B - "$SCRIPTS" <<'PY'
+import struct, sys, zlib
+sys.path.insert(0, sys.argv[1])
+import media
+def chunk(t, d): return struct.pack(">I", len(d)) + t + d + struct.pack(">I", zlib.crc32(t + d) & 0xffffffff)
+sig = b"\x89PNG\r\n\x1a\n"
+def png(body, depth=8, colour=2, extra=b""):
+    return sig + chunk(b"IHDR", struct.pack(">IIBBBBB", 16, 16, depth, colour, 0, 0, 0)) + extra + chunk(b"IDAT", body) + chunk(b"IEND", b"")
+raw = b"".join(b"\x00" + bytes([9, 99, 199]) * 16 for _ in range(16))
+bad_text = bytearray(chunk(b"tEXt", b"Comment\x00hello")); bad_text[-1] ^= 0xFF
+cases = {
+    "complete": png(zlib.compress(raw)),
+    "no_adler": png(zlib.compress(raw)[:-4]),
+    "small_extra": png(zlib.compress(raw + b"\x00" * 100)),
+    "bad_ancillary_crc": png(zlib.compress(raw), extra=bytes(bad_text)),
+    "bad_depth": png(zlib.compress(raw), depth=4),
+}
+print(" ".join(f"{k}={media.integrity_problem(v, 'png') is None}" for k, v in cases.items()))
+PY
+)
+assert_contains "$x1" "complete=True" "a complete PNG passes"
+assert_contains "$x1" "no_adler=False" "a PNG whose stream lacks its closing checksum is refused (X1)"
+assert_contains "$x1" "small_extra=True" "a little data beyond the header's promise is tolerated"
+assert_contains "$x1" "bad_ancillary_crc=True" "an ancillary chunk with a bad checksum does not refuse intact image data (Y8)"
+assert_contains "$x1" "bad_depth=False" "a bit depth the colour type does not allow is refused (Y8)"
 # Background security review after c1ca2d6: the structure check must not itself be a decompression
 # bomb. flush() used to inflate everything after the cap at once, and IHDR's size is the sender's.
 bomb=$(python3 -B - "$SCRIPTS" "$WORK/plain.jpg" <<'PY'
@@ -1997,7 +2025,7 @@ except media.MediaError as exc:
 print(f"largest={largest[0]} extra={extra} huge_inflated={calls[0]} huge={huge!r} jpeg={jpeg!r}")
 PY
 )
-assert_contains "$bomb" "extra=None" "image data beyond what IHDR promises is not read, and not refused"
+assert_contains "$bomb" "extra=more image data than" "image data far beyond what IHDR promises is refused, naming the excess (round 7, X1)"
 assert_eq "True" "$(python3 -c 'import re,sys; print(int(re.search(r"largest=(\d+)", sys.argv[1]).group(1)) <= 1 << 20)' "$bomb")" \
   "the structure check never inflates more than 1 MB at a time (background review)"
 assert_contains "$bomb" "huge_inflated=0" "an IHDR beyond the pixel limit is refused without inflating anything"
@@ -2026,6 +2054,7 @@ rm -rf "$WORK/runq12f"
 HOME="$WORK/home" SIPS_LOG="$WORK/sips.log" SIPS_FAIL_JPEG=1 PATH="$WORK/logsips:$PATH" python3 "$SCRIPTS/xval.py" init \
   --run "$WORK/runq12f" --vocab "$WORK/vocab.json" "$WORK/rotated_exif.jpg" >/dev/null 2>&1
 assert_eq "0" "$(ls "$WORK/runq12f/frames" 2>/dev/null | grep -c staged || true)" "nor after a failed encode"
+assert_contains "$(cat "$WORK/runq12f/error.json" 2>/dev/null)" "sips exited 13" "and init did stop at the JPEG encode (round 7, Y8)"
 # Round 6 (Q10): SAM that ran on the frame but gave nothing is listed as not used.
 q10=$(python3 -B - "$SCRIPTS" <<'PY'
 import sys
