@@ -19,9 +19,13 @@ If the evidence that exists points to different sides, the disagreement is unver
 """
 import json
 import math
+import os
 import re
 import sys
 from typing import Any
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from compare_claims import pair_points  # noqa: E402
 
 DEFAULT_MARGIN_PCT = 1.0
 DEFINITION = re.compile(r"^\s*([a-z_]+)\s*(<=|>=|<|>|==)\s*(-?\d+(?:\.\d+)?)\s*$")
@@ -37,22 +41,55 @@ def side_matching(value: Any, item: dict) -> str | None:
     return None
 
 
+def as_points(points: list) -> list[dict]:
+    return [{"x_pct": float(p[0]), "y_pct": float(p[1])} for p in points]
+
+
+def instance_verdict(evidence: list, item: dict, limit: float, margin: float) -> tuple[str, list] | None:
+    """Which side's disputed point is the object the evidence found there?
+
+    The evidence points are paired with ALL of each side's key points of the class, and the
+    disagreement is settled only when both disputed points pair with the same evidence point.
+    Taking "the evidence point nearest either side" instead let a side that marked one object
+    twice be confirmed by the other object (#23 verify B6, B9).
+    """
+    aspect = float(item.get("aspect", 1.0))
+    gap = lambda p, q: math.hypot(p[0] - q[0], (p[1] - q[1]) * aspect)
+    found = as_points(evidence)
+    def partner(points: list, disputed: list) -> int | None:
+        for e, p in pair_points(found, as_points(points), aspect):
+            if [p["x_pct"], p["y_pct"]] == [float(v) for v in disputed]:
+                return found.index(e)
+        return None
+    mine = partner(item.get("claude_points") or [item["claude"]], item["claude"])
+    theirs = partner(item.get("codex_points") or [item["codex"]], item["codex"])
+    if mine is None or mine != theirs:
+        return None
+    point = [found[mine]["x_pct"], found[mine]["y_pct"]]
+    d_claude, d_codex = gap(point, item["claude"]), gap(point, item["codex"])
+    if d_claude <= limit and d_codex > limit + margin:
+        return "resolved_claude", point
+    if d_codex <= limit and d_claude > limit + margin:
+        return "resolved_codex", point
+    return None
+
+
 def from_zoom(item: dict, zoom: dict, vocab: dict | None = None) -> dict | None:
     answer = zoom.get(item["id"])
     if not answer:
         return None
-    if item["kind"] == "position":   # points agree when they are within the position threshold
+    if item["kind"] == "position":   # both sides list every key point of the class in the crop
         aspect = float(item.get("aspect", 1.0))
         limit = float(item.get("threshold_pct", (vocab or {}).get("position_threshold_pct", 5)))
-        gap = lambda p, q: math.hypot(p[0] - q[0], (p[1] - q[1]) * aspect)
-        a, b = answer["claude"], answer["codex"]
-        if gap(a, b) > limit:
-            return None
-        mid = [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2]
-        near_claude, near_codex = gap(mid, item["claude"]) <= limit, gap(mid, item["codex"]) <= limit
-        verdict = "resolved_claude" if near_claude and not near_codex else (
-            "resolved_codex" if near_codex and not near_claude else None)
-        return verdict and {"source": "zoom", "verdict": verdict, "detail": f"both models placed it at {mid} on the crop"}
+        a, b = as_points(answer["claude"]), as_points(answer["codex"])
+        pairs = pair_points(a, b, aspect)
+        if len(a) != len(b) or any(math.hypot(p["x_pct"] - q["x_pct"], (p["y_pct"] - q["y_pct"]) * aspect) > limit
+                                   for p, q in pairs):
+            return None   # the two zoom answers do not agree with each other
+        found = [[(p["x_pct"] + q["x_pct"]) / 2, (p["y_pct"] + q["y_pct"]) / 2] for p, q in pairs]
+        settled = instance_verdict(found, item, limit, 0.0)
+        return settled and {"source": "zoom", "verdict": settled[0],
+                            "detail": f"both models placed that object at {[round(v, 2) for v in settled[1]]} on the crop"}
     if answer.get("claude") != answer.get("codex"):
         return None
     verdict = side_matching(answer["claude"], item)

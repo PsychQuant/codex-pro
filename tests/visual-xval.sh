@@ -54,6 +54,7 @@ checks = {
     "result_path": ".codex-pro/visual-xval-" in body,
     "sam_consent": "AskUserQuestion" in body and "install --yes" in body,
     "zoom_blind": "不要讀 `$RUN/codex.json`" in body,
+    "zoom_subagent": "- Agent" in fm and "zoom_prompt.md" in body and "subagent" in body,
     "limitations": "兩個模型一致不代表正確" in body,
 }
 print(" ".join(f"{k}={'ok' if v else 'MISSING'}" for k, v in checks.items()))
@@ -180,6 +181,8 @@ assert_contains "$kinds" "f02.png:count" "a different instrument count is a coun
 assert_contains "$kinds" "f03.png:position" "a tip moved beyond the threshold is a position mismatch"
 assert_eq "1.0" "$(json_get "$RUN_OUT" '[x["aspect"] for x in d["disagreements"] if x["kind"] == "position"][0]')" \
   "a position disagreement carries the aspect ratio used for its distance"
+assert_eq "2 2" "$(json_get "$RUN_OUT" '[("%d %d" % (len(x["claude_points"]), len(x["codex_points"]))) for x in d["disagreements"] if x["kind"] == "position"][0]')" \
+  "a position disagreement carries every key point of its class from both sides"
 case "$kinds" in
   *f04.png*) fail "points listed in another order are paired by distance (got: $kinds)" ;;
   *) pass "points listed in another order are paired by distance" ;;
@@ -484,13 +487,22 @@ python3 - "$WORK" <<'PY'
 import json, sys
 w = sys.argv[1]
 pos = {"id": "d9", "frame": "f03.png", "kind": "position", "class": "INST", "claude": [40, 50], "codex": [52, 50],
+       "claude_points": [[40, 50], [60, 50]], "codex_points": [[52, 50], [60, 50]],
        "distance_pct": 12.0, "threshold_pct": 5, "aspect": 1.0}
-json.dump({"disagreements": [pos]}, open(f"{w}/disputes_pos.json", "w"))
-json.dump({"d9": {"claude": [41, 50], "codex": [40.5, 51]}}, open(f"{w}/zoom_pos.json", "w"))
-json.dump({"d9": {"claude": [41, 50], "codex": [52, 50]}}, open(f"{w}/zoom_pos_split.json", "w"))
+# The verify DA case: one side marked instrument B twice and missed A; the other side marked both.
+doubled = {"id": "d10", "frame": "f04.png", "kind": "position", "class": "INST", "claude": [70, 50], "codex": [20, 50],
+           "claude_points": [[70, 50], [71, 51]], "codex_points": [[20, 50], [70.5, 50]],
+           "distance_pct": 50.0, "threshold_pct": 5, "aspect": 1.0}
+json.dump({"disagreements": [pos, doubled]}, open(f"{w}/disputes_pos.json", "w"))
+json.dump({"d9": {"claude": [[41, 50], [60, 50]], "codex": [[40.5, 51], [60.2, 50]]},
+           "d10": {"claude": [[20.5, 50], [70.2, 50.1]], "codex": [[20, 50.5], [70.4, 50]]}},
+          open(f"{w}/zoom_pos.json", "w"))
+json.dump({"d9": {"claude": [[41, 50]], "codex": [[52, 50]]}}, open(f"{w}/zoom_pos_split.json", "w"))
 PY
 run_py adjudicate.py "$WORK/vocab_limits.json" "$WORK/disputes_pos.json" --zoom "$WORK/zoom_pos.json"
 assert_eq "resolved_claude" "$(verdict d9)" "zoom points that agree near Claude's original point resolve to Claude"
+assert_eq "resolved_codex" "$(verdict d10)" \
+  "a doubled mark is not confirmed by the other object: the zoom round matches points by object (#23 verify B9)"
 run_py adjudicate.py "$WORK/vocab_limits.json" "$WORK/disputes_pos.json" --zoom "$WORK/zoom_pos_split.json"
 assert_eq "unverifiable" "$(verdict d9)" "zoom points that still disagree are not evidence"
 
@@ -714,13 +726,26 @@ assert_eq "$((box_w * 2))" "$crop_w" "the crop is enlarged twice"
 
 rm -f "$WORK/mock.log" "$WORK/prompts.txt"
 cp "$WORK/run5/zoom_plan.json" "$WORK/zoom_plan_before.json"
-printf '{"d1": false}\n' > "$WORK/run5/zoom_claude.json"
+assert_file "$WORK/run5/zoom_prompt.md" "crops writes the zoom question file both sides answer from"
+qfile=$(cat "$WORK/run5/zoom_prompt.md" 2>/dev/null)
+assert_contains "$qfile" "z01.png" "the question file names each crop"
+case "$qfile" in
+  *41.37*|*'"claims"'*|*'"d1"'*) fail "the question file carries no earlier answers and no dispute ids" ;;
+  *) pass "the question file carries no earlier answers and no dispute ids" ;;
+esac
+printf '{"answers": {"z99.png": {"value": false}}}\n' > "$WORK/run5/zoom_claude.json"
+xval seal --run "$WORK/run5" --zoom
+assert_contains "$RUN_OUT" '"error": "target_invalid"' "Claude's zoom answers are checked by the same rules as Codex's"
+assert_no_file "$WORK/run5/zoom_seal.json" "invalid zoom answers are not sealed"
+rm -f "$WORK/run5/error.json"
+printf '{"answers": {"z01.png": {"value": false}}}\n' > "$WORK/run5/zoom_claude.json"
 xval seal --run "$WORK/run5" --zoom
 ask_with "$WORK/zoom_reply.md" "$WORK/run5" zoom
 assert_eq "0" "$RUN_STATUS" "the zoom round exits 0"
 assert_eq "1" "$(grep -o -- '--image ' "$WORK/mock.log" | wc -l | tr -d ' ')" "the zoom round sends only the one crop"
 assert_contains "$(cat "$WORK/mock.log")" "crops/z01.png" "the zoom round sends the crop, not the full frame"
 zoom_prompt=$(cat "$WORK/prompts.txt" 2>/dev/null)
+assert_eq "$qfile" "$zoom_prompt" "Codex's zoom request carries exactly the question file Claude's side answered from"
 assert_contains "$zoom_prompt" "INST: laparoscopic instrument" "the zoom prompt carries the class definitions"
 case "$zoom_prompt" in
   *41.37*|*'"claims"'*|*'"tips_together":'*) fail "the zoom prompt carries neither side's earlier answers" ;;
@@ -743,6 +768,64 @@ xval adjudicate --run "$WORK/run5"
 assert_eq "0" "$RUN_STATUS" "adjudicate exits 0"
 assert_eq "resolved_codex" "$(json_get "$(cat "$WORK/run5/adjudication.json")" 'd["adjudications"][0]["verdict"]')" \
   "both zoom answers say false, as Codex did -> resolved_codex"
+
+# Zoom answers that change after they were sealed or recorded are not evidence (#23 verify B2).
+cp -R "$WORK/run5" "$WORK/run5b"
+printf '{"answers": {"z01.png": {"value": true}}}\n' > "$WORK/run5b/zoom_claude.json"
+xval adjudicate --run "$WORK/run5b"
+assert_eq "unverifiable" "$(json_get "$(cat "$WORK/run5b/adjudication.json")" 'd["adjudications"][0]["verdict"]')" \
+  "zoom answers edited after sealing do not settle anything"
+assert_eq "True" "$(json_get "$(cat "$WORK/run5b/adjudication.json")" 'd["zoom_seal_broken"]')" \
+  "the adjudication records that the zoom seal failed"
+( mkdir -p "$WORK/project" && cd "$WORK/project" && python3 "$SCRIPTS/xval.py" result --run "$WORK/run5b" --out "$WORK/run5b_result.md" >/dev/null 2>&1 )
+assert_contains "$(cat "$WORK/run5b_result.md" 2>/dev/null)" "zoom seal failed" "the result file says the zoom seal failed"
+rm -rf "$WORK/run5b"; cp -R "$WORK/run5" "$WORK/run5b"
+printf '{"d1": true}\n' > "$WORK/run5b/zoom_codex.json"
+xval adjudicate --run "$WORK/run5b"
+assert_eq "unverifiable" "$(json_get "$(cat "$WORK/run5b/adjudication.json")" 'd["adjudications"][0]["verdict"]')" \
+  "Codex zoom answers edited after they were recorded do not settle anything"
+
+# Count questions crop every key point of the class; a crop of the whole image is no zoom (#23 verify B8).
+python3 - "$WORK" <<'PY'
+import json, sys
+w = sys.argv[1]
+c = json.load(open(f"{w}/claude_marked.json"))
+x = json.loads(open(f"{w}/codex_reply.md").read().split("```json\n")[1].split("\n```")[0])
+# f02: Claude counts two instruments, Codex one -> the crop must hold both of Claude's points.
+x["claims"][1]["objects"]["INST"] = 1
+x["claims"][1]["points"] = [{"class": "INST", "x_pct": 40, "y_pct": 50}, {"class": "THREAD", "x_pct": 20, "y_pct": 80}]
+# f05: the disputed points sit in opposite corners, so the crop would be the whole image.
+c["claims"][4]["points"][:2] = [{"class": "INST", "x_pct": 2, "y_pct": 3}, {"class": "INST", "x_pct": 97, "y_pct": 96}]
+x["claims"][4]["objects"]["INST"] = 1
+x["claims"][4]["points"] = [{"class": "INST", "x_pct": 2, "y_pct": 3}, {"class": "THREAD", "x_pct": 20, "y_pct": 80}]
+json.dump(c, open(f"{w}/claude_counts.json", "w"))
+open(f"{w}/codex_counts_reply.md", "w").write("```json\n" + json.dumps(x) + "\n```\n")
+PY
+rm -rf "$WORK/run9c"
+xval init --run "$WORK/run9c" --vocab "$WORK/vocab.json" "$WORK"/imgs/*.png
+xval confirm-privacy --run "$WORK/run9c"
+cp "$WORK/claude_counts.json" "$WORK/run9c/claude.json"
+printf '%s\n' "$WORK/stubbin/codex-call" > "$WORK/run9c/runtime.txt"; : > "$WORK/run9c/runtime_error.txt"
+xval seal --run "$WORK/run9c"
+ask_with "$WORK/codex_counts_reply.md" "$WORK/run9c" 1
+xval compare --run "$WORK/run9c"
+xval crops --run "$WORK/run9c"
+assert_eq "0" "$RUN_STATUS" "crops exits 0 when some disagreements get no zoom question"
+plan_check=$(python3 - "$WORK/run9c/zoom_plan.json" <<'PY'
+import json, sys
+plan = json.load(open(sys.argv[1]))
+by_frame = {e["frame"]: e for e in plan.values()}
+f02 = by_frame.get("f02.png")
+print("f02_covers=%s f05_planned=%s" % (bool(f02) and f02["box_pct"][0] <= 40 and f02["box_pct"][2] >= 60,
+                                        "f05.png" in by_frame))
+PY
+)
+assert_contains "$plan_check" "f02_covers=True" "a count question's crop holds every key point either side gave for that class"
+assert_contains "$plan_check" "f05_planned=False" "a disagreement whose crop would cover the whole image gets no zoom question"
+assert_contains "$RUN_OUT" "f05.png" "crops names the disagreements that got no zoom question"
+( mkdir -p "$WORK/project" && cd "$WORK/project" && python3 "$SCRIPTS/xval.py" result --run "$WORK/run9c" --out "$WORK/run9c_result.md" >/dev/null 2>&1 )
+assert_contains "$(cat "$WORK/run9c_result.md" 2>/dev/null)" "no zoom question: the crop would cover the whole image" \
+  "the result file says which disagreements got no zoom question, and why"
 
 new_run "$WORK/run6"
 ask_with "$WORK/codex_reply.md" "$WORK/run6" 1

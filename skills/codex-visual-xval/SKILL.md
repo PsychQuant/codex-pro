@@ -15,6 +15,7 @@ allowed-tools:
   - Read
   - Write
   - AskUserQuestion
+  - Agent
 ---
 <!-- GENERATED FILE — DO NOT EDIT.
      Source: plugins/codex-pro/skills/codex-visual-xval/SKILL.md
@@ -251,9 +252,21 @@ python3 "$SKILL_DIR/scripts/xval.py" compare --run "$RUN"
 python3 "$SKILL_DIR/scripts/xval.py" crops --run "$RUN"
 ```
 
-每個分歧裁出一張放大 2 倍的圖（`$RUN/crops/z01.png`…）並附一個問題。Claude 用 Read 看每張裁切圖，
-**只依裁切圖**回答，不參考自己先前的答案，寫成 `$RUN/zoom_claude.json`（`{"d1": <答案>, …}`；位置題
-是裁切圖內的百分比 `{"x_pct", "y_pct"}`），然後封存並送給 Codex：
+每個有範圍可看的分歧裁出一張放大 2 倍的圖（`$RUN/crops/z01.png`…），所有問題與類別定義寫在題目檔
+`$RUN/zoom_prompt.md`。沒有關鍵點可圈、或裁切範圍等於整張畫面的分歧不出題，`crops` 的輸出列在 `no_zoom`。
+
+**Claude 這一側的放大輪不由你作答。** 你知道哪裡有分歧，也記得自己的原答；布林關係只有真假兩值，
+知道這兩件事就等於知道 Codex 的答案。所以改由一個**全新的 subagent** 作答（Claude Code：Agent tool），
+它的 prompt **只能是**下面這段，把 `<RUN>` 換成 run 目錄的實際路徑，不得加入任何其他內容
+（分歧編號、原答、你的判斷都不行）：
+
+```text
+Read the file <RUN>/zoom_prompt.md. Look at each crop it names, in <RUN>/crops/, with the Read tool.
+Answer every question from that crop alone. Write your reply, JSON only and in the format the file
+gives, to <RUN>/zoom_claude.json. Do not read any other file in <RUN>.
+```
+
+subagent 寫完後封存，再把同一份題目檔送給 Codex：
 
 ```bash
 python3 "$SKILL_DIR/scripts/xval.py" seal --run "$RUN" --zoom
@@ -261,7 +274,11 @@ python3 "$SKILL_DIR/scripts/xval.py" ask --run "$RUN" --round zoom \
   --model "$MODEL" --effort "$EFFORT" --max-time "$MAX_TIME"
 ```
 
-放大輪的請求只帶裁切圖與問題，不帶任何一方先前的答案。
+`seal --zoom` 用與 Codex 回覆相同的規則檢查答案（不合格就 `target_invalid`）。裁決時會重算這份封存，
+答案被改過就不採用放大輪證據。
+
+**沒有 subagent 可用時，不要自己作答**：跳過 `seal --zoom` 與 `ask --round zoom`，分歧只靠 SAM 與
+`max_count` 裁決，結果檔會顯示沒有放大輪證據。
 
 ## Step 8: SAM 證據
 

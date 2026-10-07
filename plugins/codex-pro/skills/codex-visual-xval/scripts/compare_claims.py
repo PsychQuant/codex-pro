@@ -179,6 +179,9 @@ def compare(vocab: dict, claude: dict[str, dict], codex: dict[str, dict], aspect
                     disagreements.append({
                         "frame": frame, "kind": "position", "class": cls,
                         "claude": [a["x_pct"], a["y_pct"]], "codex": [b["x_pct"], b["y_pct"]],
+                        # every key point of the class, so evidence can be matched to objects (#23 verify B6, B9)
+                        "claude_points": [[p["x_pct"], p["y_pct"]] for p in a_pts],
+                        "codex_points": [[p["x_pct"], p["y_pct"]] for p in b_pts],
                         "distance_pct": round(gap, 2), "threshold_pct": threshold, "aspect": aspect})
         for name in vocab.get("relations", {}):
             if mine["relations"][name] != theirs["relations"][name]:
