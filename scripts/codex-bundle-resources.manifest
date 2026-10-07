@@ -15,6 +15,7 @@ skills/codex-visual-xval/scripts/codex_errors.py
 skills/codex-visual-xval/scripts/compare_claims.py
 skills/codex-visual-xval/scripts/media.py
 skills/codex-visual-xval/scripts/result_file.py
+skills/codex-visual-xval/scripts/run_files.py
 skills/codex-visual-xval/scripts/sam_env.sh
 skills/codex-visual-xval/scripts/sam_track.py
 skills/codex-visual-xval/scripts/seal.py

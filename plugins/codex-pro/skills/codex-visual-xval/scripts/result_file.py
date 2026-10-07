@@ -153,7 +153,10 @@ def result(run: str, argv: list[str]) -> None:
         lines += ["", f"**The zoom round was not used**: Claude's zoom answers failed the checks "
                   f"({sanitize(rejected.get('detail', ''))}), so no disagreement was settled by it."]
     if adjudicated.get("zoom_plan_broken"):
-        lines += ["", "**The zoom plan changed after it was recorded**, so no disagreement was settled by the zoom round."]
+        lines += ["", "**The zoom plan, its crops or the comparison it came from changed after they were recorded**, "
+                  "so no disagreement was settled by the zoom round."]
+    if adjudicated.get("sam_record_broken"):
+        lines += ["", "**SAM's output does not match what the SAM step recorded**, so no disagreement was settled by SAM."]
     if adjudicated.get("zoom_codex_record_broken"):
         lines += ["", "**Codex's zoom answers changed after they were recorded**, so no disagreement was settled "
                   "by the zoom round."]

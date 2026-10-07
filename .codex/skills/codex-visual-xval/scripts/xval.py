@@ -48,6 +48,8 @@ def _older_python(argv):
         if os.path.isdir(run):
             with open(os.path.join(run, "error.json"), "w", encoding="utf-8") as fh:
                 json.dump({"error": "runtime_unavailable", "detail": detail, "step": command}, fh)
+            with open(os.path.join(run, "errors.jsonl"), "a", encoding="utf-8") as fh:   # the history (round 4, M10)
+                fh.write(json.dumps({"error": "runtime_unavailable", "detail": detail, "step": command}) + "\n")
         print(json.dumps({"error": "runtime_unavailable", "detail": detail}))
         sys.exit(5)
     def read(name, default):
@@ -86,6 +88,8 @@ import adjudicate as adjudication  # noqa: E402
 import compare_claims  # noqa: E402
 import media  # noqa: E402
 import result_file  # noqa: E402
+from run_files import (Stop, RUN_MARK, checked_comparison, dump, inputs_digest, is_run_dir, load,  # noqa: E402
+                       neutral_names, now_iso, run_dir, seal_intact, zoom_record_intact)
 from codex_errors import classify  # noqa: E402
 from zoom_round import (class_lines, crop_box, dispute_points, enlargement, question,  # noqa: E402
                         to_frame, valid_zoom_value, zoom_prompt, WHOLE_IMAGE_PCT)
@@ -101,28 +105,6 @@ INSTRUCTIONS = (
 MAX_IMAGES = 12   # per run; the measured backend limit is higher, the cap keeps one reply short
 
 
-class Stop(Exception):
-    """record=False is for refusing a command whose step was already done (a second seal, a second
-    request in one round). That is about the command, not the run, so it must not replace the run's
-    error: a completed run stays completed, a rate_limit stays a rate_limit (#23 verify round 2, R6)."""
-    def __init__(self, error: str, detail: str, record: bool = True):
-        super().__init__(detail)
-        self.error, self.detail, self.record = error, detail, record
-
-
-def load(path: str, default: Any = None) -> Any:
-    try:
-        with open(path, encoding="utf-8") as fh:
-            return json.load(fh)
-    except (OSError, ValueError):
-        return default
-
-
-def dump(path: str, data: Any) -> None:
-    with open(path, "w", encoding="utf-8") as fh:
-        json.dump(data, fh, ensure_ascii=False, indent=1)
-
-
 def option(argv: list[str], name: str) -> str | None:
     return argv[argv.index(name) + 1] if name in argv and argv.index(name) + 1 < len(argv) else None
 
@@ -135,12 +117,16 @@ FIRST_SIDE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:/@+-]{0,99}")
 
 
 def init(run: str, vocab_path: str, images: list[str], sequence: bool, first_side: str = "") -> None:
+    if any(os.path.exists(os.path.join(run, f)) for f in ("frames.json", "init_attempt.json")):
+        # Once only, a failed attempt included: the privacy confirmation refers to one set of images
+        # (round 3, L4; round 4, M4). Refused before anything else is checked (M1).
+        raise Stop("target_invalid", "this run is already initialised, or an init attempt failed in it; "
+                   "start a new run directory", record=False)
+    run_dir(run)
+    dump(os.path.join(run, "init_attempt.json"), {"at": now_iso()})
     if first_side and not FIRST_SIDE.fullmatch(first_side):
         # it goes into the result file's frontmatter, where a line break would add keys (round 3, L1)
         raise Stop("target_invalid", "--first-side must be a model identifier on one line (letters, digits, . _ : / @ + -)")
-    if os.path.exists(os.path.join(run, "frames.json")):
-        # once only: the privacy confirmation and the seal both refer to this one set of images (round 3, L4)
-        raise Stop("target_invalid", "this run is already initialised; start a new run directory", record=False)
     vocab = load(vocab_path)
     if vocab is None:
         raise Stop("target_invalid", f"vocabulary unreadable: {vocab_path}")
@@ -155,7 +141,6 @@ def init(run: str, vocab_path: str, images: list[str], sequence: bool, first_sid
     missing = [p for p in images if not os.path.isfile(p)]
     if missing:
         raise Stop("target_invalid", f"not a readable file: {missing}")
-    run_dir(run)
     os.makedirs(os.path.join(run, "frames"), exist_ok=True)
     frames = {}
     for n, src in enumerate(images, 1):
@@ -175,26 +160,10 @@ def init(run: str, vocab_path: str, images: list[str], sequence: bool, first_sid
     print(json.dumps({"ok": True, "frames": sorted(frames)}))
 
 
-def run_dir(run: str) -> None:
-    """Create the run directory, out of version control from its first file on: it holds copies of
-    the user's images, and error details that name local paths."""
-    os.makedirs(run, exist_ok=True)
-    with open(os.path.join(run, ".gitignore"), "w", encoding="utf-8") as fh:
-        fh.write("# copies of the images given to /codex-pro:codex-visual-xval\n*\n")
-
-
-def now_iso() -> str:
-    return datetime.datetime.now().astimezone().isoformat(timespec="seconds")
-
-
 def confirm_privacy(run: str) -> None:
     run_dir(run)
     dump(os.path.join(run, "privacy.json"), {"confirmed_at": now_iso()})
     print(json.dumps({"ok": True}))
-
-
-def neutral_names(run: str) -> list[str]:
-    return sorted(load(os.path.join(run, "frames.json"), {}))
 
 
 def frame_order(run: str) -> list[str]:
@@ -302,8 +271,6 @@ Reply with JSON only:
 """
 
 
-
-
 def extract_json(text: str) -> Any:
     fenced = re.findall(r"```(?:json)?\s*\n(.*?)\n```", text, re.DOTALL)
     for candidate in fenced + [text[text.find("{"): text.rfind("}") + 1] if "{" in text else ""]:
@@ -323,6 +290,10 @@ def profile(run: str) -> dict:
     if not ok:
         if isinstance(data, dict) and data.get("invalid"):   # Step 4.1 found a value it would not replace (L6)
             raise Stop("target_invalid", f"{data['invalid']}; nothing was sent")
+        if isinstance(data, dict):   # name the field (round 4, M10)
+            bad = [k for k in ("model", "effort") if not (isinstance(data.get(k), str) and data[k])]
+            bad += [] if isinstance(data.get("max_time"), int) and data.get("max_time", 0) > 0 else ["max_time"]
+            raise Stop("target_invalid", f"profile.json has no valid {', '.join(bad)} (Step 4.1 writes it); nothing was sent")
         raise Stop("target_invalid", "no resolved profile in the run directory (Step 4.1 writes profile.json); nothing was sent")
     return data
 
@@ -365,16 +336,6 @@ def call_codex(run: str, prompt: str, images: list[str], tag: str, argv: list[st
     return reply
 
 
-def inputs_digest(run: str) -> str:
-    """One digest over the vocabulary, frames.json and every frame copy (#23 verify round 2, S2)."""
-    import hashlib
-    h = hashlib.sha256()
-    # Only the frames the run lists: a file Finder adds (.DS_Store) is not an input (round 3, L2).
-    for name in ["vocab.json", "frames.json"] + [os.path.join("frames", n) for n in neutral_names(run)]:
-        h.update(name.encode() + b"\0" + sealing.digest(os.path.join(run, name)).encode() + b"\n")
-    return h.hexdigest()
-
-
 def map_source_names(run: str, answers: str) -> None:
     """Answers written before the run (--claude-answers) can only name the original files.
     Replace those names with the neutral ones; the answers as given stay in claude_source.json."""
@@ -405,12 +366,6 @@ def map_source_names(run: str, answers: str) -> None:
     dump(answers, data)
 
 
-def seal_intact(run: str, zoom: bool) -> bool:
-    record = load(os.path.join(run, "zoom_seal.json" if zoom else "seal.json"))
-    answers = os.path.join(run, "zoom_claude.json" if zoom else "claude.json")
-    return bool(record) and os.path.isfile(answers) and record.get("sha256") == sealing.digest(answers)
-
-
 def before_request(run: str, rnd: str) -> None:
     """Everything a request waits for. Each of these used to be a sentence in SKILL.md that the
     program did not check, so a run that skipped it looked identical to one that did not."""
@@ -426,6 +381,14 @@ def before_request(run: str, rnd: str) -> None:
                    "(run `confirm-privacy` after the user agrees); nothing was sent")
     if not seal_intact(run, zoom=(rnd == "zoom")):
         raise Stop("target_invalid", "Claude's answers are not sealed, or changed after sealing; nothing was sent")
+    if rnd == "1":   # what is sent is what was sealed, and it lies in the run (#23 verify round 4, U6)
+        frames_dir = os.path.realpath(os.path.join(run, "frames"))
+        if any(os.path.basename(n) != n or os.path.dirname(os.path.realpath(os.path.join(run, "frames", n))) != frames_dir
+               for n in neutral_names(run)):
+            raise Stop("target_invalid", "an image copy lies outside the run's frames directory; nothing was sent")
+        if load(os.path.join(run, "seal.json"), {}).get("inputs_sha256") != inputs_digest(run):
+            raise Stop("target_invalid", "the vocabulary or the image copies changed after Claude's answers were sealed; "
+                       "nothing was sent")
 
 
 def record_request(run: str, rnd: str, **fields: Any) -> None:
@@ -460,12 +423,12 @@ def ask(run: str, argv: list[str]) -> None:
             raise Stop("target_invalid", "no zoom plan: run `crops` first")
         # Codex gets exactly the text Claude's subagent answered from, and only crops inside the run.
         record = load(os.path.join(run, "zoom_record.json"), {})
-        if (record.get("plan_sha256") != sealing.digest(os.path.join(run, "zoom_plan.json"))
-                or record.get("prompt_sha256") != sealing.digest(os.path.join(run, "zoom_prompt.md"))):
-            raise Stop("target_invalid", "the zoom plan or question file changed after `crops` wrote it; nothing was sent")
         crops_dir = os.path.realpath(os.path.join(run, "crops"))
         if any(os.path.dirname(os.path.realpath(os.path.join(run, e["crop"]))) != crops_dir for e in plan.values()):
             raise Stop("target_invalid", "a zoom crop lies outside the run's crops directory; nothing was sent")
+        if not zoom_record_intact(run, plan):
+            raise Stop("target_invalid", "the zoom plan, question file or crops changed after `crops` wrote them; "
+                       "nothing was sent")
         questions = open(os.path.join(run, "zoom_prompt.md"), encoding="utf-8").read()
         reply = call_codex(run, questions, [os.path.join(run, plan[d]["crop"]) for d in sorted(plan, key=lambda d: plan[d]["crop"])],
                            "zoom", argv)
@@ -474,9 +437,7 @@ def ask(run: str, argv: list[str]) -> None:
         record_request(run, "zoom", answers_sha256=sealing.digest(os.path.join(run, "zoom_codex.json")))
         print(json.dumps({"ok": True, "round": "zoom", "crops_answered": len(result)}))
         return
-    raise Stop("target_invalid", f"unknown round: {rnd}")
-
-
+    raise Stop("target_invalid", f"unknown round: {rnd} (use --round 1 or --round zoom)", record=False)   # M1
 
 
 def zoom_answers(plan: dict, data: Any, error: str, who: str) -> dict:
@@ -493,8 +454,6 @@ def zoom_answers(plan: dict, data: Any, error: str, who: str) -> dict:
             raise Stop(error, f"{who}: no valid answer for {name}")
         result[did] = value
     return result
-
-
 
 
 # ── compare / crops ─────────────────────────────────────────────
@@ -529,19 +488,6 @@ def compare(run: str) -> None:
                       "n_disagreements": len(disputes), "seal_broken": check["seal_broken"],
                       "codex_record_broken": codex_broken, "disputes": disputes},
                      ensure_ascii=False))
-
-
-
-
-def checked_comparison(run: str) -> dict:
-    """The comparison as `compare` wrote it; an edited one would change what is cropped and settled (L3)."""
-    path = os.path.join(run, "comparison.json")
-    comparison = load(path)
-    if comparison is None:
-        raise Stop("target_invalid", "no comparison: run `compare` first")
-    if load(os.path.join(run, "comparison_record.json"), {}).get("sha256") != sealing.digest(path):
-        raise Stop("target_invalid", "comparison.json changed after `compare` wrote it")
-    return comparison
 
 
 def crops(run: str) -> None:
@@ -601,7 +547,10 @@ def crops(run: str) -> None:
             fh.write(zoom_prompt(plan, vocab))
         dump(os.path.join(run, "zoom_record.json"), {
             "plan_sha256": sealing.digest(os.path.join(run, "zoom_plan.json")),
-            "prompt_sha256": sealing.digest(os.path.join(run, "zoom_prompt.md"))})
+            "prompt_sha256": sealing.digest(os.path.join(run, "zoom_prompt.md")),
+            # what the plan was made from, and what both sides see (round 4, M6)
+            "comparison_sha256": sealing.digest(os.path.join(run, "comparison.json")),
+            "crops_sha256": {e["crop"]: sealing.digest(os.path.join(run, e["crop"])) for e in plan.values()}})
     print(json.dumps({"crops": shown, "question_file": os.path.join(run, "zoom_prompt.md") if plan else None,
                       "no_zoom": skipped}, ensure_ascii=False))
 
@@ -645,8 +594,8 @@ def sam(run: str) -> None:
         return record("failed", (done.stdout + done.stderr).strip()[-500:])
     track = load(os.path.join(run, "track.json"), {})
     record("ok", f"{len(track.get('frames', {}))} frames tracked, {len(track.get('invalid_frames', []))} collapsed")
-
-
+    state = load(os.path.join(run, "sam.json"), {})
+    dump(os.path.join(run, "sam.json"), {**state, "track_sha256": sealing.digest(os.path.join(run, "track.json"))})   # M6
 
 
 def zoom_evidence(run: str) -> tuple[dict, dict]:
@@ -659,8 +608,8 @@ def zoom_evidence(run: str) -> tuple[dict, dict]:
     recorded = load(os.path.join(run, "requests.json"), {}).get("zoom", {}).get("answers_sha256")
     codex_ok = bool(recorded) and sealing.digest(os.path.join(run, "zoom_codex.json")) == recorded
     claude_ok = seal_intact(run, zoom=True)
-    # the plan maps each answer to its frame; an edited plan would move the evidence (round 3, L3)
-    plan_ok = load(os.path.join(run, "zoom_record.json"), {}).get("plan_sha256") == sealing.digest(os.path.join(run, "zoom_plan.json"))
+    # the plan maps each answer to its frame; an edited plan, crop or comparison would move the evidence (L3, M6)
+    plan_ok = zoom_record_intact(run, plan)
     status = {"zoom_run": True, "zoom_seal_broken": not claude_ok, "zoom_codex_record_broken": not codex_ok,
               "zoom_plan_broken": not plan_ok}
     if not (claude_ok and codex_ok and plan_ok):
@@ -692,8 +641,12 @@ def adjudicate(run: str) -> None:
     zoom, zoom_status = zoom_evidence(run)
     sam_state = load(os.path.join(run, "sam.json"), {})
     track = load(os.path.join(run, "track.json")) if sam_state.get("sam_status") == "ok" else None
+    sam_broken = track is not None and sam_state.get("track_sha256") != sealing.digest(os.path.join(run, "track.json"))
+    if sam_broken:   # SAM's output as the sam step recorded it, like the zoom answers (round 4, M6)
+        track = None
     result = adjudication.adjudicate(vocab, comparison, zoom, track)
     result.update(zoom_status)
+    result["sam_record_broken"] = sam_broken
     dump(os.path.join(run, "adjudication.json"), result)
     print(json.dumps({"counts": result["counts"]}))
 
@@ -745,10 +698,12 @@ def main(argv: list[str]) -> None:
 
 def stop_run(run: str, command: str, error: str, detail: str, record_error: bool = True) -> None:
     record = {"error": error, "detail": detail, "step": command, "at": now_iso()}
-    # A step that fails before the run directory exists (init with an unreadable image) still leaves
-    # its error, or the result file would show a failed run as one without an error (round 3).
-    run_dir(run)
-    if os.path.isdir(run):
+    # A failed init still leaves its error, or the result file would show a failed run as one without
+    # an error (round 3). No other step creates a directory, and nothing is written into a directory
+    # that is not a run, such as a mistyped --run or a project root (round 4, U5).
+    if command == "init" and not os.path.exists(run):
+        run_dir(run)
+    if is_run_dir(run):
         if record_error:
             dump(os.path.join(run, "error.json"), record)
         else:

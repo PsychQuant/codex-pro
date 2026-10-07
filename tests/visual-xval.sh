@@ -948,6 +948,27 @@ case "$(cat "$WORK/runpath_result.md" 2>/dev/null)" in
   *) pass "the result file's error detail carries no local path" ;;
 esac
 
+# Round 4: the run directory never takes over someone else's files (U5); a failed init also uses up
+# the run (M4); a refusal comes before any other check (M1).
+rm -rf "$WORK/userproj"; mkdir -p "$WORK/userproj"; printf 'node_modules/\n.env\n' > "$WORK/userproj/.gitignore"
+xval ask --run "$WORK/userproj" --round 1
+assert_eq "node_modules/
+.env" "$(cat "$WORK/userproj/.gitignore")" "a failing step does not overwrite a project's own .gitignore (U5)"
+assert_no_file "$WORK/userproj/error.json" "nor does it write its error into a directory that is not a run"
+xval confirm-privacy --run "$WORK/userproj"
+assert_contains "$RUN_OUT" "not a run directory" "a directory with other files is refused as a run directory"
+assert_no_file "$WORK/userproj/privacy.json" "and gets no privacy record"
+xval ask --run "$WORK/typo-run-dir" --round 1
+assert_no_file "$WORK/typo-run-dir" "a mistyped --run is not created by a failing step"
+rm -rf "$WORK/runm4"
+xval init --run "$WORK/runm4" --vocab "$WORK/vocab.json" "$WORK/missing.png"
+xval init --run "$WORK/runm4" --vocab "$WORK/vocab.json" "$WORK"/imgs/*.png
+assert_contains "$RUN_OUT" "already" "after a failed init the run is used up, so another set of images needs a new run (M4)"
+assert_no_file "$WORK/runm4/frames.json" "the second set of images is not copied"
+xval init --run "$WORK/runr3m" --vocab "$WORK/vocab.json" --first-side "$(printf 'a\nb')" "$WORK/fill.jpg"
+assert_contains "$RUN_OUT" "already" "an initialised run refuses init before checking its arguments (M1)"
+assert_no_file "$WORK/runr3m/error.json" "so the refusal is not the run's error"
+
 rm -rf "$WORK/run13"; cp "$WORK/imgs/shot_2026-09-11_1001.png" "$WORK/thirteenth.png"
 xval init --run "$WORK/run13" --vocab "$WORK/vocab.json" "$WORK"/imgs/*.png "$WORK/thirteenth.png"
 assert_contains "$RUN_OUT" '"error": "target_invalid"' "a run with 13 images is refused"
@@ -1058,6 +1079,17 @@ xval ask --run "$WORK/run4m" --round 1
 assert_contains "$RUN_OUT" "max_time" "ask names the invalid max_time"
 assert_contains "$(cat "$WORK/run4m/error.json" 2>/dev/null)" "max_time" "the invalid max_time is the run's error, so the result file shows it (L6)"
 assert_no_file "$WORK/mock.log" "nothing is sent with an invalid max_time"
+new_run "$WORK/run4n"; printf '{"model": "", "effort": "high", "max_time": 30, "profile_source": "default"}\n' > "$WORK/run4n/profile.json"
+xval ask --run "$WORK/run4n" --round 1
+assert_contains "$RUN_OUT" "model" "a profile with an empty model names that field (M10)"
+new_run "$WORK/run4u"; cp "$WORK/imgs/shot_2026-09-11_1002.png" "$WORK/run4u/frames/f01.png"
+xval ask --run "$WORK/run4u" --round 1
+assert_contains "$RUN_OUT" '"error": "target_invalid"' "an image copy replaced after sealing is not sent (U6)"
+assert_no_file "$WORK/mock.log" "nothing is sent when the sealed inputs changed"
+new_run "$WORK/run4w"
+xval ask --run "$WORK/run4w" --round 2
+xval ask --run "$WORK/run4w"
+assert_no_file "$WORK/run4w/error.json" "a mistyped or missing --round is refused without becoming the run's error (M1)"
 rm -rf "$WORK/run0p" "$WORK/p41" "$WORK/p41b" "$WORK/mock.log"
 
 # A runtime path that is missing is runtime_unavailable, not a crash.
@@ -1404,6 +1436,35 @@ json.dump(v, open(sys.argv[1], "w"))
 PY
 xval sam --run "$WORK/run5s"
 assert_contains "$RUN_OUT" '"sam_status": "not_applicable"' "SAM that could not be used does not ask for the download first (L7)"
+
+# Round 4: the crops, the comparison the zoom plan was made from, and SAM's output are bound (M6).
+rm -rf "$WORK/run5q"; cp -R "$WORK/run5" "$WORK/run5q"; cp "$WORK/run5q/crops/z01.png" "$WORK/z01_saved.png"
+sips -r 90 "$WORK/run5q/crops/z01.png" --out "$WORK/run5q/crops/z01.png" >/dev/null 2>&1
+xval adjudicate --run "$WORK/run5q"
+assert_eq "True" "$(json_get "$(cat "$WORK/run5q/adjudication.json" 2>/dev/null)" 'd.get("zoom_plan_broken")')" \
+  "a crop replaced after the zoom round is recorded, so its answers are not used"
+rm -rf "$WORK/run5o"; cp -R "$WORK/run5" "$WORK/run5o"
+python3 - "$WORK/run5o" <<'PY'
+import hashlib, json, sys
+run = sys.argv[1]
+c = json.load(open(f"{run}/comparison.json")); c["disagreements"][0]["relation"] = "renamed"
+json.dump(c, open(f"{run}/comparison.json", "w"))
+digest = hashlib.sha256(open(f"{run}/comparison.json", "rb").read()).hexdigest()
+json.dump({"sha256": digest}, open(f"{run}/comparison_record.json", "w"))
+PY
+xval adjudicate --run "$WORK/run5o"
+assert_eq "True" "$(json_get "$(cat "$WORK/run5o/adjudication.json" 2>/dev/null)" 'd.get("zoom_plan_broken")')" \
+  "zoom answers made against another comparison are not used"
+rm -rf "$WORK/run5t"; cp -R "$WORK/run5" "$WORK/run5t"
+python3 - "$WORK/run5t" <<'PY'
+import json, sys
+run = sys.argv[1]
+json.dump({"sam_status": "ok", "detail": "hand-written"}, open(f"{run}/sam.json", "w"))
+json.dump({"sam_status": "ok", "class": "INST", "frames": {}}, open(f"{run}/track.json", "w"))
+PY
+xval adjudicate --run "$WORK/run5t"
+assert_eq "True" "$(json_get "$(cat "$WORK/run5t/adjudication.json" 2>/dev/null)" 'd.get("sam_record_broken")')" \
+  "SAM output that the sam step did not record is not evidence"
 
 # Zoom answers that change after they were sealed or recorded are not evidence (#23 verify B2).
 cp -R "$WORK/run5" "$WORK/run5b"
