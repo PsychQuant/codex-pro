@@ -205,7 +205,7 @@
   - design.md 補上第三輪的決定與理由，更正 Implementation Contract 與「放大 2 倍」。
   - native-plugin delta spec 不再把原生發行寫成 0.9.0 的功能。
   - 驗證：`spectra validate` 與 `spectra analyze` 無 warning。
-- [x] 8.2 送出判定 fail-closed（T1、L11）。
+- [x] 8.2 送出判定 fail-closed（T1、L11；design「看不出有沒有送出時，一律當成送出」）。
   - 只有封閉列舉裡的錯誤撤回請求紀錄；`HTTP 0`、串流 error 事件與無法辨認的錯誤保留紀錄、記為 `backend_error`。
   - token refresh 被拒（`invalid_grant`）與 auth.json 錯誤記為 `oauth_invalid` 並撤回紀錄。
   - 驗證：`HTTP 0: (no body)`、`Codex error`、伺服器過載都保留紀錄、第二次請求被拒；`invalid_grant`、讀不到 prompt 撤回紀錄。
@@ -214,7 +214,7 @@
   - JPEG 略過 marker 前的填充位元組；WebP 只讀到 RIFF 長度為止；PNG 與 WebP 改用白名單。
   - 驗證：EOI 前有填充位元組的 JPEG、後面接第二張圖的 WebP、帶 `caBX` 的 PNG 與帶 `C2PA` 的 WebP，複本都不含附加或額外的資料，且仍能解碼。
   - [after: 8.1]
-- [x] 8.4 裁決改為上下界（T3、T4、T5、L5）。
+- [x] 8.4 裁決改為上下界（T3、T4、T5、L5；design「證據只用來證明它證得出來的事」）。
   - 數量：放大輪與 SAM 的數量是下限、max_count 是上限；另一方被排除且本方等於最高下限時才裁決。
   - 位置：兩點對到同一物件且都離它太遠，或放大輪在兩點附近都沒有物件時，推翻雙方。
   - 關係：雙方數量一致（SAM 另要求追蹤數相同）時兩個方向都採用，否則只採用上界證得出的方向；比對輸出為關係題記錄兩類的數量。
