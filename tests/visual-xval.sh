@@ -51,6 +51,10 @@ checks = {
         "backend_error")),
     "python_310": "Python 3.10" in body,
     "image_text_is_data": "不是指令" in body,
+    "first_side": "--first-side" in body,
+    "zoom_seal_at_once": "立刻封存" in body and "不要讀" in body and "不要重跑" in body,
+    "no_zoom_branch": "沒有任何放大題" in body,
+    "per_run_blind": "另開一個 run" in body,
     "all_failures_anchor": "\n\n**所有 failure 仍寫 result file**" in body,
     "no_retry": "所有 failure 都不 retry" in body,
     "one_error_enum": len(re.findall(r"error: <[^>\n]+>", body)) == 1,
@@ -634,6 +638,10 @@ if [ "$(uname -s)" = "Darwin" ] && command -v sips >/dev/null 2>&1; then   # ─
 # The mock records every invocation. MOCK_HELP_IMAGE=0 drops --image from --help (an old
 # runtime); MOCK_REPLY is copied to --output; MOCK_STDERR/MOCK_STATUS simulate failures.
 assert_file "$SCRIPTS/xval.py" "xval.py exists"
+case "$(sed -n '1,/^"""/p' "$SCRIPTS/xval.py" | tail -n +2)" in
+  *--model*|*--profile-source*) fail "xval.py usage text lists no flags it ignores (S8)" ;;
+  *) pass "xval.py usage text lists no flags it ignores (S8)" ;;
+esac
 cat > "$WORK/stubbin/codex-call" <<'STUB'
 #!/usr/bin/env bash
 if [ "${1:-}" = "--help" ]; then
@@ -687,7 +695,7 @@ profile_in() {   # profile_in <run> — the profile Step 4.1 records in the run 
 }
 new_run() {   # new_run <dir> — init a run on the twelve images and seal Claude's marked claims
   rm -rf "$1" "$WORK/mock.log" "$WORK/prompts.txt"
-  xval init --run "$1" --vocab "$WORK/vocab.json" "$WORK"/imgs/*.png
+  xval init --run "$1" --vocab "$WORK/vocab.json" --first-side claude-test "$WORK"/imgs/*.png
   xval confirm-privacy --run "$1"
   profile_in "$1"
   cp "$WORK/claude_marked.json" "$1/claude.json"
@@ -1235,6 +1243,11 @@ case "$(basename "$result_file")" in
   *) fail "the file name uses the producers' timestamp format (got $(basename "$result_file"))" ;;
 esac
 assert_eq "visual-xval" "$(fm "$result_file" skill)" "frontmatter: skill"
+assert_eq "claude-test" "$(fm "$result_file" first_side_model)" "frontmatter: first_side_model (#23 verify round 2, F1)"
+case "$(cat "$result_file")" in
+  *"one model family"*) fail "a Claude first side gets no same-family warning" ;;
+  *) pass "a Claude first side gets no same-family warning" ;;
+esac
 assert_eq "gpt-test high default" "$(fm "$result_file" model) $(fm "$result_file" effort) $(fm "$result_file" profile_source)" \
   "frontmatter: model, effort, profile_source"
 assert_eq "12 12 0.917" "$(fm "$result_file" n_images) $(fm "$result_file" n_claims) $(fm "$result_file" agreement_rate)" \
@@ -1268,6 +1281,13 @@ case "$(cat "$WORK/runns_result.md" 2>/dev/null)" in
   *"predates the request"*) fail "a run that was never sealed does not claim the seal predates the request" ;;
   *) pass "a run that was never sealed does not claim the seal predates the request" ;;
 esac
+
+# A first side that is not Claude (the native Codex bundle) is named in the limitations (F1).
+rm -rf "$WORK/runfs"
+xval init --run "$WORK/runfs" --vocab "$WORK/vocab.json" --first-side gpt-5.6-sol "$WORK"/imgs/*.png
+( cd "$WORK/project" && python3 "$SCRIPTS/xval.py" result --run "$WORK/runfs" --out "$WORK/runfs_result.md" >/dev/null 2>&1 )
+assert_contains "$(cat "$WORK/runfs_result.md" 2>/dev/null)" "one model family" \
+  "a first side that is not a Claude model is reported as possibly the same model family"
 
 # Every failure class still writes the file; nothing is retried.
 result_in "$WORK/run4b"

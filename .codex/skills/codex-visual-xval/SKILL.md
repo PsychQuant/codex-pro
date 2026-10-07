@@ -89,8 +89,11 @@ python3 "$SKILL_DIR/scripts/xval.py" confirm-privacy --run "$RUN"
 ## Step 3: 建立 run、Claude 作答、封存
 
 ```bash
-python3 "$SKILL_DIR/scripts/xval.py" init --run "$RUN" --vocab <vocab.json> [--sequence] <image>...
+python3 "$SKILL_DIR/scripts/xval.py" init --run "$RUN" --vocab <vocab.json> --first-side <你的模型 ID> [--sequence] <image>...
 ```
+
+`--first-side` 寫你自己的模型 ID（例如 `claude-opus-5-5`；在原生 Codex 版裡執行時就是 Codex 宿主模型的名稱）。
+結果檔會記錄它；第一方不是 Claude 時，兩方可能同屬一個模型家族，結果檔的 Limitations 會註明。
 
 `init` 寫進 run 目錄的是**處理過的複本**：依 EXIF 方向轉正，再去除 EXIF／XMP 等內嵌資料（拍攝時間、GPS），
 兩個模型看到的都是這份複本。run 目錄會寫入 `.gitignore`，影格複本不會被 `git add -A` 帶進版控。
@@ -301,14 +304,21 @@ Answer every question from that crop alone. Write your reply, JSON only and in t
 gives, to <RUN>/zoom_claude.json. Do not read any other file in <RUN>.
 ```
 
-subagent 寫完後封存，再把同一份題目檔送給 Codex：
+`crops` 的輸出裡 `crops` 是空清單時（沒有任何放大題），跳過本步，直接到 Step 9。
+
+subagent 結束後**立刻封存**，再把同一份題目檔送給 Codex。封存之前**不要讀** `zoom_claude.json`、**不要重跑**
+subagent、也不要替它修格式：你知道原答，看到不同的答案而重跑或修改，就是讓 Claude 這一側重抽到合意為止。
+`seal --zoom` 因格式不合而失敗時，放大輪就不採用，照樣往下走：
 
 ```bash
 python3 "$SKILL_DIR/scripts/xval.py" seal --run "$RUN" --zoom
 python3 "$SKILL_DIR/scripts/xval.py" ask --run "$RUN" --round zoom
 ```
 
-`seal --zoom` 用與 Codex 回覆相同的規則檢查答案（不合格就 `target_invalid`）。裁決時會重算這份封存，
+`seal --zoom` 用與 Codex 回覆相同的規則檢查答案（不合格就 `target_invalid`）。
+
+每一輪在一個 run 裡只送一次。對同一批圖片另開一個 run 重來，程式無法把兩次連起來，而且那時已經看過
+這一次的結果，不再是盲答；結果檔的 Limitations 也寫了這一點。裁決時會重算這份封存，
 答案被改過就不採用放大輪證據。
 
 **沒有 subagent 可用時，不要自己作答**：跳過 `seal --zoom` 與 `ask --round zoom`，分歧只靠 SAM 與

@@ -187,7 +187,7 @@
   - 以暫時的 HOME 讓 `~/.codex-pro/sam-env` 指向既有環境，從 `xval.py sam` 跑完出貨路徑。
   - 驗證：stub 測試確認 allow_patterns；出貨路徑 smoke 的紀錄寫進 e2e-checklist §E。
   - [after: 7.5]
-- [ ] 7.7 第一方模型與文件（F1、F2、S5、S6、S8），含 Cross-harness version consistency 的 0.9.0 與 manifest 描述。
+- [x] 7.7 第一方模型與文件（F1、F2、S5、S6、S8），含 Cross-harness version consistency 的 0.9.0 與 manifest 描述。
   - init 記錄第一方的實際模型（`--first-side`），結果檔 frontmatter 寫 `first_side_model`；第一方不是 Claude 時，Limitations 註明兩方可能同屬一個模型家族。
   - SKILL：subagent 結束後立刻封存、不讀內容、不重跑；沒有放大題時跳過放大輪；Limitations 補上跨 run 不盲答。
   - design.md 的步驟順序與 run 路徑、xval.py 用法說明、spec 的「重新編碼」字樣、0.8.0 殘留一併更正。

@@ -18,3 +18,4 @@ skills/codex-visual-xval/scripts/sam_env.sh
 skills/codex-visual-xval/scripts/sam_track.py
 skills/codex-visual-xval/scripts/seal.py
 skills/codex-visual-xval/scripts/xval.py
+skills/codex-visual-xval/scripts/zoom_round.py

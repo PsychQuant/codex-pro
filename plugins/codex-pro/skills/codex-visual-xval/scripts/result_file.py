@@ -94,6 +94,7 @@ def result(run: str, argv: list[str]) -> None:
         "model": settings.get("model", ""),
         "effort": settings.get("effort", ""),
         "profile_source": settings.get("profile_source", ""),
+        "first_side_model": meta.get("first_side_model", ""),
         "timestamp": now.isoformat(timespec="seconds"),
         "n_images": n_images,
         "n_claims": n_claims,
@@ -167,7 +168,15 @@ def result(run: str, argv: list[str]) -> None:
               "- Agreement between the two models does not establish that either is correct; only a human reference can.",
               "- Zoom-round answers on Claude's side come from a subagent that saw only the crops and the question "
               "file; whether it was started fresh, with nothing else in its prompt, depends on the skill being followed.",
-              f"- A SAM measurement within {adjudicated.get('sam_margin_pct', 1.0)}% of a threshold is not used as evidence."]
+              f"- A SAM measurement within {adjudicated.get('sam_margin_pct', 1.0)}% of a threshold is not used as evidence.",
+              "- Each round is asked once per run. A new run on the same images is a fresh attempt the program cannot "
+              "link to this one, and it is no longer blind to what this run showed."]
+    first = fm["first_side_model"]
+    if not first:
+        lines.append("- The model that gave the first side's answers was not recorded.")
+    elif not first.lower().startswith("claude"):
+        lines.append(f"- The first side's answers came from `{first}`, not a Claude model. Both sides may then come from "
+                     "one model family, whose errors are not independent, so agreement says less than it would across families.")
     os.makedirs(".codex-pro", exist_ok=True)
     out = option(argv, "--out") or os.path.join(".codex-pro", f"visual-xval-{now.astimezone(datetime.timezone.utc).strftime('%Y%m%dT%H%M%SZ')}.md")
     with open(out, "w", encoding="utf-8") as fh:
