@@ -279,6 +279,16 @@ profile `gpt-6.1-sol`／`medium`（global）。
   f03 的真值其實是 Codex 對；「很遠」這一側在沒有 SAM 時證不出來，是使用者選擇的取捨。
 - 影格複本：三張都由 sips 重新編碼（WebP → PNG），不含 EXIF 或文字區塊；結果檔沒有 error。
 
+第五次紀錄：2026-10-07，codex-pro `1b9ac98`（第五輪 verify 的修正之後），同一個 runtime 與 profile。
+f01 是 3000×1875 的大圖，驗證原解析度複本；送出前的登入檢查照常通過（V2）。
+
+- init：f01 的第一輪複本為 2048×1280，另有原解析度的 `hires/f01.png`；f02 為 640×400，沒有原解析度複本。
+- 植入兩個錯誤：f01 把同一個紅點標兩次；f02 兩點相距約 6% 卻答「不近」。第一輪 9.7 秒，分歧三筆，全是植入的錯誤。
+- f01 的裁切框為 2400×1031 px，從 3000 px 寬的原解析度複本裁出，再縮到長邊 2048 以內（0.85x）；放大輪兩邊都數到 2，
+  上限 2 → `resolved_codex`（T5，V7）。
+- f02 關係：放大輪兩邊答 true → `resolved_codex`；f01 關係：放大輪答 false，不採用 → `unverifiable`。
+- 第一輪複本、原解析度複本與三張裁切圖都不含 EXIF 或文字區塊；結果檔沒有 error。
+
 ## Post-test cleanup checklist
 
 - [ ] B 段使用的 disposable account／VM 沒有污染日常 Codex home

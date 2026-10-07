@@ -283,6 +283,6 @@
 - [x] 10.6 文件：SKILL Step 5 的可否重送與 init、送出判定、exit 5；media.py、vocab-format、design 的殘留；結果檔不帶內部編號（V9、N6、N9）。
   - 驗證：`bash tests/run.sh` 只剩 #24。
   - [after: 10.5]
-- [ ] 10.7 真實後端端到端（第五次）。
+- [x] 10.7 真實後端端到端（第五次）。
   - 驗證：紀錄寫進 e2e-checklist §F。
   - [after: 10.6]
