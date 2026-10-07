@@ -530,9 +530,10 @@ assert_eq "0" "$RUN_STATUS" "adjudicate exits 0"
 assert_eq "resolved_claude" "$(verdict d1)" "spec example: SAM measures 3.5% (threshold 5, margin 1) -> resolved_claude"
 assert_contains "$(json_get "$RUN_OUT" "[a['evidence'] for a in d['adjudications'] if a['id'] == 'd1'][0]")" "3.5" \
   "the SAM measurement is recorded as evidence"
-assert_eq "resolved_codex" "$(verdict d2)" "a count above the vocabulary's maximum loses (3 instruments vs max 2)"
-assert_contains "$(json_get "$RUN_OUT" "[a['evidence'][0]['detail'] for a in d['adjudications'] if a['id'] == 'd2'][0]")" \
-  "does not confirm" "a violated maximum is recorded as excluding one side, not confirming the other"
+assert_eq "unverifiable" "$(verdict d2)" \
+  "a count above the maximum alone excludes that side but confirms nothing (3 vs 2, max 2; #23 verify round 2, R4)"
+assert_contains "$(json_get "$RUN_OUT" "[a['note'] for a in d['adjudications'] if a['id'] == 'd2'][0]")" \
+  "excluded: Claude" "the result names the excluded side"
 
 run_py adjudicate.py "$WORK/vocab_limits.json" "$WORK/disputes.json" --sam "$WORK/track_518.json"
 assert_eq "unverifiable" "$(verdict d1)" "a measurement within the SAM margin (5.18 vs 5) is not evidence"
@@ -589,9 +590,37 @@ assert_eq "unverifiable" "$(verdict d5)" "SAM does not settle a relation that is
 run_py adjudicate.py "$WORK/vocab_limits.json" "$WORK/disputes_doubled.json" --sam "$WORK/track_doubled.json"
 assert_eq "resolved_codex" "$(verdict d10)" "SAM matches tips to objects: a doubled mark is not confirmed by the other instrument (#23 verify B6)"
 run_py adjudicate.py "$WORK/vocab_limits.json" "$WORK/disputes.json" --sam "$WORK/track_8_one_object.json"
-# d1: 8.0% is beyond 5 ± 1, so "not together" -> Codex; d2: 3 > max 2 -> Codex; d3: unverifiable
-assert_eq "0 2 1" "$(json_get "$RUN_OUT" '"%d %d %d" % (d["counts"]["resolved_claude"], d["counts"]["resolved_codex"], d["counts"]["unverifiable"])')" \
+# d1: 8.0% is beyond 5 ± 1, so "not together" -> Codex; d2: exclusion alone -> unverifiable; d3: unverifiable
+assert_eq "0 1 2" "$(json_get "$RUN_OUT" '"%d %d %d" % (d["counts"]["resolved_claude"], d["counts"]["resolved_codex"], d["counts"]["unverifiable"])')" \
   "the summary counts every verdict once"
+
+# Round 2: what a crop or a tracker sees only proves objects exist (R1); refuting both decides (R3);
+# the SAM margin applies to both sides (S11).
+printf '{"d3": {"claude": 1, "codex": 1}}\n' > "$WORK/zoom_lower.json"
+run_py adjudicate.py "$WORK/vocab_limits.json" "$WORK/disputes.json" --zoom "$WORK/zoom_lower.json"
+assert_eq "unverifiable" "$(verdict d3)" "a zoom count equal to the lower answer settles nothing (an object may lie outside the crop)"
+printf '{"d3": {"claude": 2, "codex": 2}}\n' > "$WORK/zoom_higher.json"
+run_py adjudicate.py "$WORK/vocab_limits.json" "$WORK/disputes.json" --zoom "$WORK/zoom_higher.json"
+assert_eq "resolved_claude" "$(verdict d3)" "a zoom count equal to the higher answer confirms that side"
+printf '{"d2": {"claude": 1, "codex": 1}}\n' > "$WORK/zoom_refute_d2.json"
+run_py adjudicate.py "$WORK/vocab_limits.json" "$WORK/disputes.json" --zoom "$WORK/zoom_refute_d2.json"
+assert_eq "unverifiable" "$(verdict d2)" "a zoom round that refutes both is not overridden by the maximum count"
+printf '{"d3": {"claude": 3, "codex": 3}}\n' > "$WORK/zoom_refute_d3.json"
+run_py adjudicate.py "$WORK/vocab_limits.json" "$WORK/disputes.json" --zoom "$WORK/zoom_refute_d3.json" --sam "$WORK/track_35.json"
+assert_eq "unverifiable" "$(verdict d3)" "a zoom round that refutes both is not overridden by SAM"
+python3 - "$WORK" <<'PY'
+import json, sys
+w = sys.argv[1]
+# tip 4.5 from Claude (inside 5, but within the margin of 1) and 6.5 from Codex (beyond 5 + 1)
+item = {"id": "d11", "frame": "f04.png", "kind": "position", "class": "INST", "claude": [50, 50], "codex": [61, 50],
+        "claude_points": [[50, 50]], "codex_points": [[61, 50]], "distance_pct": 11.0, "threshold_pct": 5, "aspect": 1.0}
+json.dump({"disagreements": [item]}, open(f"{w}/disputes_margin.json", "w"))
+tip = {"area": 900, "centroid_pct": [54.5, 50], "tip_pct": [54.5, 50], "entry_pct": [54.5, 99], "present": True}
+json.dump({"sam_status": "ok", "class": "INST", "frames": {"f04.png": {"invalid": False, "max_iou": 0.0, "distance_pct": None,
+           "objects": {"1": tip}}}}, open(f"{w}/track_margin.json", "w"))
+PY
+run_py adjudicate.py "$WORK/vocab_limits.json" "$WORK/disputes_margin.json" --sam "$WORK/track_margin.json"
+assert_eq "unverifiable" "$(verdict d11)" "a SAM tip within the margin of the threshold from the winning side is not evidence (4.5 vs 5, margin 1; S11)"
 
 # The orchestrator cases make and crop images with sips, like the producer itself, which is
 # macOS-only. On other platforms they are skipped with the reason; the runtime layer already

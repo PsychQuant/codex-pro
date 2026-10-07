@@ -67,9 +67,11 @@ def instance_verdict(evidence: list, item: dict, limit: float, margin: float) ->
         return None
     point = [found[mine]["x_pct"], found[mine]["y_pct"]]
     d_claude, d_codex = gap(point, item["claude"]), gap(point, item["codex"])
-    if d_claude <= limit and d_codex > limit + margin:
+    # The margin covers the measurement error on both sides: the winner must be clearly inside,
+    # the loser clearly outside (#23 verify round 2, S11).
+    if d_claude <= limit - margin and d_codex > limit + margin:
         return "resolved_claude", point
-    if d_codex <= limit and d_claude > limit + margin:
+    if d_codex <= limit - margin and d_claude > limit + margin:
         return "resolved_codex", point
     return None
 
@@ -92,6 +94,10 @@ def from_zoom(item: dict, zoom: dict, vocab: dict | None = None) -> dict | None:
                             "detail": f"both models placed that object at {[round(v, 2) for v in settled[1]]} on the crop"}
     if answer.get("claude") != answer.get("codex"):
         return None
+    if item["kind"] == "count" and answer["claude"] != max(item["claude"], item["codex"]):
+        # Objects outside the crop are not seen, so a count no higher than the lower answer proves
+        # nothing about the frame; only the higher answer can be confirmed (#23 verify round 2, R1).
+        return None
     verdict = side_matching(answer["claude"], item)
     return verdict and {"source": "zoom", "verdict": verdict, "detail": f"both models answered {answer['claude']!r} on the crop"}
 
@@ -103,14 +109,14 @@ def from_constraint(item: dict, vocab: dict) -> dict | None:
     if limit is None:
         return None
     over = {side: item[side] > limit for side in ("claude", "codex")}
-    if over["claude"] and not over["codex"]:
-        return {"source": "constraint", "verdict": "resolved_codex",
-                "detail": f"Claude's count {item['claude']} exceeds max {limit}: this excludes Claude's count; "
-                          f"it does not confirm Codex's {item['codex']}"}
-    if over["codex"] and not over["claude"]:
-        return {"source": "constraint", "verdict": "resolved_claude",
-                "detail": f"Codex's count {item['codex']} exceeds max {limit}: this excludes Codex's count; "
-                          f"it does not confirm Claude's {item['claude']}"}
+    for side, other in (("claude", "codex"), ("codex", "claude")):
+        if over[side] and not over[other]:
+            # Excluding one side does not make the other right: with max 2, counts 3 and 1 leave 2
+            # possible. So this evidence never decides alone (#23 verify round 2, R4).
+            name = "Claude" if side == "claude" else "Codex"
+            return {"source": "constraint", "excludes": side,
+                    "detail": f"{name}'s count {item[side]} exceeds max {limit}: this excludes {name}'s count; "
+                              f"it does not confirm {item[other]}"}
     return None
 
 
@@ -168,10 +174,19 @@ def adjudicate(vocab: dict, comparison: dict, zoom: dict, sam: dict | None) -> d
     for item in comparison.get("disagreements", []):
         evidence = [e for e in (from_zoom(item, zoom, vocab), from_constraint(item, vocab),
                                 from_sam(item, sam, vocab, margin) if sam else None) if e]
-        verdicts = {e["verdict"] for e in evidence}
-        verdict = verdicts.pop() if len(verdicts) == 1 else "unverifiable"
-        note = "conflicting evidence" if len({e["verdict"] for e in evidence}) > 1 else (
-            refuted_both(item, zoom) or ("no third evidence" if not evidence else ""))
+        confirming = {e["verdict"] for e in evidence if "verdict" in e}
+        excluded = {e["excludes"] for e in evidence if "excludes" in e}
+        refuted = refuted_both(item, zoom)
+        if refuted:   # the zoom round refuted both answers: nothing else may award either (R3)
+            verdict, note = "unverifiable", refuted
+        elif len(confirming) > 1 or any(f"resolved_{side}" in confirming for side in excluded):
+            verdict, note = "unverifiable", "conflicting evidence"
+        elif len(confirming) == 1:
+            verdict, note = confirming.pop(), ""
+        else:
+            verdict = "unverifiable"
+            note = ("excluded: " + ", ".join("Claude" if s == "claude" else "Codex" for s in sorted(excluded))
+                    + "; nothing confirms the other count") if excluded else "no third evidence"
         results.append({"id": item["id"], "frame": item["frame"], "kind": item["kind"],
                         "verdict": verdict, "evidence": evidence, "note": note})
     counts = {v: sum(1 for r in results if r["verdict"] == v) for v in ("resolved_claude", "resolved_codex", "unverifiable")}
