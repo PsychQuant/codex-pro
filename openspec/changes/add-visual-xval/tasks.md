@@ -316,7 +316,7 @@
   - [after: 12.2]
 - [x] 12.4 結果檔與紀錄：型別不對照樣寫結果檔、result 失敗不取代 run 的錯誤、雜湊不讀 run 以外的檔、重算不符寫進 frontmatter、核對比對結果與裁決、缺參考雜湊不放行；送出邊界與登入檢查（Y3、Y4、Y6、Y7）。
   - [after: 12.3]
-- [ ] 12.5 文件：寫入目錄清單、sam 的情境、SKILL Step 4.2 的放大輪檢查、design 的措辭、CHANGELOG 與 #89 的「body」（Y5、Y10）。
+- [x] 12.5 文件：寫入目錄清單、sam 的情境、SKILL Step 4.2 的放大輪檢查、design 的措辭、CHANGELOG 與 #89 的「body」（Y5、Y10）。
   - 驗證：`bash tests/run.sh` 只剩 #24。
   - [after: 12.4]
 - [ ] 12.6 真實後端端到端（第七次）。

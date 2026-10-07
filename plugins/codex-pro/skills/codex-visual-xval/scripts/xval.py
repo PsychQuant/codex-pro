@@ -469,7 +469,7 @@ def ask(run: str, argv: list[str]) -> None:
     if rnd == "zoom":
         plan = load(os.path.join(run, "zoom_plan.json"), {})
         if not plan:
-            raise Stop("target_invalid", "no zoom plan: run `crops` first")
+            raise Stop("target_invalid", "no zoom plan: run `crops` first; nothing was sent")
         # Codex gets exactly the text Claude's subagent answered from, and only crops inside the run.
         record = load(os.path.join(run, "zoom_record.json"), {})
         crops_dir = os.path.realpath(os.path.join(run, "crops"))

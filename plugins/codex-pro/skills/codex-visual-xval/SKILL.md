@@ -48,8 +48,8 @@ allowed-tools:
    沒說明原因（`HTTP 0`），或它自己的本機問題（讀不到 prompt、鎖檔權限）。
    **`codex-call` 只要失敗，一律當成已送出**：錯誤訊息的字樣證明不了什麼都沒送出（後端的錯誤事件原文照印，
    收到回應之前的失敗都只印 `HTTP 0`），所以這一輪已經用掉，不重送。常見的送出前狀況改由 `xval.py` 在呼叫之前
-   自己檢查：Codex 是否已登入（帳號家目錄的 `~/.codex/auth.json` 存在且有 token，不讀出內容；這是 `codex-call`
-   讀的那一份，與 `HOME` 無關）、影格與題目是否就緒；沒過就不呼叫 `codex-call`，訊息會寫 nothing was sent。
+   自己檢查：Codex 是否已登入（`codex-call` 讀的那一份 `~/.codex/auth.json` 存在且有 token，不讀出內容；它在帳號
+   家目錄，設了 `CFFIXED_USER_HOME` 時改在那裡，與 `HOME` 無關）、影格與題目是否就緒；沒過就不呼叫 `codex-call`，訊息會寫 nothing was sent。
    檢查不到的是 refresh token 已失效（久未使用）：檢查會通過，`codex-call` 在 refresh 時失敗，這一輪用掉，
    但圖片沒有送出。請使用者重新登入，再另開一個 run
 
@@ -79,7 +79,10 @@ mkdir -p "$RUN"
 ```
 
 Step 2 的 `confirm-privacy` 只接管這個剛建立的空目錄：目錄必須已經存在，打錯的路徑會被拒絕，不會另外建立。
-會建立目錄或寫進非 run 目錄的步驟只有五類（init、confirm-privacy、crops、result、SAM 環境安裝），其他步驟遇到
+會建立目錄或寫進非 run 目錄的只有這六處：Step 1 的 `mkdir -p`；init（run 目錄與缺少的上層目錄、`frames/`、
+`hires/`）；confirm-privacy（只接管已存在的空目錄）；crops（run 內的 `crops/`）；result（寫到 `--out`，沒給時建立
+`.codex-pro/`；遇到不是 run 的目錄時用自己的暫存目錄）；SAM 環境安裝（`~/.codex-pro/sam-env`）。被呼叫的工具另有
+自己的寫入：codex-call refresh token 時寫 `~/.codex`、sips 的暫存檔、直譯器的快取。其他步驟遇到
 不是 run 的目錄就拒絕、不寫任何檔案。
 
 ## Step 2: 送出前的隱私提醒
@@ -107,7 +110,7 @@ python3 "$SKILL_DIR/scripts/xval.py" init --run "$RUN" --vocab <vocab.json> --fi
 `init` 寫進 run 目錄的是**處理過的複本**：先由 sips 解碼後重新編碼成新檔（轉成 sRGB、長邊縮到 2048 以內；WebP 與 GIF
 寫成 PNG），再依 EXIF 方向轉正，最後去除 EXIF／XMP 等內嵌資料（拍攝時間、GPS）。原檔的位元組不會出現在複本裡，
 第一輪兩個模型拿到的都是這份複本。原圖長邊超過 2048 時，另外寫一份**原解析度**、同樣處理過的複本到 `$RUN/hires/`，
-只給放大輪裁切用，放大輪因此看得到 2048 的複本看不到的細節。解不開的檔案，以及結構顯示資料損毀或截斷的檔案（PNG 的 checksum 不符或壓縮資料不完整、JPEG 沒有結尾標記、
+只給放大輪裁切用，放大輪因此看得到 2048 的複本看不到的細節。解不開的檔案，以及結構顯示資料損毀或截斷的檔案（PNG 關鍵 chunk 的 checksum 不符、壓縮串流沒有結束、比表頭承諾的少或多出 1 MB 以上、位元深度不合法；JPEG 沒有結尾標記、
 GIF 沒有結尾、WebP 短於自己的長度欄位），都以 `target_invalid` 拒收：sips 會把這類檔案安靜地解成全黑或半張圖。
 超過 2.5 億像素的圖也拒收。run 目錄會寫入 `.gitignore`，影格複本不會被 `git add -A` 帶進版控。
 
@@ -178,7 +181,8 @@ python3 "$SKILL_DIR/scripts/xval.py" ask --run "$RUN" --round 1
 
 `xval.py ask` 依序：這一輪已經送過就拒絕（只記在 `errors.jsonl`，不取代 run 的錯誤）、放大輪已不採用就拒絕；
 確認隱私確認已記錄、Claude 的答案已封存且未被改動、Codex 已登入（`oauth_invalid`）；第一輪另外確認詞彙表、
-影格與 run 的設定都和封存時相同，影格都在 run 的 frames 目錄內；`$RUN/profile.json` 有效。任一不符就停下，
+影格與 run 的設定都和封存時相同，影格都在 run 的 frames 目錄內；放大輪另外確認放大計畫存在、裁切圖都在 run 的
+crops 目錄內，計畫、題目檔、裁切圖與比對結果都和 `crops` 寫下時相同；`$RUN/profile.json` 有效。任一不符就停下，
 **不送任何請求**，訊息寫 nothing was sent。接著讀 `runtime_error.txt`（有錯就停）、確認 runtime 存在、確認
 `codex-call --help` 列出 `--image`（沒有就 `runtime_unsupported`）；寫好 prompt 檔，記下請求時間後送出、
 驗證回覆、記下回覆的 SHA-256。它只印出狀態，Codex 的答案寫在 `$RUN/codex.json`。
@@ -331,7 +335,7 @@ seal_broken: <true | false>
 codex_requested_at: <ISO8601 with offset，第一輪請求送出的時間>
 codex_reply_sha256: <hex，第一輪回覆的雜湊>
 sam_status: <ok | not_installed | not_applicable | no_anchor | failed | not_run>
-error: <rate_limit | oauth_invalid | timeout | target_invalid | runtime_unsupported | parse_failed | runtime_unavailable | package_corruption | backend_error | internal_error>  # 僅失敗時出現
+error: <rate_limit | oauth_invalid | timeout | target_invalid | runtime_unsupported | parse_failed | runtime_unavailable | package_corruption | backend_error | internal_error>  # 失敗時出現；結果檔寫出時發現紀錄被改過，也記為 target_invalid
 ---
 
 # Visual cross-validation — <target>

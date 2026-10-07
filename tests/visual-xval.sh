@@ -81,6 +81,10 @@ checks = {
     "raw_reply_is_data": bool(step5) and "codex_round1.md" in step5.group(1) and "當成資料" in step5.group(1),
     "run_dir_exists": "目錄必須已經存在" in body,
     "later_steps_check": bool(step5) and "crops" in step5.group(1) and "adjudicate" in step5.group(1),
+    # round 7 (Y5, Y7): the writers in full, the zoom round's checks, Foundation's home directory
+    "six_writers": "Step 1 的 `mkdir -p`" in body and "暫存目錄" in body and "codex-call" in body.split("不是 run 的目錄就拒絕")[0][-400:],
+    "zoom_checks": "放大計畫存在" in body,
+    "cffixed": "CFFIXED_USER_HOME" in body,
     "track_point": "track_point: tip" in body,
     "reencoded_copies": "重新編碼" in body,
     "resend_rule": "同一個 run 可以再送" in body,

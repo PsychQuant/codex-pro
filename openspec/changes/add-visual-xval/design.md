@@ -215,7 +215,7 @@ Claude 的逐格答案先寫到 run 目錄 `.codex-pro/visual-xval-run-<timestam
 - **登入檢查看 codex-call 讀的那一份**（Q4）。codex-call 讀帳號本身家目錄的 `~/.codex/auth.json`，不看 `$HOME`；檢查原本跟著 `$HOME`，兩者可能不是同一個檔。refresh token 失效（久未使用）時檢查會通過、codex-call 在 refresh 時失敗，這一輪會用掉，圖片卻沒有送出：只寫進文件，請使用者重新登入、另開一個 run（Q5，使用者選擇，2026-10-07）。只看 access token 的到期時間分不出 refresh 會不會成功，擋下來會連 refresh 會成功的正常情況一起擋。
 - **送出前要就緒的東西，在記錄請求之前寫好**（Q6）。prompt 檔先寫，再記錄請求、啟動 codex-call；寫不進去就停在 `runtime_unavailable`，什麼都沒送出。
 - **`backend_error` 的意思是「codex-call 啟動之後失敗」**（Q3）。封閉列舉取消後，codex-call 自己的本機失敗（讀不到 prompt、鎖檔權限）也落在這一類；算作已送出是對的，但規格原本把它定義成「後端或連線出錯」，SKILL 也回報「Codex 後端出錯」。定義改成「codex-call 啟動之後失敗、沒有更具體的類別，算作已送出」。
-- **解不開的圖靠檔案結構判斷**（Q13）。sips 帶 `--matchTo` 時，IDAT 不是壓縮資料的 PNG 也回 exit 0，產出全黑的圖；截斷的 PNG、JPEG 則安靜地解出一部分。兩個模型在空白圖上的答案一致，一致率虛高。所以 init 在交給 sips 之前先核對檔案結構：PNG 每個 chunk 的 CRC、壓縮資料完整且長度不少於 IHDR 推算的值（Apple 的 CgBI PNG 是 raw deflate）；JPEG 在掃描資料之後要有 end-of-image；GIF 要有結尾位元組；WebP 的長度欄位不超過檔案。看不出來的是結構完整、但壓縮資料本身壞掉的 JPEG、GIF、WebP。這個檢查本身不能成為解壓炸彈（背景安全審查）：一次最多解壓 1 MB、只數到 IHDR 承諾的長度、不呼叫會一次解完剩餘資料的 `flush()`；IHDR 的寬高是傳送者寫的，所以超過 2.5 億像素的圖直接拒收，其他格式也以標頭的尺寸在交給 sips 之前核對。
+- **解不開的圖靠檔案結構判斷**（Q13）。sips 帶 `--matchTo` 時，IDAT 不是壓縮資料的 PNG 也回 exit 0，產出全黑的圖；截斷的 PNG、JPEG 則安靜地解出一部分。兩個模型在空白圖上的答案一致，一致率虛高。所以 init 在交給 sips 之前先核對檔案結構：PNG 每個 chunk 的 CRC、壓縮資料完整且長度不少於 IHDR 推算的值（Apple 的 CgBI PNG 是 raw deflate）；JPEG 在掃描資料之後要有 end-of-image；GIF 要有結尾位元組；WebP 的長度欄位不超過檔案。看不出來的是結構完整、但壓縮資料本身壞掉的 JPEG、GIF、WebP。這個檢查本身不能成為解壓炸彈（背景安全審查）：一次最多解壓 1 MB、只數到 IHDR 承諾的長度、不呼叫會一次解完剩餘資料的 `flush()`；IHDR 的寬高是傳送者寫的，所以超過 2.5 億像素的圖直接拒收，其他格式則以 `sips -g` 只讀標頭取得的尺寸，在 sips 解碼像素之前核對。
 - **上游 #89 改成要求 exit status**（Q11）。#89 原本要 codex-call 在訊息裡多寫送出的位元組數，但第五輪已經決定字樣不可信。改為要求「主請求一個位元組都沒送出」時用專屬的 exit status，後端的文字偽造不了；上游做到之後，xval 才把那個 exit status 判為沒送出。使用者選擇（2026-10-07）。
 
 ### 第七輪：檢查要做到文件說的程度

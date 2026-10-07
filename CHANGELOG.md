@@ -25,13 +25,16 @@ Issue: [#23](https://github.com/PsychQuant/codex-pro/issues/23)
 - 放大輪的關係題只用來證明「距離小於門檻」；SAM 的位置與關係證據要詞彙表宣告 `track_point: tip` 才採用。
 - 影格複本由 sips 重新編碼（sRGB、長邊 ≤ 2048、JPEG 品質 95）後才清除 metadata，與原圖相比有一次有損壓縮。
 - `codex-call` 的任何失敗都當成已送出（錯誤字樣證明不了什麼都沒送出）；是否登入改在呼叫前自己檢查，看的是
-  `codex-call` 讀的那一份 token 檔（帳號家目錄）。離線、refresh token 已失效，或 `codex-call` 自己的送出前檢查失敗時，
-  這一輪也會用掉，要另開一個 run。上游改進：PsychQuant/parallel-ai-agents#89 要求「請求一個位元組都沒送出」時
+  `codex-call` 讀的那一份 token 檔（帳號家目錄，或 `CFFIXED_USER_HOME`）。離線、refresh token 已失效，或 `codex-call` 自己的送出前檢查失敗時，
+  這一輪也會用掉，要另開一個 run。上游改進：PsychQuant/parallel-ai-agents#89 要求「主請求的 body（圖片）一個位元組都沒送出」時
   用專屬的 exit status，後端的文字偽造不了；做到之前不採用任何字樣。
 - 第一輪的複本長邊不超過 2048；放大輪從原解析度、同樣清除 metadata 的複本裁切。
-- 結構顯示資料損毀或截斷的圖、超過 2.5 億像素的圖都拒收；結構完整但壓縮資料本身壞掉的 JPEG、GIF、WebP 看不出來。
+- 結構顯示資料損毀或截斷的圖、超過 2.5 億像素的圖都拒收（PNG 的壓縮串流要結束並通過自己的 checksum，超出表頭
+  承諾的資料最多 1 MB）；結構完整但壓縮資料本身壞掉的 JPEG、GIF、WebP 看不出來。
 - 錯誤細節只寫檔名；結果檔把剩下的絕對路徑縮成最後一段，相對路徑無法從文字裡認出來。
-- 會建立目錄或寫進非 run 目錄的步驟只有五類；`confirm-privacy` 要求 run 目錄已經存在。
+- 會建立目錄或寫進非 run 目錄的只有六處；`confirm-privacy` 要求 run 目錄已經存在。
+- 結果檔永遠寫得出來：紀錄型別不對時當成沒有；result 自己失敗不取代 run 原本的錯誤；寫出時發現紀錄被改過，
+  frontmatter 記為 `target_invalid`。
 - 兩個模型一致不代表正確；準度要靠人工標準答案。
 - `tests/codex-plugin.sh` 的 plugin-creator validator 檢查在 Codex CLI 0.160.1 下必定失敗（#24），與本版無關。
 
