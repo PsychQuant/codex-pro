@@ -16,6 +16,51 @@ SCRIPTS="$XVAL_DIR/scripts"
 WORK=$(mktemp -d)
 trap 'rm -rf "$WORK"' EXIT
 
+# ── SKILL.md: the contract a reader (Claude or Codex) follows ────
+SKILL="$XVAL_DIR/SKILL.md"
+assert_file "$SKILL" "codex-visual-xval SKILL.md exists"
+skill_check=$(python3 - "$SKILL" <<'PY'
+import re, sys
+text = open(sys.argv[1], encoding="utf-8").read()
+fm = re.match(r"^---\n(.*?)\n---\n", text, re.DOTALL)
+fm = fm.group(1) if fm else ""
+body = text[text.find("\n---\n", 4) + 5:]
+def pos(s):
+    return body.find(s) if s in body else 10 ** 9
+step4 = re.search(r"### Step 4\.2: codex-call invocation\n(.*?)\n## Step 5", body, re.DOTALL)
+step5 = re.search(r"## Step 5: Handle exit code\n(.*?)\n## Step 6", body, re.DOTALL)
+checks = {
+    "name": "name: codex-visual-xval" in fm,
+    "tools": all(t in fm for t in ("- Bash", "- Read")),
+    "privacy_before_send": pos("## Step 2: 送出前的隱私提醒") < pos("## Step 4: Invoke codex-call"),
+    "seal_before_send": pos("xval.py\" seal --run") < pos("### Step 4.2: codex-call invocation"),
+    "runtime_files": bool(step4) and 'CODEX_CALL="$(command -v codex-call)"' in step4.group(1)
+        and "runtime_error.txt" in step4.group(1) and "runtime.txt" in step4.group(1),
+    "one_runtime_line": body.count('CODEX_CALL="$(command -v codex-call)"') == 1,
+    "no_bare_invocation": "codex-call \\\n" not in body,
+    "no_codex_cli": re.search(r"(^|\s)codex exec", body) is None,
+    "foreground": "前景同步執行" in body and "run_in_background" in body,
+    "classes": bool(step5) and all(c in step5.group(1) for c in (
+        "rate_limit", "oauth_invalid", "timeout", "target_invalid", "runtime_unsupported", "parse_failed")),
+    "all_failures_anchor": "\n\n**所有 failure 仍寫 result file**" in body,
+    "no_retry": "所有 failure 都不 retry" in body,
+    "one_error_enum": len(re.findall(r"error: <[^>\n]+>", body)) == 1,
+    "result_path": ".codex-pro/visual-xval-" in body,
+    "sam_consent": "AskUserQuestion" in body and "install --yes" in body,
+    "zoom_blind": "不要讀 `$RUN/codex.json`" in body,
+    "limitations": "兩個模型一致不代表正確" in body,
+}
+print(" ".join(f"{k}={'ok' if v else 'MISSING'}" for k, v in checks.items()))
+PY
+)
+case "$skill_check" in
+  *MISSING*) fail "SKILL.md states the visual-xval contract: $skill_check" ;;
+  *) pass "SKILL.md states the visual-xval contract ($skill_check)" ;;
+esac
+for ref in references/vocab-format.md references/claim-schema.md; do
+  assert_file "$XVAL_DIR/$ref" "SKILL.md reference exists: $ref"
+done
+
 # run_py <script> <args...> — sets RUN_STATUS and RUN_OUT (stdout+stderr)
 run_py() {
   RUN_STATUS=0
@@ -383,6 +428,20 @@ assert_eq "unverifiable" "$(verdict d1)" "without any third evidence the disagre
 run_py adjudicate.py "$WORK/vocab_limits.json" "$WORK/disputes.json" --zoom "$WORK/zoom_codex.json"
 assert_eq "resolved_codex" "$(verdict d1)" "matching zoom-round answers that agree with Codex resolve to Codex"
 
+python3 - "$WORK" <<'PY'
+import json, sys
+w = sys.argv[1]
+pos = {"id": "d9", "frame": "f03.png", "kind": "position", "class": "INST", "claude": [40, 50], "codex": [52, 50],
+       "distance_pct": 12.0, "threshold_pct": 5, "aspect": 1.0}
+json.dump({"disagreements": [pos]}, open(f"{w}/disputes_pos.json", "w"))
+json.dump({"d9": {"claude": [41, 50], "codex": [40.5, 51]}}, open(f"{w}/zoom_pos.json", "w"))
+json.dump({"d9": {"claude": [41, 50], "codex": [52, 50]}}, open(f"{w}/zoom_pos_split.json", "w"))
+PY
+run_py adjudicate.py "$WORK/vocab_limits.json" "$WORK/disputes_pos.json" --zoom "$WORK/zoom_pos.json"
+assert_eq "resolved_claude" "$(verdict d9)" "zoom points that agree near Claude's original point resolve to Claude"
+run_py adjudicate.py "$WORK/vocab_limits.json" "$WORK/disputes_pos.json" --zoom "$WORK/zoom_pos_split.json"
+assert_eq "unverifiable" "$(verdict d9)" "zoom points that still disagree are not evidence"
+
 run_py adjudicate.py "$WORK/vocab_limits.json" "$WORK/disputes.json" --zoom "$WORK/zoom_codex.json" --sam "$WORK/track_35.json"
 assert_eq "unverifiable" "$(verdict d1)" "zoom round and SAM pointing to different sides is unverifiable"
 
@@ -393,5 +452,278 @@ assert_eq "unverifiable" "$(verdict d3)" "SAM seeing fewer objects cannot refute
 # d1: 8.0% is beyond 5 ± 1, so "not together" -> Codex; d2: 3 > max 2 -> Codex; d3: unverifiable
 assert_eq "0 2 1" "$(json_get "$RUN_OUT" '"%d %d %d" % (d["counts"]["resolved_claude"], d["counts"]["resolved_codex"], d["counts"]["unverifiable"])')" \
   "the summary counts every verdict once"
+
+# ── xval.py: the orchestrator, behind a mock codex-call ──────────
+# The mock records every invocation. MOCK_HELP_IMAGE=0 drops --image from --help (an old
+# runtime); MOCK_REPLY is copied to --output; MOCK_STDERR/MOCK_STATUS simulate failures.
+assert_file "$SCRIPTS/xval.py" "xval.py exists"
+cat > "$WORK/stubbin/codex-call" <<'STUB'
+#!/usr/bin/env bash
+if [ "${1:-}" = "--help" ]; then
+  printf 'codex-call\n  --output FILE\n'
+  [ "${MOCK_HELP_IMAGE:-1}" = "1" ] && printf '  --image FILE   attach an image\n'
+  exit 0
+fi
+printf '%s\n' "$*" >> "$MOCK_LOG"
+out=""; prompt=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --output) out="$2"; shift 2 ;;
+    --prompt-file) prompt="$2"; shift 2 ;;
+    *) shift ;;
+  esac
+done
+[ -n "$prompt" ] && cat "$prompt" >> "$MOCK_PROMPTS"
+[ -n "${MOCK_STDERR:-}" ] && printf '%s\n' "$MOCK_STDERR" >&2
+[ -n "${MOCK_REPLY:-}" ] && [ -n "$out" ] && cp "$MOCK_REPLY" "$out"
+exit "${MOCK_STATUS:-0}"
+STUB
+chmod +x "$WORK/stubbin/codex-call"
+
+# Twelve neutral test images (200x120 PNG) made with sips — macOS, like the producer itself.
+mkdir -p "$WORK/imgs"
+base64 -D <<<'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAAABJRU5ErkJggg==' > "$WORK/dot.png"
+for i in $(seq -w 1 12); do sips -z 120 200 "$WORK/dot.png" --out "$WORK/imgs/shot_2026-09-11_10$i.png" >/dev/null; done
+
+# Claude's claims use a value that appears nowhere else, so the prompt can be searched for it.
+python3 - "$WORK" <<'PY'
+import json, sys
+w = sys.argv[1]
+c = json.load(open(f"{w}/claude.json"))
+for i, claim in enumerate(c["claims"], 1):
+    claim["frame"] = f"f{i:02d}.png"
+c["claims"][0]["points"][0]["x_pct"] = 41.37
+json.dump(c, open(f"{w}/claude_marked.json", "w"))
+x = json.load(open(f"{w}/codex.json"))
+for i, claim in enumerate(x["claims"], 1):
+    claim["frame"] = f"f{i:02d}.png"
+open(f"{w}/codex_reply.md", "w").write("Here are my answers.\n```json\n" + json.dumps(x) + "\n```\n")
+PY
+
+xval() {   # xval <args...> — mock runtime, isolated HOME
+  RUN_STATUS=0
+  RUN_OUT=$(HOME="$WORK/home" MOCK_LOG="$WORK/mock.log" MOCK_PROMPTS="$WORK/prompts.txt" \
+    PATH="$WORK/stubbin:$PATH" python3 "$SCRIPTS/xval.py" "$@" 2>&1) || RUN_STATUS=$?
+}
+new_run() {   # new_run <dir> — init a run on the twelve images and seal Claude's marked claims
+  rm -rf "$1" "$WORK/mock.log" "$WORK/prompts.txt"
+  xval init --run "$1" --vocab "$WORK/vocab.json" "$WORK"/imgs/*.png
+  cp "$WORK/claude_marked.json" "$1/claude.json"
+  printf '%s\n' "$WORK/stubbin/codex-call" > "$1/runtime.txt"
+  : > "$1/runtime_error.txt"
+  xval seal --run "$1"
+}
+
+new_run "$WORK/run1"
+assert_eq "0" "$RUN_STATUS" "init and seal exit 0"
+assert_eq "f01.png f12.png" "$(python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); n=sorted(d); print(n[0], n[-1])' "$WORK/run1/frames.json")" \
+  "images get neutral names f01…f12"
+assert_eq "False" "$(python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); print(any("2026" in k for k in d))' "$WORK/run1/frames.json")" \
+  "neutral names carry no timestamps from the original file names"
+
+# Runtime image capability preflight: an old runtime is refused before anything is sent.
+RUN_STATUS=0
+RUN_OUT=$(HOME="$WORK/home" MOCK_HELP_IMAGE=0 MOCK_LOG="$WORK/mock.log" MOCK_PROMPTS="$WORK/prompts.txt" \
+  PATH="$WORK/stubbin:$PATH" python3 "$SCRIPTS/xval.py" ask --run "$WORK/run1" --round 1 --model m --effort e --max-time 30 2>&1) || RUN_STATUS=$?
+assert_eq "5" "$RUN_STATUS" "a runtime without --image stops the run (exit 5)"
+assert_contains "$RUN_OUT" '"error": "runtime_unsupported"' "a runtime without --image is runtime_unsupported"
+assert_no_file "$WORK/mock.log" "no request is sent to a runtime without --image"
+
+# A runtime path that is missing is runtime_unavailable, not a crash.
+: > "$WORK/run1/runtime.txt"
+xval ask --run "$WORK/run1" --round 1 --model m --effort e --max-time 30
+assert_contains "$RUN_OUT" '"error": "runtime_unavailable"' "no runtime on PATH is runtime_unavailable"
+printf 'package_corruption\nerror=hash_mismatch expected=abc\n' > "$WORK/run1/runtime_error.txt"
+xval ask --run "$WORK/run1" --round 1 --model m --effort e --max-time 30
+assert_contains "$RUN_OUT" '"error": "package_corruption"' "a native preflight error is carried through unchanged"
+assert_no_file "$WORK/mock.log" "a native preflight error sends nothing"
+
+# Blind Codex judgment: images by --image, neutral names, no Claude claims in the prompt.
+new_run "$WORK/run2"
+RUN_STATUS=0
+RUN_OUT=$(HOME="$WORK/home" MOCK_REPLY="$WORK/codex_reply.md" MOCK_LOG="$WORK/mock.log" MOCK_PROMPTS="$WORK/prompts.txt" \
+  PATH="$WORK/stubbin:$PATH" python3 "$SCRIPTS/xval.py" ask --run "$WORK/run2" --round 1 --model m --effort e --max-time 30 2>&1) || RUN_STATUS=$?
+assert_eq "0" "$RUN_STATUS" "round 1 with a valid JSON reply exits 0"
+assert_eq "12" "$(grep -o -- '--image ' "$WORK/mock.log" | wc -l | tr -d ' ')" "round 1 sends all twelve images with --image"
+assert_contains "$(cat "$WORK/mock.log")" "--max-time 30" "round 1 passes the profile's hard timeout"
+prompt=$(cat "$WORK/prompts.txt" 2>/dev/null)
+assert_contains "$prompt" "f01.png" "the prompt names the frames by their neutral names"
+assert_contains "$prompt" "tips_together" "the prompt carries the vocabulary's relations"
+case "$prompt" in
+  *41.37*|*shot_2026*) fail "the prompt carries no Claude claim values and no original file names" ;;
+  *) pass "the prompt carries no Claude claim values and no original file names" ;;
+esac
+case "$RUN_OUT" in
+  *x_pct*|*'"claims"'*) fail "ask prints a status, not Codex's answers (keeps Claude blind for the zoom round)" ;;
+  *) pass "ask prints a status, not Codex's answers (keeps Claude blind for the zoom round)" ;;
+esac
+assert_file "$WORK/run2/codex.json" "Codex's answers are written to the run directory"
+
+# A reply that is not JSON is parse_failed, and nothing is retried.
+new_run "$WORK/run3"
+printf 'I cannot see any images.\n' > "$WORK/garbage_reply.md"
+RUN_STATUS=0
+RUN_OUT=$(HOME="$WORK/home" MOCK_REPLY="$WORK/garbage_reply.md" MOCK_LOG="$WORK/mock.log" MOCK_PROMPTS="$WORK/prompts.txt" \
+  PATH="$WORK/stubbin:$PATH" python3 "$SCRIPTS/xval.py" ask --run "$WORK/run3" --round 1 --model m --effort e --max-time 30 2>&1) || RUN_STATUS=$?
+assert_contains "$RUN_OUT" '"error": "parse_failed"' "a reply without JSON claims is parse_failed"
+assert_eq "1" "$(wc -l < "$WORK/mock.log" | tr -d ' ')" "a parse failure is not retried (one request)"
+
+# Rate limit and timeout are classified from the runtime's stderr; still one request.
+for case_ in "rate limit exceeded (429):rate_limit" "request timed out after 30s:timeout" "401 unauthorized:oauth_invalid"; do
+  new_run "$WORK/run4"
+  RUN_STATUS=0
+  RUN_OUT=$(HOME="$WORK/home" MOCK_STDERR="${case_%%:*}" MOCK_STATUS=1 MOCK_LOG="$WORK/mock.log" MOCK_PROMPTS="$WORK/prompts.txt" \
+    PATH="$WORK/stubbin:$PATH" python3 "$SCRIPTS/xval.py" ask --run "$WORK/run4" --round 1 --model m --effort e --max-time 30 2>&1) || RUN_STATUS=$?
+  assert_contains "$RUN_OUT" "\"error\": \"${case_##*:}\"" "'${case_%%:*}' is classified as ${case_##*:}"
+  assert_eq "1" "$(wc -l < "$WORK/mock.log" | tr -d ' ')" "${case_##*:} is not retried"
+done
+
+# ── xval.py: compare, crops, zoom round, SAM step, adjudication (task 4.2) ──
+cat > "$WORK/zoom_reply.md" <<'JSON'
+{"answers": {"z01.png": {"value": false}}}
+JSON
+ask_with() {   # ask_with <reply> <run> <round>
+  RUN_STATUS=0
+  RUN_OUT=$(HOME="$WORK/home" MOCK_REPLY="$1" MOCK_LOG="$WORK/mock.log" MOCK_PROMPTS="$WORK/prompts.txt" \
+    PATH="$WORK/stubbin:$PATH" python3 "$SCRIPTS/xval.py" ask --run "$2" --round "$3" --model m --effort e --max-time 30 2>&1) || RUN_STATUS=$?
+}
+new_run "$WORK/run5"
+ask_with "$WORK/codex_reply.md" "$WORK/run5" 1
+xval compare --run "$WORK/run5"
+assert_eq "0" "$RUN_STATUS" "compare exits 0"
+assert_eq "1" "$(json_get "$RUN_OUT" 'd["n_disagreements"]')" "compare reports the one disagreement (f08)"
+assert_eq "d1 f08.png relation tips_together" \
+  "$(json_get "$RUN_OUT" '" ".join(str(d["disputes"][0][k]) for k in ("id", "frame", "kind", "relation"))')" \
+  "compare names the disputed frame, kind and relation"
+case "$RUN_OUT" in
+  *'"claude"'*|*'"codex"'*|*x_pct*) fail "compare prints no answer values" ;;
+  *) pass "compare prints no answer values" ;;
+esac
+assert_file "$WORK/run5/comparison.json" "the full comparison is kept in the run directory"
+
+xval crops --run "$WORK/run5"
+assert_eq "0" "$RUN_STATUS" "crops exits 0"
+assert_eq "1" "$(ls "$WORK/run5/crops" 2>/dev/null | wc -l | tr -d ' ')" "only the disputed frame is cropped"
+crop_w=$(sips -g pixelWidth "$WORK/run5/crops/z01.png" 2>/dev/null | awk '/pixelWidth/{print $2}')
+box_w=$(python3 -c 'import json,sys; b=json.load(open(sys.argv[1]))["d1"]["box_px"]; print(b[2]-b[0])' "$WORK/run5/zoom_plan.json")
+assert_eq "$((box_w * 2))" "$crop_w" "the crop is enlarged twice"
+
+rm -f "$WORK/mock.log" "$WORK/prompts.txt"
+cp "$WORK/run5/zoom_plan.json" "$WORK/zoom_plan_before.json"
+printf '{"d1": false}\n' > "$WORK/run5/zoom_claude.json"
+xval seal --run "$WORK/run5" --zoom
+ask_with "$WORK/zoom_reply.md" "$WORK/run5" zoom
+assert_eq "0" "$RUN_STATUS" "the zoom round exits 0"
+assert_eq "1" "$(grep -o -- '--image ' "$WORK/mock.log" | wc -l | tr -d ' ')" "the zoom round sends only the one crop"
+assert_contains "$(cat "$WORK/mock.log")" "crops/z01.png" "the zoom round sends the crop, not the full frame"
+zoom_prompt=$(cat "$WORK/prompts.txt" 2>/dev/null)
+case "$zoom_prompt" in
+  *41.37*|*'"claims"'*|*'"tips_together":'*) fail "the zoom prompt carries neither side's earlier answers" ;;
+  *) pass "the zoom prompt carries neither side's earlier answers" ;;
+esac
+
+xval sam --run "$WORK/run5"
+assert_eq "0" "$RUN_STATUS" "the SAM step never stops the run"
+assert_contains "$RUN_OUT" '"sam_status": "not_applicable"' "images that are not a sequence get sam_status not_applicable"
+python3 - "$WORK/run5/meta.json" <<'PY'
+import json, sys
+m = json.load(open(sys.argv[1])); m["sequence"] = True; json.dump(m, open(sys.argv[1], "w"))
+PY
+rm -rf "$WORK/home/.codex-pro"
+xval sam --run "$WORK/run5"
+assert_eq "0" "$RUN_STATUS" "a missing SAM environment does not stop the run"
+assert_contains "$RUN_OUT" '"sam_status": "not_installed"' "a missing SAM environment is recorded as not_installed"
+
+xval adjudicate --run "$WORK/run5"
+assert_eq "0" "$RUN_STATUS" "adjudicate exits 0"
+assert_eq "resolved_codex" "$(json_get "$(cat "$WORK/run5/adjudication.json")" 'd["adjudications"][0]["verdict"]')" \
+  "both zoom answers say false, as Codex did -> resolved_codex"
+
+new_run "$WORK/run6"
+ask_with "$WORK/codex_reply.md" "$WORK/run6" 1
+xval compare --run "$WORK/run6"
+xval sam --run "$WORK/run6"
+xval adjudicate --run "$WORK/run6"
+assert_eq "unverifiable" "$(json_get "$(cat "$WORK/run6/adjudication.json")" 'd["adjudications"][0]["verdict"]')" \
+  "without a zoom round or SAM, the disagreement stays unverifiable"
+
+# ── xval.py result: the structured result file (task 4.3) ────────
+mkdir -p "$WORK/project"
+result_in() {   # result_in <run> — write the result file from inside $WORK/project
+  RUN_STATUS=0
+  RUN_OUT=$(cd "$WORK/project" && python3 "$SCRIPTS/xval.py" result --run "$1" --model gpt-test --effort high \
+    --profile-source default 2>&1) || RUN_STATUS=$?
+}
+fm() {   # fm <file> <key> — one frontmatter value
+  python3 - "$1" "$2" <<'PY'
+import re, sys
+text = open(sys.argv[1], encoding="utf-8").read()
+m = re.match(r"^---\n(.*?)\n---\n", text, re.DOTALL)
+for line in (m.group(1).splitlines() if m else []):
+    k, _, v = line.partition(":")
+    if k.strip() == sys.argv[2]:
+        print(v.strip())
+PY
+}
+result_in "$WORK/run5"
+assert_eq "0" "$RUN_STATUS" "result exits 0"
+result_file=$(ls "$WORK"/project/.codex-pro/visual-xval-*.md 2>/dev/null | tail -1)
+assert_file "$result_file" "the result file is written to .codex-pro/visual-xval-<timestamp>.md"
+case "$(basename "$result_file")" in
+  visual-xval-[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]T[0-9][0-9][0-9][0-9][0-9][0-9]Z.md) pass "the file name uses the producers' timestamp format" ;;
+  *) fail "the file name uses the producers' timestamp format (got $(basename "$result_file"))" ;;
+esac
+assert_eq "visual-xval" "$(fm "$result_file" skill)" "frontmatter: skill"
+assert_eq "gpt-test high default" "$(fm "$result_file" model) $(fm "$result_file" effort) $(fm "$result_file" profile_source)" \
+  "frontmatter: model, effort, profile_source"
+assert_eq "12 12 0.917" "$(fm "$result_file" n_images) $(fm "$result_file" n_claims) $(fm "$result_file" agreement_rate)" \
+  "frontmatter: n_images, n_claims, agreement_rate"
+assert_eq "$(shasum -a 256 "$WORK/run5/claude.json" | cut -d' ' -f1)" "$(fm "$result_file" claude_answers_sha256)" \
+  "frontmatter: claude_answers_sha256 is the digest of Claude's answers"
+assert_eq "false" "$(fm "$result_file" seal_broken)" "frontmatter: seal_broken"
+assert_eq "not_installed" "$(fm "$result_file" sam_status)" "frontmatter: sam_status"
+case "$(fm "$result_file" sealed_at)" in
+  ????-??-??T??:??:??[+-]??:??) pass "frontmatter: sealed_at with an explicit offset" ;;
+  *) fail "frontmatter: sealed_at with an explicit offset" ;;
+esac
+headings=$(grep '^## ' "$result_file" | tr '\n' '|')
+assert_eq "## Agreement|## Disagreements|## SAM evidence|## Seal|## Limitations|" "$headings" \
+  "the body sections come in the required order"
+assert_contains "$(cat "$result_file")" "resolved_codex" "each disagreement carries its verdict"
+assert_contains "$(cat "$result_file")" "does not establish that either is correct" \
+  "the limitations say agreement does not establish correctness"
+
+# Every failure class still writes the file; nothing is retried.
+result_in "$WORK/run4"
+fail_file=$(ls -t "$WORK"/project/.codex-pro/visual-xval-*.md | head -1)
+assert_eq "oauth_invalid" "$(fm "$fail_file" error)" "a stopped run writes the result file with its error"
+assert_contains "$(cat "$fail_file")" "No retry" "a failed run says it was not retried"
+
+new_run "$WORK/run7"
+printf 'package_corruption\nerror=hash_mismatch\texpected=abc\rline\n' > "$WORK/run7/runtime_error.txt"
+xval ask --run "$WORK/run7" --round 1 --model m --effort e --max-time 30
+sleep 1
+result_in "$WORK/run7"
+native_file=$(ls -t "$WORK"/project/.codex-pro/visual-xval-*.md | head -1)
+assert_eq "package_corruption" "$(fm "$native_file" error)" "a native preflight failure is recorded in frontmatter"
+detail_line=$(grep '^Runtime preflight detail:' "$native_file")
+assert_contains "$detail_line" "error=hash_mismatch expected=abc line" "the preflight detail is sanitized (no TAB or CR)"
+case "$(fm "$native_file" error)$(sed -n '/^---$/,/^---$/p' "$native_file")" in
+  *hash_mismatch*) fail "the preflight detail stays out of the frontmatter" ;;
+  *) pass "the preflight detail stays out of the frontmatter" ;;
+esac
+
+# A broken seal is reported, and the comparison still happened.
+new_run "$WORK/run8"
+ask_with "$WORK/codex_reply.md" "$WORK/run8" 1
+printf ' ' >> "$WORK/run8/claude.json"
+xval compare --run "$WORK/run8"
+xval sam --run "$WORK/run8"
+xval adjudicate --run "$WORK/run8"
+sleep 1
+result_in "$WORK/run8"
+seal_file=$(ls -t "$WORK"/project/.codex-pro/visual-xval-*.md | head -1)
+assert_eq "true" "$(fm "$seal_file" seal_broken)" "an edited answer file is reported as seal_broken: true"
+assert_contains "$(cat "$seal_file")" "seal failed" "the conclusion says the seal failed"
 
 report_summary "visual-xval"

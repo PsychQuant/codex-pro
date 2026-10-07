@@ -45,19 +45,19 @@
 
 ## 4. Skill 與既有 skill 的整合
 
-- [ ] 4.1 撰寫 SKILL.md 前半流程：Runtime image capability preflight、Privacy reminder before sending images、封存、Blind Codex judgment（依「Producer 結構比照 codex-review」「Runtime 圖片能力在送出前檢查」「失敗分類增加兩類」），位置 `plugins/codex-pro/skills/codex-visual-xval/SKILL.md`。
+- [x] 4.1 撰寫 SKILL.md 前半流程：Runtime image capability preflight、Privacy reminder before sending images、封存、Blind Codex judgment（依「Producer 結構比照 codex-review」「Runtime 圖片能力在送出前檢查」「失敗分類增加兩類」），位置 `plugins/codex-pro/skills/codex-visual-xval/SKILL.md`。
   - Runtime image capability preflight。
   - Privacy reminder before sending images。
   - 封存。
   - Blind Codex judgment：`codex-call --image`、中性檔名、不帶 Claude 答案、前景同步、profile 的 hard timeout。
   - 驗證：behavioral 測試以 mock `codex-call` 確認三件事——`--help` 不含 `--image` 時寫出 `error: runtime_unsupported` 的結果檔且 mock 沒被帶圖呼叫；mock 回非 JSON 時為 `parse_failed`；送出的 prompt 不含任何 Claude 主張值。
   - [after: 3.1, 3.2]
-- [ ] 4.2 依「一輪一批，第二輪只送放大圖」完成 Zoom round 與 SAM 接線。
+- [x] 4.2 依「一輪一批，第二輪只送放大圖」完成 Zoom round 與 SAM 接線。
   - 只對有分歧的格裁切、放大 2 倍後送第二輪，不帶任何一方先前的答案。
   - 呼叫 SAM 腳本與裁決腳本；SAM 未安裝時 `sam_status: not_installed`，需要 SAM 的分歧標 `unverifiable`。
   - 驗證：behavioral 測試確認 12 格中 1 格分歧時第二輪只帶那 1 格的裁切圖；未安裝 SAM 時流程仍完成。
   - [after: 3.3, 3.4, 3.5, 4.1]
-- [ ] 4.3 實作 Structured result file：寫 `.codex-pro/visual-xval-<ISO8601-timestamp>.md`。
+- [x] 4.3 實作 Structured result file：寫 `.codex-pro/visual-xval-<ISO8601-timestamp>.md`。
   - frontmatter 欄位依 spec。
   - 內文依序：一致率與分歧摘要、逐格分歧與裁決、SAM 狀態、封存驗證、限制（明寫一致不等於正確）。
   - 八種失敗類別都寫結果檔、不 retry。

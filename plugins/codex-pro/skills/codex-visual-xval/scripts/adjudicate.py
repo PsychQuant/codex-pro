@@ -37,9 +37,23 @@ def side_matching(value: Any, item: dict) -> str | None:
     return None
 
 
-def from_zoom(item: dict, zoom: dict) -> dict | None:
+def from_zoom(item: dict, zoom: dict, vocab: dict | None = None) -> dict | None:
     answer = zoom.get(item["id"])
-    if not answer or answer.get("claude") != answer.get("codex"):
+    if not answer:
+        return None
+    if item["kind"] == "position":   # points agree when they are within the position threshold
+        aspect = float(item.get("aspect", 1.0))
+        limit = float(item.get("threshold_pct", (vocab or {}).get("position_threshold_pct", 5)))
+        gap = lambda p, q: math.hypot(p[0] - q[0], (p[1] - q[1]) * aspect)
+        a, b = answer["claude"], answer["codex"]
+        if gap(a, b) > limit:
+            return None
+        mid = [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2]
+        near_claude, near_codex = gap(mid, item["claude"]) <= limit, gap(mid, item["codex"]) <= limit
+        verdict = "resolved_claude" if near_claude and not near_codex else (
+            "resolved_codex" if near_codex and not near_claude else None)
+        return verdict and {"source": "zoom", "verdict": verdict, "detail": f"both models placed it at {mid} on the crop"}
+    if answer.get("claude") != answer.get("codex"):
         return None
     verdict = side_matching(answer["claude"], item)
     return verdict and {"source": "zoom", "verdict": verdict, "detail": f"both models answered {answer['claude']!r} on the crop"}
@@ -104,7 +118,7 @@ def adjudicate(vocab: dict, comparison: dict, zoom: dict, sam: dict | None) -> d
     margin = float(vocab.get("sam_margin_pct", DEFAULT_MARGIN_PCT))
     results = []
     for item in comparison.get("disagreements", []):
-        evidence = [e for e in (from_zoom(item, zoom), from_constraint(item, vocab),
+        evidence = [e for e in (from_zoom(item, zoom, vocab), from_constraint(item, vocab),
                                 from_sam(item, sam, vocab, margin) if sam else None) if e]
         verdicts = {e["verdict"] for e in evidence}
         verdict = verdicts.pop() if len(verdicts) == 1 else "unverifiable"
