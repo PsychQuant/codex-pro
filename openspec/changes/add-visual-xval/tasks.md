@@ -291,7 +291,7 @@
 
 - [x] 11.1 規格與 design 依第六輪更新（design「第六輪：比對之後也核對答案檔，路徑在產生的地方就只放檔名」；Sealed Claude answers 比對之後核對答案檔與 meta、Blind Codex judgment 的登入檢查與 prompt 先寫、Structured result file 的 backend_error 與路徑、Privacy reminder before sending images 的寫入目錄封閉清單與損毀的圖）。
   - 驗證：`spectra validate` 與 `spectra analyze` 無 warning。
-- [ ] 11.2 錯誤細節由檔名組成；路徑過濾跨過空白、保留 `~/.codex-pro/`（W1、Q15）。
+- [x] 11.2 錯誤細節由檔名組成；路徑過濾跨過空白、保留 `~/.codex-pro/`（W1、Q15）。
   - [after: 11.1]
 - [ ] 11.3 比對之後核對答案檔；輸入納入 meta.json；sam、adjudicate、result 先核對；frames.json 型別錯誤；原解析度複本限定在 run 內（W2、Q8、Q9）。
   - [after: 11.2]

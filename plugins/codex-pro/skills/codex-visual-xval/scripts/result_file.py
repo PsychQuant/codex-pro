@@ -62,18 +62,25 @@ def local_roots() -> list[tuple[str, str]]:
     return sorted((r for r in roots if len(r[0]) > 1), key=lambda r: -len(r[0]))
 
 
+OWN_PLACES = ("~/.codex-pro/",)   # the skill's own fixed locations, which tell the user where to look
+
+
 def sanitize(text: str) -> str:
-    """One line, no control characters, and no local roots. The roots are replaced as prefixes,
-    which also works for a path with spaces and leaves a URL alone; a pattern that guessed where a
-    path ended did neither (#23 verify round 3, L15; round 4, M3)."""
+    """One line, no control characters, and no local directories. Details are built from file names
+    where they are raised (#23 verify round 6, W1); this is the backstop for what a tool printed. The
+    machine's roots are replaced first, then any absolute path is cut back to its last part: from its
+    root to the last '/' before a quote or bracket, across spaces, since a directory name can hold
+    spaces (round 5, V4 stopped at the first space). Cutting some text too many is better than leaving
+    a directory name. A URL is left alone: its slashes follow ':' or '/' or a word."""
     text = re.sub(r"[\r\n\t]", " ", text)
     text = re.sub(r"[\x00-\x1f\x7f]", "", text)
     for root, name in local_roots():
         text = text.replace(root, name)
-    # Any other path keeps only its last part; a URL is left alone, since its slashes follow ':' or '/'
-    # or a word (round 5, V4). Our own messages already name files only.
-    text = re.sub(r"(?<![\w.:/$~])~?/(?:[^\s'\"\],)/]+/)+([^\s'\"\],)/]+)", r"…/\1", text)
-    text = re.sub(r"(?<![\w.:/])(?:~|\$TMPDIR)/(?:[^\s'\"\],)/]+/)*([^\s'\"\],)/]+)", r"…/\1", text)
+    for n, place in enumerate(OWN_PLACES):
+        text = text.replace(place, f"\x00{n}\x00")
+    text = re.sub(r"(?<![\w.:/$~\\])(?:~|\$TMPDIR)?/[^'\"\])\]\x00]*/", "…/", text)
+    for n, place in enumerate(OWN_PLACES):
+        text = text.replace(f"\x00{n}\x00", place)
     return text[:500]
 
 

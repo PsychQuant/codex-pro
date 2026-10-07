@@ -94,7 +94,7 @@ import adjudicate as adjudication  # noqa: E402
 import compare_claims  # noqa: E402
 import media  # noqa: E402
 import result_file  # noqa: E402
-from run_files import (Stop, RUN_MARK, checked_comparison, checked_inputs, dump, inputs_digest, is_run_dir, load,  # noqa: E402
+from run_files import (Stop, RUN_MARK, checked_comparison, checked_inputs, dump, failure, inputs_digest, is_run_dir, load,  # noqa: E402
                        neutral_names, now_iso, run_dir, seal_intact, zoom_record_intact)
 from codex_errors import classify, login_problem  # noqa: E402
 from zoom_round import (class_lines, crop_box, dispute_points, enlargement, position_pads, question,  # noqa: E402
@@ -136,7 +136,7 @@ def init(run: str, vocab_path: str, images: list[str], sequence: bool, first_sid
         raise Stop("target_invalid", "--first-side must be a model identifier on one line (letters, digits, . _ : / @ + -)")
     vocab = load(vocab_path)
     if vocab is None:
-        raise Stop("target_invalid", f"vocabulary unreadable: {vocab_path}")
+        raise Stop("target_invalid", f"vocabulary unreadable: {os.path.basename(vocab_path)}")   # W1
     problems = compare_claims.vocab_problems(vocab)
     if problems:
         raise Stop("target_invalid", "; ".join(problems))
@@ -155,7 +155,7 @@ def init(run: str, vocab_path: str, images: list[str], sequence: bool, first_sid
         try:
             name = media.prepare_copy(src, os.path.join(run, "frames"), f"f{n:02d}")
         except (media.MediaError, OSError, subprocess.CalledProcessError, struct.error) as exc:
-            raise Stop("target_invalid", f"cannot prepare {os.path.basename(src)}: {exc}")
+            raise Stop("target_invalid", f"cannot prepare {os.path.basename(src)}: {failure(exc)}")
         w, h = image_size(os.path.join(run, "frames", name))
         frames[name] = {"source": os.path.abspath(src), "width": w, "height": h}
         if max(v or 0 for v in image_size(src)) > media.MAX_EDGE:
@@ -164,7 +164,7 @@ def init(run: str, vocab_path: str, images: list[str], sequence: bool, first_sid
             try:
                 hires = media.prepare_copy(src, os.path.join(run, "hires"), f"f{n:02d}", max_edge=None)
             except (media.MediaError, OSError, subprocess.CalledProcessError, struct.error) as exc:
-                raise Stop("target_invalid", f"cannot prepare {os.path.basename(src)}: {exc}")
+                raise Stop("target_invalid", f"cannot prepare {os.path.basename(src)}: {failure(exc)}")
             frames[name]["hires"] = os.path.join("hires", hires)
     dump(os.path.join(run, "frames.json"), frames)
     dump(os.path.join(run, "vocab.json"), vocab)
@@ -245,11 +245,12 @@ def runtime(run: str) -> str:
     path = open(os.path.join(run, "runtime.txt"), encoding="utf-8").read().strip() \
         if os.path.exists(os.path.join(run, "runtime.txt")) else ""
     if not path or not os.access(path, os.X_OK):
-        raise Stop("runtime_unavailable", f"codex-call not found (runtime='{path}') remediation=install parallel-ai-agents or run codex-setup")
+        raise Stop("runtime_unavailable", "codex-call not found or not executable"
+                   + (f" ({os.path.basename(path)})" if path else "") + " remediation=install parallel-ai-agents or run codex-setup")
     try:
         help_text = subprocess.run([path, "--help"], capture_output=True, text=True, timeout=120).stdout
     except (OSError, subprocess.TimeoutExpired) as exc:
-        raise Stop("runtime_unavailable", f"codex-call --help failed: {exc}")
+        raise Stop("runtime_unavailable", f"codex-call --help failed: {failure(exc)}")
     if "--image" not in help_text:
         raise Stop("runtime_unsupported", "this codex-call does not accept --image; update parallel-ai-agents (needs 2.24.0 or later)")
     return path
@@ -343,7 +344,7 @@ def call_codex(run: str, prompt: str, images: list[str], tag: str, argv: list[st
         done = subprocess.run(cmd, capture_output=True, text=True)   # foreground; the hard timeout is codex-call's
     except OSError as exc:   # the runtime never started, so nothing was sent
         withdraw_request(run, rnd)
-        raise Stop("runtime_unavailable", f"cannot run codex-call: {exc}")
+        raise Stop("runtime_unavailable", f"cannot run codex-call: {failure(exc)}")
     if done.returncode != 0:   # counted as sent, whatever the message says (round 5, V1)
         error, detail = classify(done.stderr, done.returncode)
         raise Stop(error, f"{detail}; the request is counted as sent, so this round is used up")
@@ -560,7 +561,7 @@ def crops(run: str) -> None:
                            capture_output=True, check=True)
             media.strip_file(target, "png")   # sips writes eXIf and XMP of its own (round 4, M5)
         except (OSError, subprocess.CalledProcessError, media.MediaError, struct.error) as exc:
-            raise Stop("target_invalid", f"cannot crop {item['frame']}: {exc}")
+            raise Stop("target_invalid", f"cannot crop {item['frame']}: {failure(exc)}")
         if item["kind"] == "position":
             item = {**item, "key_point": vocab.get("key_points", {}).get(item["class"], "its key point")}
         elif item["kind"] == "relation":   # the subagent sees only the question file (round 3, T7)
@@ -732,7 +733,7 @@ def main(argv: list[str]) -> None:
     except Stop as stop:
         stop_run(run, step, stop.error, stop.detail, stop.record)
     except Exception as exc:   # an unexpected failure still leaves a record and a result file
-        stop_run(run, step, "internal_error", f"{type(exc).__name__}: {exc}")
+        stop_run(run, step, "internal_error", f"{type(exc).__name__}: {failure(exc)}")
     clear_error(run, step)
 
 

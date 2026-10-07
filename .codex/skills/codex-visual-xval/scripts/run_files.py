@@ -5,6 +5,8 @@ checks that what a step reads is what an earlier step wrote. scripts/xval.py dri
 import datetime
 import json
 import os
+import struct
+import subprocess
 from typing import Any
 
 import seal as sealing
@@ -55,6 +57,21 @@ def run_dir(run: str) -> None:
     if not os.path.exists(os.path.join(run, ".gitignore")):
         with open(os.path.join(run, ".gitignore"), "w", encoding="utf-8") as fh:
             fh.write(RUN_MARK + "\n*\n")
+
+
+def failure(exc: BaseException) -> str:
+    """What went wrong, without local directories: an OSError names its file by name only, and a
+    failed tool reports its exit status, not its command line, which holds full paths (#23 verify
+    round 6, W1)."""
+    if isinstance(exc, subprocess.CalledProcessError):
+        tool = os.path.basename(str(exc.cmd[0])) if isinstance(exc.cmd, (list, tuple)) and exc.cmd else "a tool"
+        return f"{tool} exited {exc.returncode}"
+    if isinstance(exc, OSError):
+        name = f" ({os.path.basename(str(exc.filename))})" if exc.filename else ""
+        return f"{exc.strerror or type(exc).__name__}{name}"
+    if isinstance(exc, struct.error):
+        return "malformed image data"
+    return str(exc)
 
 
 def now_iso() -> str:

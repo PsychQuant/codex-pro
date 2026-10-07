@@ -1132,6 +1132,63 @@ case "$(cat "$WORK/runv4_result.md" 2>/dev/null)" in
   *) pass "a path outside home and the temporary directory loses its directories (V4)" ;;
 esac
 
+# Round 6 (W1): a directory name with spaces, the vocabulary path, an OSError and a failed sips.
+w1=$(HOME="$WORK/home" python3 -B - "$SCRIPTS" "$WORK/home" <<'PY'
+import sys
+sys.path.insert(0, sys.argv[1])
+import result_file
+home = sys.argv[2]
+cases = {
+    "volume": "Permission denied: /Volumes/Client Data/case42/scan.png",
+    "quoted": "[Errno 13] Permission denied: '/Volumes/Client Data/case42/scan.png'",
+    "home": f"cannot read {home}/Clients/Jane Doe/scan 1.png",
+    "traceback": 'File "/opt/Body Conservation/.codex-pro/run/x.py", line 3, in <module>',
+}
+out = {k: result_file.sanitize(v) for k, v in cases.items()}
+leaks = [k for k, v in out.items() if any(w in v for w in ("Client Data", "case42", "Jane Doe", "Clients", "Body Conservation"))]
+kept = all(n in out[k] for k, n in (("volume", "scan.png"), ("quoted", "scan.png"), ("home", "scan 1.png"), ("traceback", "x.py")))
+url = "see https://github.com/PsychQuant/codex-pro/issues/23 for details"
+own = f"not_installed path={home}/.codex-pro/sam-env"
+print(f"leaks={leaks} kept={kept} url={result_file.sanitize(url) == url} "
+      f"own={result_file.sanitize(own) == 'not_installed path=~/.codex-pro/sam-env'}")
+PY
+)
+assert_contains "$w1" "leaks=[] kept=True url=True own=True" \
+  "the path filter drops directory names with spaces, keeps file names, URLs and ~/.codex-pro (W1, Q15)"
+rm -rf "$WORK/runw1a" "$WORK/Client Data"; mkdir -p "$WORK/Client Data/Wang Xiaoming"
+IMG1=$(ls "$WORK"/imgs/*.png | head -1)
+xval init --run "$WORK/runw1a" --vocab "$WORK/Client Data/Wang Xiaoming/vocab.json" "$IMG1"
+w1a=$(cat "$WORK/runw1a/error.json" 2>/dev/null)
+assert_contains "$w1a" "vocab.json" "an unreadable vocabulary is named by its file name"
+case "$w1a" in
+  *"Client Data"*|*Wang*) fail "and its directories stay out of the error (W1)" ;;
+  *) pass "and its directories stay out of the error (W1)" ;;
+esac
+rm -rf "$WORK/runw1b"; cp "$IMG1" "$WORK/Client Data/Wang Xiaoming/scan.png"; chmod 000 "$WORK/Client Data/Wang Xiaoming/scan.png"
+xval init --run "$WORK/runw1b" --vocab "$WORK/vocab.json" "$WORK/Client Data/Wang Xiaoming/scan.png"
+chmod 644 "$WORK/Client Data/Wang Xiaoming/scan.png"
+w1b=$(cat "$WORK/runw1b/error.json" 2>/dev/null)
+assert_contains "$w1b" "scan.png" "an image that cannot be read is named by its file name"
+case "$w1b" in
+  *"Client Data"*|*Wang*) fail "and an OSError's path stays out of the error (W1)" ;;
+  *) pass "and an OSError's path stays out of the error (W1)" ;;
+esac
+mkdir -p "$WORK/failsips"
+cat > "$WORK/failsips/sips" <<'SH'
+#!/bin/sh
+case " $* " in *" -g "*) exec /usr/bin/sips "$@" ;; esac
+exit 13
+SH
+chmod +x "$WORK/failsips/sips"
+rm -rf "$WORK/runw1c"
+w1c_out=$(HOME="$WORK/home" PATH="$WORK/failsips:$PATH" python3 "$SCRIPTS/xval.py" init --run "$WORK/runw1c" \
+  --vocab "$WORK/vocab.json" "$WORK/Client Data/Wang Xiaoming/scan.png" 2>&1)
+assert_contains "$w1c_out" "sips exited 13" "a failed sips reports its exit status"
+case "$w1c_out" in
+  *"Client Data"*|*Wang*|*"--out"*) fail "not its command line or the image's directories (W1)" ;;
+  *) pass "not its command line or the image's directories (W1)" ;;
+esac
+
 rm -rf "$WORK/run13"; cp "$WORK/imgs/shot_2026-09-11_1001.png" "$WORK/thirteenth.png"
 xval init --run "$WORK/run13" --vocab "$WORK/vocab.json" "$WORK"/imgs/*.png "$WORK/thirteenth.png"
 assert_contains "$RUN_OUT" '"error": "target_invalid"' "a run with 13 images is refused"
