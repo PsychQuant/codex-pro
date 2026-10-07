@@ -9,12 +9,13 @@ which can hold EXIF and GPS, #23 verify round 3, L14), and each copy ends where 
 the image ends, because a second image or a motion-photo video appended there carries its own
 EXIF and GPS (round 2, R7; round 3, T2):
 
-  JPEG  frame, Huffman, quantisation, restart and scan segments, JFIF APP0, ICC colour profiles
-        (APP2 "ICC_PROFILE") and Adobe APP14, also between progressive scans; the copy ends at
-        the end-of-image marker, which may follow any number of 0xFF fill bytes
+  JPEG  frame, Huffman, quantisation, restart and scan segments, JFIF APP0 without its thumbnail,
+        ICC colour profiles (APP2 "ICC_PROFILE") and Adobe's APP14 (by its signature), also between
+        progressive scans; the copy ends at the end-of-image marker, which may follow any number of
+        0xFF fill bytes, and a JPEG without one is refused, since its end cannot be found
   PNG   the chunks in PNG_KEEP; the copy ends at IEND
-  WebP  the chunks in WEBP_KEEP, without the VP8X flags for EXIF and XMP; the copy ends at the
-        length given in the RIFF header
+  WebP  the chunks in WEBP_KEEP, without the VP8X flags for EXIF and XMP, and inside each animation
+        frame (ANMF) only its image chunks; the copy ends at the length given in the RIFF header
   GIF   converted to PNG first, then treated as PNG
 
 The format is read from the file header, not the extension. An EXIF orientation (JPEG APP1, PNG
@@ -129,10 +130,19 @@ def orientation(data: bytes) -> int:
 
 
 def _drop(marker: int, seg: bytes) -> bool:
-    keep = (marker in JPEG_KEEP or marker == 0xEE
+    keep = (marker in JPEG_KEEP
+            or (marker == 0xEE and seg[4:9] == b"Adobe")   # by its signature (#23 verify round 4, M5)
             or (marker == 0xE0 and seg[4:9] == b"JFIF\x00")
             or (marker == 0xE2 and seg[4:16] == b"ICC_PROFILE\x00"))
     return not keep
+
+
+def _keep(marker: int, seg: bytes) -> bytes:
+    """A kept segment as written to the copy: a JFIF APP0 loses its thumbnail, which can show the
+    uncropped original (round 4, M5)."""
+    if marker == 0xE0 and seg[4:9] == b"JFIF\x00" and len(seg) > 18:
+        return b"\xff\xe0" + struct.pack(">H", 16) + seg[4:16] + b"\x00\x00"
+    return seg
 
 
 def _scan_data(rest: bytes) -> bytes:
@@ -156,14 +166,15 @@ def _scan_data(rest: bytes) -> bytes:
         length = struct.unpack(">H", rest[pos + 2:pos + 4])[0]
         seg = rest[pos:pos + 2 + length]
         if not _drop(marker, seg):
-            out += seg
+            out += _keep(marker, seg)
         pos += 2 + length
-    return bytes(out)
+    # No end-of-image marker: what follows the image cannot be told apart from it (round 4, M5).
+    raise MediaError("JPEG without an end-of-image marker")
 
 
 def strip_jpeg(data: bytes) -> bytes:
     segments, rest = _jpeg_segments(data)
-    kept = [seg for marker, seg in segments if not _drop(marker, seg)]
+    kept = [_keep(marker, seg) for marker, seg in segments if not _drop(marker, seg)]
     return b"\xff\xd8" + b"".join(seg for seg in kept if seg != b"\xff\xd8") + _scan_data(rest)
 
 
@@ -194,11 +205,32 @@ def strip_webp(data: bytes) -> bytes:
         body = data[pos + 8:min(pos + 8 + size, end)]
         if kind == b"VP8X" and body:
             body = bytes([body[0] & ~0x0C]) + body[1:]   # clear the EXIF (0x08) and XMP (0x04) flags
+        if kind == b"ANMF" and len(body) >= 16:   # a frame keeps its header and image chunks (round 4, M5)
+            body = body[:16] + _webp_frame_chunks(body[16:])
+            size = len(body)
         if kind in WEBP_KEEP:
             chunks.append(kind + struct.pack("<I", size) + body + (b"\x00" if size % 2 else b""))
         pos += 8 + size + (size % 2)
     payload = b"WEBP" + b"".join(chunks)
     return b"RIFF" + struct.pack("<I", len(payload)) + payload
+
+
+def _webp_frame_chunks(data: bytes) -> bytes:
+    out, pos = [], 0
+    while pos + 8 <= len(data):
+        kind, size = data[pos:pos + 4], struct.unpack("<I", data[pos + 4:pos + 8])[0]
+        if kind in (b"ALPH", b"VP8 ", b"VP8L"):
+            out.append(data[pos:pos + 8 + size] + (b"\x00" if size % 2 else b""))
+        pos += 8 + size + (size % 2)
+    return b"".join(out)
+
+
+def strip_file(path: str, kind: str) -> None:
+    strip = {"jpeg": strip_jpeg, "png": strip_png, "webp": strip_webp}[kind]
+    with open(path, "rb") as fh:
+        cleaned = strip(fh.read())
+    with open(path, "wb") as fh:
+        fh.write(cleaned)
 
 
 def prepare_copy(src: str, frames_dir: str, stem: str) -> str:
@@ -220,9 +252,5 @@ def prepare_copy(src: str, frames_dir: str, stem: str) -> str:
     # (measured 2026-10-07), so anything stripped before a sips step comes back.
     for step in ORIENTATION_STEPS.get(turn, []):
         subprocess.run(["sips", *step, target, "--out", target], capture_output=True, check=True)
-    strip = {"jpeg": strip_jpeg, "png": strip_png, "webp": strip_webp}[kind]
-    with open(target, "rb") as fh:
-        cleaned = strip(fh.read())
-    with open(target, "wb") as fh:
-        fh.write(cleaned)
+    strip_file(target, kind)
     return os.path.basename(target)

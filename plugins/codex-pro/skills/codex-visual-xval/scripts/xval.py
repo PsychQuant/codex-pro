@@ -527,7 +527,8 @@ def crops(run: str) -> None:
             scale = enlargement(cw, ch)
             subprocess.run(["sips", "-Z", str(round(scale * max(cw, ch))), target, "--out", target],
                            capture_output=True, check=True)
-        except (OSError, subprocess.CalledProcessError) as exc:
+            media.strip_file(target, "png")   # sips writes eXIf and XMP of its own (round 4, M5)
+        except (OSError, subprocess.CalledProcessError, media.MediaError, struct.error) as exc:
             raise Stop("target_invalid", f"cannot crop {item['frame']}: {exc}")
         if item["kind"] == "position":
             item = {**item, "key_point": vocab.get("key_points", {}).get(item["class"], "its key point")}

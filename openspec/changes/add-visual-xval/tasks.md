@@ -253,7 +253,7 @@
   - [after: 9.1]
 - [x] 9.4 紀錄與輸入保護：run 目錄不覆寫 `.gitignore`、不接管含其他檔案的目錄；第一輪送出前核對輸入與路徑；init 失敗也用掉這個 run；「已經做過」的檢查一律最先；放大計畫綁定比對結果、裁切圖與 SAM 輸出記錄雜湊；Python 3.9 的路徑寫錯誤歷史；profile 欄位錯誤具名（U5、U6、M1、M4、M6、M10）。
   - [after: 9.3]
-- [ ] 9.5 影格白名單的殘留：APP14 檢查 Adobe 簽章、JFIF 去掉縮圖、ANMF 只留影像子區塊、沒有 EOI 的 JPEG 拒收、裁切圖也清除 metadata（M5）。
+- [x] 9.5 影格白名單的殘留：APP14 檢查 Adobe 簽章、JFIF 去掉縮圖、ANMF 只留影像子區塊、沒有 EOI 的 JPEG 拒收、裁切圖也清除 metadata（M5）。
   - [after: 9.4]
 - [ ] 9.6 結果檔：路徑過濾改為前綴替換（家目錄與暫存目錄），不再改壞 URL；Limitations 寫明雙方一致的數量被當成真值（M3、M11）。
   - [after: 9.5]

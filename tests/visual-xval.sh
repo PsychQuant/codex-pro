@@ -938,6 +938,39 @@ xval init --run "$WORK/runr3m" --vocab "$WORK/vocab.json" "$WORK/fill.jpg"
 assert_contains "$RUN_OUT" "already" "a run is initialised only once, so the privacy confirmation covers one set of images (L4)"
 assert_eq "4" "$(ls "$WORK/runr3m/frames" | wc -l | tr -d ' ')" "the refused second init leaves the frames as they were"
 
+# Round 4 (M5): an APP14 that is not Adobe's, a JFIF thumbnail, unknown blocks inside a WebP
+# animation frame; a JPEG without an end-of-image marker is refused.
+python3 - "$WORK" <<'PY'
+import base64, struct, sys
+w = sys.argv[1]
+data = open(f"{w}/plain.jpg", "rb").read()
+seg = lambda marker, body: bytes([0xFF, marker]) + struct.pack(">H", len(body) + 2) + body
+app14 = seg(0xEE, b"NOTADOBE" + b"GPSSECRET-A14")
+jfif = seg(0xE0, b"JFIF\x00" + b"\x01\x02" + b"\x00" + b"\x00\x01\x00\x01" + bytes([5, 1]) + b"GPSSECRET-THUMB")
+open(f"{w}/app14.jpg", "wb").write(data[:2] + jfif + app14 + data[2:])
+open(f"{w}/no_eoi.jpg", "wb").write(data[:-2] + b"\xa9xyz+25.0330+121.5654/")
+tiny = base64.b64decode("UklGRh4AAABXRUJQVlA4TBEAAAAvA8AAAAdQjyLXo/+BiOh/AAA=")
+vp8l = tiny[12:]
+chunk = lambda tag, body: tag + struct.pack("<I", len(body)) + body + (b"\x00" if len(body) % 2 else b"")
+frame = (0).to_bytes(3, "little") * 2 + (3).to_bytes(3, "little") * 2 + (100).to_bytes(3, "little") + b"\x00"
+anmf = chunk(b"ANMF", frame + vp8l + chunk(b"ZZZZ", b"GPSSECRET-ANMF"))
+vp8x = chunk(b"VP8X", bytes([0x02, 0, 0, 0]) + (3).to_bytes(3, "little") * 2)
+anim = chunk(b"ANIM", b"\x00\x00\x00\x00\x00\x00")
+body = vp8x + anim + anmf
+open(f"{w}/anim.webp", "wb").write(b"RIFF" + struct.pack("<I", 4 + len(body)) + b"WEBP" + body)
+PY
+rm -rf "$WORK/runr4m"
+xval init --run "$WORK/runr4m" --vocab "$WORK/vocab.json" "$WORK/app14.jpg" "$WORK/anim.webp"
+assert_eq "0" "$RUN_STATUS" "init accepts a JPEG with a foreign APP14 and a thumbnail, and an animated WebP"
+for frame in f01.jpg f02.webp; do
+  assert_eq "0" "$(grep -c GPSSECRET "$WORK/runr4m/frames/$frame" 2>/dev/null || true)" "$frame carries none of the planted data (M5)"
+done
+assert_contains "$(sips -g pixelWidth "$WORK/runr4m/frames/f01.jpg" 2>/dev/null)" "pixelWidth: " "the JPEG without its thumbnail still decodes"
+assert_contains "$(sips -g pixelWidth "$WORK/runr4m/frames/f02.webp" 2>/dev/null)" "pixelWidth: 4" "the animated WebP without the unknown block still decodes"
+rm -rf "$WORK/runr4e"
+xval init --run "$WORK/runr4e" --vocab "$WORK/vocab.json" "$WORK/no_eoi.jpg"
+assert_contains "$RUN_OUT" '"error": "target_invalid"' "a JPEG without an end-of-image marker is refused: its end cannot be found"
+
 # Every detail in the result file is free of local paths, not only SAM's (#23 verify round 3, L15).
 rm -rf "$WORK/runpath"
 xval init --run "$WORK/runpath" --vocab "$WORK/vocab.json" "$WORK/home/gone_2026-09-11.png" "$WORK/missing.png"
@@ -1310,6 +1343,8 @@ assert_eq "1" "$(ls "$WORK/run5/crops" 2>/dev/null | wc -l | tr -d ' ')" "only t
 crop_w=$(sips -g pixelWidth "$WORK/run5/crops/z01.png" 2>/dev/null | awk '/pixelWidth/{print $2}')
 box_w=$(python3 -c 'import json,sys; b=json.load(open(sys.argv[1]))["d1"]["box_px"]; print(b[2]-b[0])' "$WORK/run5/zoom_plan.json")
 assert_eq "$((box_w * 2))" "$crop_w" "the crop is enlarged twice"
+assert_eq "0" "$(grep -c -e eXIf -e 'XML:com.adobe.xmp' "$WORK/run5/crops/z01.png" 2>/dev/null || true)" \
+  "the crops carry none of the metadata sips writes (M5)"
 
 rm -f "$WORK/mock.log" "$WORK/prompts.txt"
 cp "$WORK/run5/zoom_plan.json" "$WORK/zoom_plan_before.json"
