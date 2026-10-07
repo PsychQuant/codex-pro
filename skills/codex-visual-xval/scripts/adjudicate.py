@@ -104,9 +104,13 @@ def from_constraint(item: dict, vocab: dict) -> dict | None:
         return None
     over = {side: item[side] > limit for side in ("claude", "codex")}
     if over["claude"] and not over["codex"]:
-        return {"source": "constraint", "verdict": "resolved_codex", "detail": f"Claude's count {item['claude']} exceeds max {limit}"}
+        return {"source": "constraint", "verdict": "resolved_codex",
+                "detail": f"Claude's count {item['claude']} exceeds max {limit}: this excludes Claude's count; "
+                          f"it does not confirm Codex's {item['codex']}"}
     if over["codex"] and not over["claude"]:
-        return {"source": "constraint", "verdict": "resolved_claude", "detail": f"Codex's count {item['codex']} exceeds max {limit}"}
+        return {"source": "constraint", "verdict": "resolved_claude",
+                "detail": f"Codex's count {item['codex']} exceeds max {limit}: this excludes Codex's count; "
+                          f"it does not confirm Claude's {item['claude']}"}
     return None
 
 
@@ -148,6 +152,16 @@ def from_sam(item: dict, sam: dict, vocab: dict, margin: float) -> dict | None:
     return None
 
 
+def refuted_both(item: dict, zoom: dict) -> str:
+    """Both models gave the same zoom answer, and it is neither side's original answer."""
+    answer = zoom.get(item["id"])
+    if not answer or item["kind"] == "position" or answer.get("claude") != answer.get("codex"):
+        return ""
+    if answer["claude"] in (item["claude"], item["codex"]):
+        return ""
+    return f"the zoom round refuted both: both models answered {answer['claude']!r} on the crop"
+
+
 def adjudicate(vocab: dict, comparison: dict, zoom: dict, sam: dict | None) -> dict:
     margin = float(vocab.get("sam_margin_pct", DEFAULT_MARGIN_PCT))
     results = []
@@ -157,7 +171,7 @@ def adjudicate(vocab: dict, comparison: dict, zoom: dict, sam: dict | None) -> d
         verdicts = {e["verdict"] for e in evidence}
         verdict = verdicts.pop() if len(verdicts) == 1 else "unverifiable"
         note = "conflicting evidence" if len({e["verdict"] for e in evidence}) > 1 else (
-            "no third evidence" if not evidence else "")
+            refuted_both(item, zoom) or ("no third evidence" if not evidence else ""))
         results.append({"id": item["id"], "frame": item["frame"], "kind": item["kind"],
                         "verdict": verdict, "evidence": evidence, "note": note})
     counts = {v: sum(1 for r in results if r["verdict"] == v) for v in ("resolved_claude", "resolved_codex", "unverifiable")}

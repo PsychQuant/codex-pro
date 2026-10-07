@@ -119,7 +119,7 @@
   - 模型鎖定 revision、權重放在 `~/.codex-pro/sam-env/` 內、追蹤時只用本機檔案；`sam_env.sh` 以 `python -I` 執行。
   - 驗證：fixture 測試——其他類別的分歧不被 SAM 裁決；DA 的「同一支標兩次」情境由 SAM 判給 Codex；SAM smoke 跑在實際影格上（§E）。
   - [after: 6.2]
-- [ ] 6.6 失敗路徑與紀錄，含 Interpreter requirement（B10、B11、I1、I10）。
+- [x] 6.6 失敗路徑與紀錄，含 Interpreter requirement（B10、B11、I1、I10）。
   - Interpreter requirement：`xval.py` 在任何 import 之前檢查 Python 版本，低於 3.10 時寫 `error.json`，`result` 寫出結果檔（`runtime_unavailable`）。
   - 每一步的意外例外寫成 `internal_error`；沒有比對結果時 `adjudicate` 正常結束。
   - `classify` 依 codex-call 的實際錯誤訊息判定，圖片錯誤為 `target_invalid`。

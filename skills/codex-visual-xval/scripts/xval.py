@@ -32,6 +32,56 @@ sys.dont_write_bytecode = True   # no __pycache__ next to the bundled scripts
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 
+
+def _older_python(argv):
+    """Stop under Python < 3.10 before anything below is defined: those definitions use 3.10
+    syntax and would crash at import, leaving no result file (#23 verify B10). This function
+    must itself stay 3.9-compatible."""
+    found = "%d.%d.%d" % tuple(sys.version_info[:3])
+    detail = "Python 3.10 or later is required; this is Python %s (%s)" % (found, sys.executable)
+    command = argv[0] if argv else ""
+    run = argv[argv.index("--run") + 1] if "--run" in argv and argv.index("--run") + 1 < len(argv) else None
+    if not run:
+        print(__doc__, file=sys.stderr)
+        sys.exit(64)
+    if command != "result":
+        if os.path.isdir(run):
+            with open(os.path.join(run, "error.json"), "w", encoding="utf-8") as fh:
+                json.dump({"error": "runtime_unavailable", "detail": detail, "step": command}, fh)
+        print(json.dumps({"error": "runtime_unavailable", "detail": detail}))
+        sys.exit(5)
+    def read(name, default):
+        try:
+            with open(os.path.join(run, name), encoding="utf-8") as fh:
+                return json.load(fh)
+        except (OSError, ValueError):
+            return default
+    profile, frames = read("profile.json", {}), read("frames.json", {})
+    now = datetime.datetime.now().astimezone()
+    fm = [("skill", "visual-xval"), ("target", "%d images" % len(frames)), ("model", profile.get("model", "")),
+          ("effort", profile.get("effort", "")), ("profile_source", profile.get("profile_source", "")),
+          ("timestamp", now.isoformat(timespec="seconds")), ("n_images", len(frames)), ("n_claims", 0),
+          ("agreement_rate", ""), ("claude_answers_sha256", ""), ("sealed_at", ""), ("seal_broken", "true"),
+          ("codex_requested_at", ""), ("codex_reply_sha256", ""), ("sam_status", "not_run"),
+          ("error", "runtime_unavailable")]
+    lines = ["---"] + ["%s: %s" % kv for kv in fm] + ["---", "", "# Visual cross-validation — %d images" % len(frames), "",
+             "Run stopped: `runtime_unavailable`. No retry.", "", "Runtime preflight detail: " + detail, "",
+             "## Agreement", "", "No comparison was made.", "", "## Disagreements", "", "None.", "",
+             "## SAM evidence", "", "Status: `not_run`.", "", "## Seal", "", "Not checked: the run stopped first.", "",
+             "## Limitations", "", "- Agreement between the two models does not establish that either is correct; "
+             "only a human reference can."]
+    out = argv[argv.index("--out") + 1] if "--out" in argv and argv.index("--out") + 1 < len(argv) else os.path.join(
+        ".codex-pro", "visual-xval-%s.md" % now.astimezone(datetime.timezone.utc).strftime("%Y%m%dT%H%M%SZ"))
+    os.makedirs(os.path.dirname(out) or ".", exist_ok=True)
+    with open(out, "w", encoding="utf-8") as fh:
+        fh.write("\n".join(lines) + "\n")
+    print(json.dumps({"result": out, "error": "runtime_unavailable"}))
+    sys.exit(0)
+
+
+if sys.version_info < (3, 10):
+    _older_python(sys.argv[1:])
+
 import adjudicate as adjudication  # noqa: E402
 import compare_claims  # noqa: E402
 import sam_track  # noqa: E402
@@ -213,17 +263,37 @@ def extract_json(text: str) -> Any:
 
 
 def classify(stderr: str, status: int) -> tuple[str, str]:
-    low = stderr.lower()
-    if "rate limit" in low or "429" in low:
-        return "rate_limit", stderr.strip()[-500:]
-    if "unauthorized" in low or "401" in low or "auth" in low:
-        return "oauth_invalid", stderr.strip()[-500:]
+    """codex-call reports a failure as one `error: <message>` line. Judge that line, and match
+    whole markers ("HTTP 429") rather than digits: an image path inside a run directory named
+    after its timestamp can contain "429" or "401" (#23 verify I1)."""
+    lines = re.findall(r"^error: (.*)$", stderr, re.MULTILINE)
+    message = (lines[-1] if lines else stderr).strip()
+    low = message.lower()
+    detail = message[-500:]
+    if message.startswith("--image "):
+        return "target_invalid", detail
+    if re.search(r"\bhttp 429\b", low) or "rate limit" in low or "usage limit" in low:
+        return "rate_limit", detail
+    if re.search(r"\bhttp 40[13]\b", low) or "unauthorized" in low or "auth.json" in low or "refresh" in low:
+        return "oauth_invalid", detail
     if "timed out" in low or "timeout" in low:
-        return "timeout", stderr.strip()[-500:]
-    return "runtime_unavailable", f"codex-call exit {status}: {stderr.strip()[-500:]}"
+        return "timeout", detail
+    return "runtime_unavailable", f"codex-call exit {status}: {detail}"
+
+
+def profile(run: str) -> dict:
+    """The profile Step 4.1 resolved for this run. Shell variables do not survive between the
+    skill's Bash calls, and a missing value used to fall back to a default in silence (#23 verify B11)."""
+    data = load(os.path.join(run, "profile.json"))
+    ok = (isinstance(data, dict) and all(isinstance(data.get(k), str) and data[k] for k in ("model", "effort"))
+          and isinstance(data.get("max_time"), int) and not isinstance(data.get("max_time"), bool) and data["max_time"] > 0)
+    if not ok:
+        raise Stop("target_invalid", "no resolved profile in the run directory (Step 4.1 writes profile.json); nothing was sent")
+    return data
 
 
 def call_codex(run: str, prompt: str, images: list[str], tag: str, argv: list[str]) -> str:
+    settings = profile(run)
     path = runtime(run)
     rnd = "1" if tag == "round1" else tag
     record_request(run, rnd, requested_at=now_iso(), requested_epoch=datetime.datetime.now().timestamp())
@@ -231,8 +301,8 @@ def call_codex(run: str, prompt: str, images: list[str], tag: str, argv: list[st
     output = os.path.join(run, f"codex_{tag}.md")
     with open(prompt_file, "w", encoding="utf-8") as fh:
         fh.write(prompt)
-    cmd = [path, "--output", output, "--model", option(argv, "--model") or "gpt-5.6-sol",
-           "--effort", option(argv, "--effort") or "xhigh", "--max-time", option(argv, "--max-time") or "600",
+    cmd = [path, "--output", output, "--model", settings["model"],
+           "--effort", settings["effort"], "--max-time", str(settings["max_time"]),
            "--instructions", INSTRUCTIONS, "--prompt-file", prompt_file]
     for image in images:
         cmd += ["--image", image]
@@ -542,6 +612,11 @@ def zoom_evidence(run: str) -> tuple[dict, dict]:
 
 
 def adjudicate(run: str) -> None:
+    comparison, vocab = load(os.path.join(run, "comparison.json")), load(os.path.join(run, "vocab.json"))
+    if comparison is None or vocab is None:   # the run stopped before comparing: nothing to settle
+        dump(os.path.join(run, "adjudication.json"), {"counts": {}, "adjudications": [], "note": "no comparison"})
+        print(json.dumps({"counts": {}, "note": "no comparison"}))
+        return
     zoom, zoom_status = zoom_evidence(run)
     sam_state = load(os.path.join(run, "sam.json"), {})
     track = load(os.path.join(run, "track.json")) if sam_state.get("sam_status") == "ok" else None
@@ -572,6 +647,13 @@ def result(run: str, argv: list[str]) -> None:
     adjudicated = load(os.path.join(run, "adjudication.json"), {})
     seal_record = load(os.path.join(run, "seal.json"), {})
     seal_check = load(os.path.join(run, "seal_check.json"), {})
+    seal_when = "before comparison"
+    if not seal_check and seal_record:
+        # The run stopped before comparing; check the seal now rather than call it intact unchecked.
+        now_digest = sealing.digest(os.path.join(run, "claude.json")) if os.path.isfile(os.path.join(run, "claude.json")) else None
+        seal_check = {"sha256_now": now_digest, "seal_broken": now_digest != seal_record.get("sha256")}
+        seal_when = "when the result was written"
+    settings = load(os.path.join(run, "profile.json"), {})
     request = load(os.path.join(run, "requests.json"), {}).get("1", {})
     codex_check = load(os.path.join(run, "codex_check.json"), {})
     sam_state = load(os.path.join(run, "sam.json"), {})
@@ -587,9 +669,9 @@ def result(run: str, argv: list[str]) -> None:
     fm = {
         "skill": "visual-xval",
         "target": f"{n_images} images" + (" (sequence)" if meta.get("sequence") else ""),
-        "model": option(argv, "--model") or "gpt-5.6-sol",
-        "effort": option(argv, "--effort") or "xhigh",
-        "profile_source": option(argv, "--profile-source") or "default",
+        "model": settings.get("model", ""),
+        "effort": settings.get("effort", ""),
+        "profile_source": settings.get("profile_source", ""),
         "timestamp": now.isoformat(timespec="seconds"),
         "n_images": n_images,
         "n_claims": n_claims,
@@ -650,7 +732,7 @@ def result(run: str, argv: list[str]) -> None:
                      f"{len(track.get('invalid_frames', []))} — {', '.join(track.get('invalid_frames', [])) or 'none'}.")
     lines += ["", "## Seal", "",
               f"Claude's answers: SHA-256 `{fm['claude_answers_sha256'] or 'none'}`, sealed at {fm['sealed_at'] or 'never'}; "
-              f"recomputed before comparison: `{seal_check.get('sha256_now') or 'n/a'}` → "
+              f"recomputed {seal_when}: `{seal_check.get('sha256_now') or 'n/a'}` → "
               + ("**broken**." if fm["seal_broken"] == "true" else "intact.")]
     if request:
         order = (seal_record.get("sealed_epoch") or 0) < (request.get("requested_epoch") or 0)
@@ -704,11 +786,27 @@ def main(argv: list[str]) -> None:
             print(__doc__, file=sys.stderr)
             sys.exit(64)
     except Stop as stop:
-        record = {"error": stop.error, "detail": stop.detail, "step": command}
-        if os.path.isdir(run):
-            dump(os.path.join(run, "error.json"), record)
-        print(json.dumps({"error": stop.error, "detail": stop.detail}, ensure_ascii=False))
-        sys.exit(5)
+        stop_run(run, command, stop.error, stop.detail)
+    except Exception as exc:   # an unexpected failure still leaves a record and a result file
+        stop_run(run, command, "internal_error", f"{type(exc).__name__}: {exc}")
+    clear_error(run, command)
+
+
+def stop_run(run: str, command: str, error: str, detail: str) -> None:
+    record = {"error": error, "detail": detail, "step": command, "at": now_iso()}
+    if os.path.isdir(run):
+        dump(os.path.join(run, "error.json"), record)
+        with open(os.path.join(run, "errors.jsonl"), "a", encoding="utf-8") as fh:   # history survives clearing
+            fh.write(json.dumps(record, ensure_ascii=False) + "\n")
+    print(json.dumps({"error": error, "detail": detail}, ensure_ascii=False))
+    sys.exit(5)
+
+
+def clear_error(run: str, command: str) -> None:
+    """A step that now completes clears the error it raised before; another step's error stays."""
+    current = load(os.path.join(run, "error.json"))
+    if current and current.get("step") == command and command != "result":
+        os.remove(os.path.join(run, "error.json"))
 
 
 if __name__ == "__main__":

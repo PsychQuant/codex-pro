@@ -26,6 +26,12 @@ fail() {
   printf '%b  ✗%b %s\n' "$C_FAIL" "$C_RESET" "${1:-fail}"
 }
 
+# skip <what> <why> — a case that cannot run here. Not counted as a pass: a skipped case
+# proves nothing, so it must not raise the pass total; the reason is printed instead.
+skip() {
+  printf '  - %s (skipped: %s)\n' "${1:-case}" "${2:-not applicable here}"
+}
+
 assert_eq() {
   # assert_eq <expected> <actual> <msg>
   local expected="$1" actual="$2" msg="${3:-assert_eq}"

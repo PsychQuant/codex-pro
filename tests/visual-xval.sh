@@ -47,7 +47,8 @@ checks = {
     "no_codex_cli": re.search(r"(^|\s)codex exec", body) is None,
     "foreground": "前景同步執行" in body and "run_in_background" in body,
     "classes": bool(step5) and all(c in step5.group(1) for c in (
-        "rate_limit", "oauth_invalid", "timeout", "target_invalid", "runtime_unsupported", "parse_failed")),
+        "rate_limit", "oauth_invalid", "timeout", "target_invalid", "runtime_unsupported", "parse_failed", "internal_error")),
+    "python_310": "Python 3.10" in body,
     "all_failures_anchor": "\n\n**所有 failure 仍寫 result file**" in body,
     "no_retry": "所有 failure 都不 retry" in body,
     "one_error_enum": len(re.findall(r"error: <[^>\n]+>", body)) == 1,
@@ -505,6 +506,8 @@ assert_eq "resolved_claude" "$(verdict d1)" "spec example: SAM measures 3.5% (th
 assert_contains "$(json_get "$RUN_OUT" "[a['evidence'] for a in d['adjudications'] if a['id'] == 'd1'][0]")" "3.5" \
   "the SAM measurement is recorded as evidence"
 assert_eq "resolved_codex" "$(verdict d2)" "a count above the vocabulary's maximum loses (3 instruments vs max 2)"
+assert_contains "$(json_get "$RUN_OUT" "[a['evidence'][0]['detail'] for a in d['adjudications'] if a['id'] == 'd2'][0]")" \
+  "does not confirm" "a violated maximum is recorded as excluding one side, not confirming the other"
 
 run_py adjudicate.py "$WORK/vocab_limits.json" "$WORK/disputes.json" --sam "$WORK/track_518.json"
 assert_eq "unverifiable" "$(verdict d1)" "a measurement within the SAM margin (5.18 vs 5) is not evidence"
@@ -517,6 +520,11 @@ assert_eq "unverifiable" "$(verdict d1)" "without any third evidence the disagre
 
 run_py adjudicate.py "$WORK/vocab_limits.json" "$WORK/disputes.json" --zoom "$WORK/zoom_codex.json"
 assert_eq "resolved_codex" "$(verdict d1)" "matching zoom-round answers that agree with Codex resolve to Codex"
+printf '{"d3": {"claude": 0, "codex": 0}}\n' > "$WORK/zoom_both_wrong.json"
+run_py adjudicate.py "$WORK/vocab_limits.json" "$WORK/disputes.json" --zoom "$WORK/zoom_both_wrong.json"
+assert_eq "unverifiable" "$(verdict d3)" "zoom answers that match neither side settle nothing"
+assert_contains "$(json_get "$RUN_OUT" "[a['note'] for a in d['adjudications'] if a['id'] == 'd3'][0]")" "refuted both" \
+  "zoom answers that agree with each other but match neither side are reported as refuting both"
 
 python3 - "$WORK" <<'PY'
 import json, sys
@@ -612,10 +620,14 @@ xval() {   # xval <args...> — mock runtime, isolated HOME
   RUN_OUT=$(HOME="$WORK/home" MOCK_LOG="$WORK/mock.log" MOCK_PROMPTS="$WORK/prompts.txt" \
     PATH="$WORK/stubbin:$PATH" python3 "$SCRIPTS/xval.py" "$@" 2>&1) || RUN_STATUS=$?
 }
+profile_in() {   # profile_in <run> — the profile Step 4.1 records in the run directory
+  printf '{"model": "gpt-test", "effort": "high", "max_time": 30, "profile_source": "default"}\n' > "$1/profile.json"
+}
 new_run() {   # new_run <dir> — init a run on the twelve images and seal Claude's marked claims
   rm -rf "$1" "$WORK/mock.log" "$WORK/prompts.txt"
   xval init --run "$1" --vocab "$WORK/vocab.json" "$WORK"/imgs/*.png
   xval confirm-privacy --run "$1"
+  profile_in "$1"
   cp "$WORK/claude_marked.json" "$1/claude.json"
   printf '%s\n' "$WORK/stubbin/codex-call" > "$1/runtime.txt"
   : > "$1/runtime_error.txt"
@@ -666,6 +678,27 @@ assert_eq "5" "$RUN_STATUS" "a second seal is refused"
 assert_eq "$seal_before" "$(cat "$WORK/run0/seal.json")" "a refused second seal leaves the first seal unchanged"
 rm -f "$WORK/mock.log"
 
+# The profile is read from the run directory; without it nothing is sent (#23 verify B11).
+new_run "$WORK/run0p"
+rm -f "$WORK/run0p/profile.json" "$WORK/mock.log"
+xval ask --run "$WORK/run0p" --round 1
+assert_contains "$RUN_OUT" '"error": "target_invalid"' "no request when the run has no recorded profile"
+assert_no_file "$WORK/mock.log" "nothing is sent without a recorded profile"
+step41=$(python3 - "$SKILL" <<'PY'
+import re, sys
+body = open(sys.argv[1], encoding="utf-8").read()
+sec = re.search(r"### Step 4\.1: Resolve profile\n(.*?)\n### Step 4\.2", body, re.DOTALL)
+print(re.findall(r"```bash\n(.*?)\n```", sec.group(1), re.DOTALL)[0] if sec else "")
+PY
+)
+mkdir -p "$WORK/p41/home/.codex-pro" "$WORK/p41/project/run"
+printf 'model: gpt-global\neffort: low\n' > "$WORK/p41/home/.codex-pro/profile.yaml"
+( cd "$WORK/p41/project" && HOME="$WORK/p41/home" RUN=run bash -c "$step41" ) >/dev/null 2>&1
+assert_eq "gpt-global low 600 global" \
+  "$(python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); print(d["model"], d["effort"], d["max_time"], d["profile_source"])' "$WORK/p41/project/run/profile.json" 2>/dev/null)" \
+  "Step 4.1 records the resolved profile in the run directory"
+rm -rf "$WORK/run0p" "$WORK/p41" "$WORK/mock.log"
+
 # A runtime path that is missing is runtime_unavailable, not a crash.
 : > "$WORK/run1/runtime.txt"
 xval ask --run "$WORK/run1" --round 1 --model m --effort e --max-time 30
@@ -683,6 +716,7 @@ RUN_OUT=$(HOME="$WORK/home" MOCK_REPLY="$WORK/codex_reply.md" MOCK_LOG="$WORK/mo
 assert_eq "0" "$RUN_STATUS" "round 1 with a valid JSON reply exits 0"
 assert_eq "12" "$(grep -o -- '--image ' "$WORK/mock.log" | wc -l | tr -d ' ')" "round 1 sends all twelve images with --image"
 assert_contains "$(cat "$WORK/mock.log")" "--max-time 30" "round 1 passes the profile's hard timeout"
+assert_contains "$(cat "$WORK/mock.log")" "--model gpt-test --effort high" "round 1 uses the model and effort recorded for the run"
 prompt=$(cat "$WORK/prompts.txt" 2>/dev/null)
 assert_contains "$prompt" "f01.png" "the prompt names the frames by their neutral names"
 assert_contains "$prompt" "tips_together" "the prompt carries the vocabulary's relations"
@@ -728,14 +762,63 @@ assert_contains "$RUN_OUT" '"error": "parse_failed"' "a reply without JSON claim
 assert_eq "1" "$(wc -l < "$WORK/mock.log" | tr -d ' ')" "a parse failure is not retried (one request)"
 
 # Rate limit and timeout are classified from the runtime's stderr; still one request.
-for case_ in "rate limit exceeded (429):rate_limit" "request timed out after 30s:timeout" "401 unauthorized:oauth_invalid"; do
+for case_ in "rate limit exceeded (429):rate_limit" "request timed out after 30s:timeout" "401 unauthorized:oauth_invalid" \
+             "error: HTTP 429: too many requests:rate_limit" "error: Hard timeout after 30s:timeout" \
+             "error: HTTP 401: token expired:oauth_invalid" \
+             "error: --image .codex-pro/visual-xval-run-20261007T042915Z/frames/f01.png: not a PNG, JPEG, WebP or GIF file:target_invalid" \
+             "error: --image .codex-pro/visual-xval-run-20261007T140130Z/frames/f01.png: cannot decode image:target_invalid"; do
   new_run "$WORK/run4"
   RUN_STATUS=0
-  RUN_OUT=$(HOME="$WORK/home" MOCK_STDERR="${case_%%:*}" MOCK_STATUS=1 MOCK_LOG="$WORK/mock.log" MOCK_PROMPTS="$WORK/prompts.txt" \
+  RUN_OUT=$(HOME="$WORK/home" MOCK_STDERR="${case_%:*}" MOCK_STATUS=1 MOCK_LOG="$WORK/mock.log" MOCK_PROMPTS="$WORK/prompts.txt" \
     PATH="$WORK/stubbin:$PATH" python3 "$SCRIPTS/xval.py" ask --run "$WORK/run4" --round 1 --model m --effort e --max-time 30 2>&1) || RUN_STATUS=$?
-  assert_contains "$RUN_OUT" "\"error\": \"${case_##*:}\"" "'${case_%%:*}' is classified as ${case_##*:}"
+  assert_contains "$RUN_OUT" "\"error\": \"${case_##*:}\"" "'${case_%:*}' is classified as ${case_##*:}"
   assert_eq "1" "$(wc -l < "$WORK/mock.log" | tr -d ' ')" "${case_##*:} is not retried"
 done
+
+# A first-round failure leaves no comparison; adjudication still finishes (#23 verify B10).
+new_run "$WORK/run4b"
+RUN_OUT=$(HOME="$WORK/home" MOCK_STDERR="error: HTTP 401: token expired" MOCK_STATUS=1 MOCK_LOG="$WORK/mock.log" \
+  MOCK_PROMPTS="$WORK/prompts.txt" PATH="$WORK/stubbin:$PATH" python3 "$SCRIPTS/xval.py" ask --run "$WORK/run4b" --round 1 2>&1)
+xval adjudicate --run "$WORK/run4b"
+assert_eq "0" "$RUN_STATUS" "adjudicate finishes when the first round failed and there is no comparison"
+assert_contains "$(cat "$WORK/run4b/error.json" 2>/dev/null)" "oauth_invalid" "adjudicating after a failure keeps the first-round error"
+
+# An unexpected exception is internal_error and still leaves error.json (#23 verify B10).
+new_run "$WORK/run4c"
+RUN_OUT=$(HOME="$WORK/home" MOCK_REPLY="$WORK/codex_reply.md" MOCK_LOG="$WORK/mock.log" MOCK_PROMPTS="$WORK/prompts.txt" \
+  PATH="$WORK/stubbin:$PATH" python3 "$SCRIPTS/xval.py" ask --run "$WORK/run4c" --round 1 2>&1)
+xval compare --run "$WORK/run4c"
+printf '{' > "$WORK/run4c/frames.json"
+xval crops --run "$WORK/run4c"
+assert_eq "5" "$RUN_STATUS" "an unexpected exception stops the run with exit 5, not a traceback"
+assert_contains "$RUN_OUT" '"error": "internal_error"' "an unexpected exception is internal_error"
+assert_contains "$(cat "$WORK/run4c/error.json" 2>/dev/null)" "internal_error" "an unexpected exception is recorded in error.json"
+
+# An error is cleared when the step that raised it later succeeds (#23 verify B11).
+rm -rf "$WORK/run4d"
+xval init --run "$WORK/run4d" --vocab "$WORK/vocab.json" "$WORK"/imgs/*.png
+xval seal --run "$WORK/run4d"
+assert_contains "$(cat "$WORK/run4d/error.json" 2>/dev/null)" '"step": "seal"' "sealing without answers records an error for the seal step"
+cp "$WORK/claude_marked.json" "$WORK/run4d/claude.json"
+xval seal --run "$WORK/run4d"
+assert_eq "0" "$RUN_STATUS" "sealing succeeds once the answers exist"
+assert_no_file "$WORK/run4d/error.json" "the seal step's earlier error is cleared when the step succeeds"
+assert_contains "$(cat "$WORK/run4d/errors.jsonl" 2>/dev/null)" "target_invalid" "a cleared error stays in the run's error history"
+
+# Python older than 3.10: the orchestrator stops before loading its modules and still reports (#23 verify B10).
+OLDPY=/usr/bin/python3
+if [ -x "$OLDPY" ] && "$OLDPY" -c 'import sys; sys.exit(0 if sys.version_info < (3, 10) else 1)' 2>/dev/null; then
+  rm -rf "$WORK/runold"; mkdir -p "$WORK/runold" "$WORK/project"
+  RUN_STATUS=0
+  RUN_OUT=$("$OLDPY" "$SCRIPTS/xval.py" init --run "$WORK/runold" --vocab "$WORK/vocab.json" "$WORK"/imgs/*.png 2>&1) || RUN_STATUS=$?
+  assert_eq "5" "$RUN_STATUS" "an old Python stops the run with exit 5"
+  assert_contains "$RUN_OUT" '"error": "runtime_unavailable"' "an old Python is runtime_unavailable"
+  ( cd "$WORK/project" && "$OLDPY" "$SCRIPTS/xval.py" result --run "$WORK/runold" --out "$WORK/runold_result.md" >/dev/null 2>&1 )
+  assert_contains "$(cat "$WORK/runold_result.md" 2>/dev/null)" "error: runtime_unavailable" "an old Python still writes the result file"
+  assert_contains "$(cat "$WORK/runold_result.md" 2>/dev/null)" "Python 3.10" "the result file says which Python is required"
+else
+  skip "an old Python stops the run and still writes the result file" "no Python older than 3.10 at $OLDPY"
+fi
 
 # ── xval.py: compare, crops, zoom round, SAM step, adjudication (task 4.2) ──
 cat > "$WORK/zoom_reply.md" <<'JSON'
@@ -847,6 +930,7 @@ PY
 rm -rf "$WORK/run9c"
 xval init --run "$WORK/run9c" --vocab "$WORK/vocab.json" "$WORK"/imgs/*.png
 xval confirm-privacy --run "$WORK/run9c"
+profile_in "$WORK/run9c"
 cp "$WORK/claude_counts.json" "$WORK/run9c/claude.json"
 printf '%s\n' "$WORK/stubbin/codex-call" > "$WORK/run9c/runtime.txt"; : > "$WORK/run9c/runtime_error.txt"
 xval seal --run "$WORK/run9c"
@@ -931,10 +1015,12 @@ assert_contains "$(cat "$result_file")" "does not establish that either is corre
   "the limitations say agreement does not establish correctness"
 
 # Every failure class still writes the file; nothing is retried.
-result_in "$WORK/run4"
+result_in "$WORK/run4b"
 fail_file=$(ls -t "$WORK"/project/.codex-pro/visual-xval-*.md | head -1)
 assert_eq "oauth_invalid" "$(fm "$fail_file" error)" "a stopped run writes the result file with its error"
 assert_contains "$(cat "$fail_file")" "No retry" "a failed run says it was not retried"
+assert_contains "$(cat "$fail_file")" "recomputed when the result was written" \
+  "a seal the comparison never checked is recomputed for the result, not reported as checked"
 
 new_run "$WORK/run7"
 printf 'package_corruption\nerror=hash_mismatch\texpected=abc\rline\n' > "$WORK/run7/runtime_error.txt"

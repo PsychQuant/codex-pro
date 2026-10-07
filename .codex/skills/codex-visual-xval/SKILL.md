@@ -44,6 +44,8 @@ allowed-tools:
 2. `target_invalid`：沒有圖片、圖片讀不到、詞彙表的關係詞沒有量化門檻、Claude 的答案不合 schema
 3. `runtime_unsupported`：`codex-call --help` 沒有列出 `--image`（舊版會把不認得的旗標當成 prompt 吞掉）
 4. `parse_failed`：Codex 的回覆不是符合 schema 的 JSON
+5. `runtime_unavailable`：找不到 `codex-call`，或 `python3` 比 3.10 舊
+6. `internal_error`：腳本內部的意外例外。照樣寫結果檔，detail 是例外類型與訊息
 
 ## Step 1: Parse arguments
 
@@ -55,6 +57,9 @@ $codex-visual-xval <image>... --vocab <vocab.json> [--claude-answers <claims.jso
 - `--vocab`：詞彙表，格式見 `references/vocab-format.md`。關係詞必須有量化定義（例如 `distance_pct < 5`）。
 - `--claude-answers`：已經寫好的 Claude 答案。沒給就由執行本 skill 的 Claude 在 Step 3 作答。
 - `--sequence`：圖片是**同一支影片依時間排序的影格**。只有這時才跑 SAM 追蹤。
+
+腳本需要 **Python 3.10 以上**的 `python3`。macOS 內建的 `/usr/bin/python3` 是 3.9；用它執行時，`xval.py`
+會在載入其他模組之前停下，記為 `runtime_unavailable`，`result` 照樣寫出結果檔。
 
 以本 skill 的目錄設定 `SKILL_DIR`（Claude Code 會在載入時顯示 base directory；不得從目前工作目錄猜），
 並建立 run 目錄：
@@ -97,11 +102,13 @@ python3 "$SKILL_DIR/scripts/xval.py" seal --run "$RUN"
 ### Step 4.1: Resolve profile
 
 讀 `~/.codex-pro/profile.yaml`（global）與 `.codex-pro/profile.yaml`（project，優先），缺的欄位用
-hardcoded default（`gpt-5.6-sol` / `xhigh` / `600`，鏡像 [`references/defaults.json`](../../references/defaults.json)）：
+hardcoded default（`gpt-5.6-sol` / `xhigh` / `600`，鏡像 [`references/defaults.json`](../../references/defaults.json)），
+結果寫進 `$RUN/profile.json`。之後的步驟都從這個檔案讀，不靠 shell 變數：每次 Bash 呼叫都是新的 shell，
+變數到下一步就不見了，原本 `ask` 會因此安靜地改用預設值。
 
 ```bash
-PROFILE_RESOLVED=$(python3 - <<'PY'
-import os, re
+python3 - "$RUN" <<'PY'
+import json, os, re, sys
 DEFAULTS = {"model": "gpt-5.6-sol", "effort": "xhigh", "max_time": 600}
 def parse(path):
     if not os.path.exists(path):
@@ -123,10 +130,10 @@ for f, d in DEFAULTS.items():
         except (ValueError, TypeError): v, s = d, "default"
     resolved[f] = v; sources.add(s)
 ps = "mixed" if {"project", "global"} <= sources else ("project" if "project" in sources else ("global" if "global" in sources else "default"))
-print(f'{resolved["model"]}|{resolved["effort"]}|{resolved["max_time"]}|{ps}')
+with open(os.path.join(sys.argv[1], "profile.json"), "w") as fh:
+    json.dump({**resolved, "profile_source": ps}, fh)
+print(json.dumps({**resolved, "profile_source": ps}))
 PY
-)
-IFS='|' read -r MODEL EFFORT MAX_TIME PROFILE_SOURCE <<< "$PROFILE_RESOLVED"
 ```
 
 ### Step 4.2: Resolve bundled Codex runtime
@@ -196,11 +203,11 @@ OAuth 或連網前停止；`$codex-status`、`$codex-result`、`$codex-config` �
 解析 runtime 並寫進 run 目錄，然後送出第一輪（全部圖片，用 `--image` 逐張帶入）：
 
 ```bash
-python3 "$SKILL_DIR/scripts/xval.py" ask --run "$RUN" --round 1 \
-  --model "$MODEL" --effort "$EFFORT" --max-time "$MAX_TIME"
+python3 "$SKILL_DIR/scripts/xval.py" ask --run "$RUN" --round 1
 ```
 
-`xval.py ask` 依序：確認隱私確認已記錄、Claude 的答案已封存且未被改動、這一輪還沒送過（任一不符就
+`xval.py ask` 依序：確認隱私確認已記錄、Claude 的答案已封存且未被改動、這一輪還沒送過、
+`$RUN/profile.json` 存在（任一不符就
 `target_invalid`，**不送任何請求**）；讀 `runtime_error.txt`（有錯就停）、確認 runtime 存在、確認
 `codex-call --help` 列出 `--image`（沒有就 `runtime_unsupported`，**不送任何請求**）；記下請求時間後送出、
 驗證回覆、記下回覆的 SHA-256。它只印出狀態，Codex 的答案寫在 `$RUN/codex.json`。
@@ -224,6 +231,8 @@ python3 "$SKILL_DIR/scripts/xval.py" ask --run "$RUN" --round 1 \
 | 送出前的輸入檢查 | `target_invalid` | 「輸入不合格：<detail>。沒有送出請求。」 |
 | `codex-call --help` 沒有 `--image` | `runtime_unsupported` | 「codex-call 不支援 --image。更新 parallel-ai-agents 到 2.24.0 以上。沒有送出請求。」 |
 | Codex 回覆不合 schema | `parse_failed` | 「Codex 的回覆不是符合 schema 的 JSON。**不會自動 retry**。」 |
+| 找不到 `codex-call`，或 `python3` 比 3.10 舊 | `runtime_unavailable` | 「執行環境不足：<detail>。沒有送出請求。」 |
+| 腳本內部的意外例外 | `internal_error` | 「skill 的腳本發生意外錯誤：<detail>。這是 skill 的問題，請回報。」 |
 | native preflight：套件缺檔、不可執行或 hash mismatch | `package_corruption` | 「codex-pro 套件損壞。重新安裝 plugin。**不會自動 retry**。」 |
 | native preflight：unsupported platform、缺 Swift 或 runtime unavailable | `runtime_unavailable` | 「Producer runtime 不可用。跑 $codex-setup 查看 remediation；consumer skills 仍可使用。**不會自動 retry**。」 |
 
@@ -285,8 +294,7 @@ subagent 寫完後封存，再把同一份題目檔送給 Codex：
 
 ```bash
 python3 "$SKILL_DIR/scripts/xval.py" seal --run "$RUN" --zoom
-python3 "$SKILL_DIR/scripts/xval.py" ask --run "$RUN" --round zoom \
-  --model "$MODEL" --effort "$EFFORT" --max-time "$MAX_TIME"
+python3 "$SKILL_DIR/scripts/xval.py" ask --run "$RUN" --round zoom
 ```
 
 `seal --zoom` 用與 Codex 回覆相同的規則檢查答案（不合格就 `target_invalid`）。裁決時會重算這份封存，
@@ -299,11 +307,12 @@ python3 "$SKILL_DIR/scripts/xval.py" ask --run "$RUN" --round zoom \
 
 ```bash
 python3 "$SKILL_DIR/scripts/xval.py" adjudicate --run "$RUN"
-python3 "$SKILL_DIR/scripts/xval.py" result --run "$RUN" \
-  --model "$MODEL" --effort "$EFFORT" --profile-source "$PROFILE_SOURCE"
+python3 "$SKILL_DIR/scripts/xval.py" result --run "$RUN"
 ```
 
-run 停在 Step 5 時也要跑 `result`（它讀 `$RUN/error.json`）。回報使用者結果檔路徑、一致率與各裁決的數量。
+run 停在 Step 5 時也要跑這兩步：沒有比對結果時 `adjudicate` 照樣正常結束，`result` 讀 `$RUN/error.json`
+寫出失敗的結果檔。model、effort 與 profile 來源取自 `$RUN/profile.json`。同一步之後重跑成功時，它先前留下的
+錯誤會被清除，歷史留在 `$RUN/errors.jsonl`。回報使用者結果檔路徑、一致率與各裁決的數量。
 
 ## Result file structure（完整契約）
 
@@ -311,8 +320,8 @@ run 停在 Step 5 時也要跑 `result`（它讀 `$RUN/error.json`）。回報�
 ---
 skill: visual-xval
 target: <N images | N images (sequence)>
-model: <$MODEL resolved>
-effort: <$EFFORT resolved>
+model: <$RUN/profile.json 的 model>
+effort: <$RUN/profile.json 的 effort>
 profile_source: <default | global | project | mixed>
 timestamp: 2026-10-07T08:30:48+08:00
 n_images: <N>
@@ -321,8 +330,10 @@ agreement_rate: <0–1>
 claude_answers_sha256: <hex>
 sealed_at: <ISO8601 with offset>
 seal_broken: <true | false>
+codex_requested_at: <ISO8601 with offset，第一輪請求送出的時間>
+codex_reply_sha256: <hex，第一輪回覆的雜湊>
 sam_status: <ok | not_installed | not_applicable | no_anchor | failed | not_run>
-error: <rate_limit | oauth_invalid | timeout | target_invalid | runtime_unsupported | parse_failed | runtime_unavailable | package_corruption>  # 僅失敗時出現
+error: <rate_limit | oauth_invalid | timeout | target_invalid | runtime_unsupported | parse_failed | runtime_unavailable | package_corruption | internal_error | runtime_unavailable | package_corruption>  # 僅失敗時出現
 ---
 
 # Visual cross-validation — <target>
