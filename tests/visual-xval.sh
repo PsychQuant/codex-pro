@@ -1933,6 +1933,52 @@ print(media.integrity_problem(png, "png"))
 PY
 )
 assert_eq "None" "$cgbi" "an Apple CgBI PNG (raw deflate) is not mistaken for damaged data"
+# Background security review after c1ca2d6: the structure check must not itself be a decompression
+# bomb. flush() used to inflate everything after the cap at once, and IHDR's size is the sender's.
+bomb=$(python3 -B - "$SCRIPTS" "$WORK/plain.jpg" <<'PY'
+import struct, sys, zlib
+sys.path.insert(0, sys.argv[1])
+import media
+def chunk(t, d): return struct.pack(">I", len(d)) + t + d + struct.pack(">I", zlib.crc32(t + d) & 0xffffffff)
+sig = b"\x89PNG\r\n\x1a\n"
+ihdr = lambda w, h: chunk(b"IHDR", struct.pack(">IIBBBBB", w, h, 8, 2, 0, 0, 0))
+z = zlib.compressobj(9)
+body = z.compress(b"".join(b"\x00" + b"\x10" * 3000 for _ in range(1000)))
+for _ in range(50):
+    body += z.compress(b"\x00" * (1 << 20))
+body += z.flush()
+largest, calls = [0], [0]
+real = zlib.decompressobj
+class Watched:
+    def __init__(self, *a):
+        self.inner = real(*a); calls[0] += 1
+    def decompress(self, data, limit=0):
+        out = self.inner.decompress(data, limit); largest[0] = max(largest[0], len(out)); return out
+    def flush(self, *a):
+        out = self.inner.flush(*a); largest[0] = max(largest[0], len(out)); return out
+    def __getattr__(self, name):
+        return getattr(self.inner, name)
+media.zlib.decompressobj = Watched
+extra = media.integrity_problem(sig + ihdr(1000, 1000) + chunk(b"IDAT", body) + chunk(b"IEND", b""), "png")
+calls[0] = 0
+huge = media.integrity_problem(sig + ihdr(30000, 30000) + chunk(b"IDAT", body) + chunk(b"IEND", b""), "png")
+media.zlib.decompressobj = real
+media.image_size = lambda path: (30000, 30000)
+try:
+    media.prepare_copy(sys.argv[2], "/nonexistent-frames-dir", "f01")
+    jpeg = "accepted"
+except media.MediaError as exc:
+    jpeg = str(exc)
+print(f"largest={largest[0]} extra={extra} huge_inflated={calls[0]} huge={huge!r} jpeg={jpeg!r}")
+PY
+)
+assert_contains "$bomb" "extra=None" "image data beyond what IHDR promises is not read, and not refused"
+assert_eq "True" "$(python3 -c 'import re,sys; print(int(re.search(r"largest=(\d+)", sys.argv[1]).group(1)) <= 1 << 20)' "$bomb")" \
+  "the structure check never inflates more than 1 MB at a time (background review)"
+assert_contains "$bomb" "huge_inflated=0" "an IHDR beyond the pixel limit is refused without inflating anything"
+assert_contains "$bomb" "larger than" "and says why"
+assert_contains "$bomb" "jpeg='" "any format beyond the pixel limit is refused before sips decodes it"
+assert_contains "$(printf '%s' "$bomb" | sed -n "s/.*jpeg='\(.*\)'.*/\1/p")" "larger than" "naming the pixel limit"
 rm -rf "$WORK/runq13ok"
 xval init --run "$WORK/runq13ok" --vocab "$WORK/vocab.json" "$WORK/interlaced.png" "$WORK/plain.gif" "$WORK/plain.jpg"
 assert_eq "0" "$RUN_STATUS" "a complete interlaced PNG, a GIF and a JPEG are still accepted"

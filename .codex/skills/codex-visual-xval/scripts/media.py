@@ -100,6 +100,11 @@ def kind_of(data: bytes) -> str:
 # image that is not the one given (#23 verify round 6, Q13). The structure is checked first. What
 # this cannot see is damage inside the compressed data of a JPEG, GIF or WebP that still ends properly.
 PNG_CHANNELS = {0: 1, 2: 3, 3: 1, 4: 2, 6: 4}
+# The size an image may claim. Its header is the sender's, and the check below would otherwise
+# inflate whatever it promises (background security review after c1ca2d6). 250 megapixels is above
+# any phone camera; sips is not handed anything larger either.
+MAX_PIXELS = 250_000_000
+INFLATE_STEP = 1 << 20
 ADAM7 = ((0, 0, 8, 8), (4, 0, 8, 8), (0, 4, 4, 8), (2, 0, 4, 4), (0, 2, 2, 4), (1, 0, 2, 2), (0, 1, 1, 2))
 
 
@@ -144,16 +149,23 @@ def _png_problem(data: bytes) -> str | None:
     width, height, depth, colour, _, _, interlace = struct.unpack(">IIBBBBB", ihdr)
     if colour not in PNG_CHANNELS:
         return "an unknown colour type"
+    if width * height > MAX_PIXELS:
+        return f"the image is larger than {MAX_PIXELS // 1_000_000} megapixels"
     expected = _png_raw_size(width, height, depth, colour, interlace)
     inflate, pending, total = zlib.decompressobj(-15 if cgbi else zlib.MAX_WBITS), b"".join(idat), 0
-    try:   # counted in pieces, so a large image is never held decompressed
-        while pending and total <= expected:
-            total += len(inflate.decompress(pending, 1 << 20))
+    try:
+        # Counted at most INFLATE_STEP at a time and only up to what IHDR promises: data beyond it is
+        # not read (libpng only warns about it), and flush() is never called, since it would inflate
+        # all the rest at once (background security review after c1ca2d6).
+        while total < expected:
+            out = inflate.decompress(pending, INFLATE_STEP)
             pending = inflate.unconsumed_tail
-        total += len(inflate.flush())
+            total += len(out)
+            if not out and not pending:
+                break
     except zlib.error:
         return "the image data is not a valid compressed stream"
-    if not inflate.eof or total < expected:
+    if total < expected:
         return "the image data is cut short"
     return None
 
@@ -328,6 +340,8 @@ def prepare_copy(src: str, frames_dir: str, stem: str, max_edge: int | None = MA
     w, h = image_size(src)
     if not w or not h:
         raise MediaError("cannot decode the image")
+    if w * h > MAX_PIXELS:   # read from the header; sips would decode whatever it claims
+        raise MediaError(f"the image is larger than {MAX_PIXELS // 1_000_000} megapixels")
     out = "jpeg" if kind == "jpeg" else "png"
     target = os.path.join(frames_dir, f"{stem}.{'jpg' if out == 'jpeg' else 'png'}")
     # Decode and encode to a lossless PNG first, turn it upright there, and only then encode the final
