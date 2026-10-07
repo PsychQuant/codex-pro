@@ -86,11 +86,11 @@
 
 ## 6. Verify 第一輪修正（#23 verify report 的 B1–B12、I1–I17）
 
-- [ ] 6.1 規格與 design 依使用者四項決定更新（依「放大輪由不知情的 subagent 作答」「Python 3.10 以上」「答案只記一次」「關係詞綁定兩個類別」「送出前確認與影格清理」）。
+- [x] 6.1 規格與 design 依使用者四項決定更新（依「放大輪由不知情的 subagent 作答」「Python 3.10 以上」「答案只記一次」「關係詞綁定兩個類別」「送出前確認與影格清理」）。
   - visual-xval delta spec：Claim schema and closed vocabulary、Sealed Claude answers、Blind Codex judgment、Zoom round、Built-in SAM evidence、Adjudication without majority vote、Structured result file、Privacy reminder before sending images 依修正改寫；新增 Python 版本需求；失敗類別加 `internal_error`。
   - design.md 補上五個決定與各自理由。
   - 驗證：`spectra validate add-visual-xval` 通過；新增與改寫的 scenario 在後續 task 都有對應測試。
-- [ ] 6.2 主張與詞彙表（B7、I4、I5、I17）。
+- [x] 6.2 主張與詞彙表（B7、I4、I5、I17）。
   - 每個類別的關鍵點數必須等於該類別的數量；不符時 Claude 的答案為 `target_invalid`、Codex 的回覆為 `parse_failed`。
   - 拿掉 `touching`；關係詞改為 `{"between": [類別, 類別], "definition": "<量> <比較> <數字>"}`，定義只接受這個形式。
   - 詞彙表選填欄位（`max_count`、`track_class`、`sam_margin_pct`、`constraints`）驗證型別。

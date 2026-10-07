@@ -147,29 +147,34 @@ def runtime(run: str) -> str:
 def round1_prompt(run: str) -> str:
     vocab = load(os.path.join(run, "vocab.json"))
     names = neutral_names(run)
-    classes = "\n".join(f"- {k}: {v}" for k, v in vocab["classes"].items())
-    constraints = "\n".join(f"- {c}" for c in vocab.get("constraints", [])) or "- (none)"
-    relations = "\n".join(f"- {k}: true when {v}" for k, v in vocab.get("relations", {}).items()) or "- (none)"
+    constraints = [f"- {c}" for c in vocab.get("constraints", [])]
+    constraints += [f"- There are at most {n} objects of class {c} in any image." for c, n in vocab.get("max_count", {}).items()]
+    relations = "\n".join(f"- {k}: true when {r['definition']}, measured between the key points of "
+                          f"{r['between'][0]} and {r['between'][1]}" for k, r in vocab.get("relations", {}).items())
     return f"""You are given {len(names)} images, in this order: {", ".join(names)}.
 
 Closed vocabulary (anything else is class "other", with "other_description"):
-{classes}
+{class_lines(vocab)}
 
 Physical constraints that always hold:
-{constraints}
+{chr(10).join(constraints) or "- (none)"}
 
 Relations to judge for every image (distance_pct is in percent of the image width):
-{relations}
+{relations or "- (none)"}
 
-For every image, report the count of each class you see, the key point of each object
-(for instruments: the tip) as percentages of the image width (x_pct) and height (y_pct),
-what each point touches (a class name or null), and every relation as true or false.
+For every image, report the count of each class you see and one key point for every object you count
+(for instruments: the tip) as percentages of the image width (x_pct) and height (y_pct), so a class with
+count 2 has exactly 2 points. Then judge every relation as true or false.
 
 Reply with JSON only:
 {{"claims": [{{"frame": "{names[0]}", "objects": {{"<CLASS>": <count>}},
-  "points": [{{"class": "<CLASS>", "x_pct": <0-100>, "y_pct": <0-100>, "touching": "<CLASS or null>"}}],
+  "points": [{{"class": "<CLASS>", "x_pct": <0-100>, "y_pct": <0-100>}}],
   "relations": {{"<relation>": true}}}}]}}
 """
+
+
+def class_lines(vocab: dict) -> str:
+    return "\n".join(f"- {k}: {v}" for k, v in vocab["classes"].items())
 
 
 def extract_json(text: str) -> Any:
@@ -234,7 +239,8 @@ def ask(run: str, argv: list[str]) -> None:
         if not plan:
             raise Stop("target_invalid", "no zoom plan: run `crops` first")
         crops = {item["crop"]: did for did, item in plan.items()}
-        reply = call_codex(run, zoom_prompt(plan), [os.path.join(run, c) for c in sorted(crops)], "zoom", argv)
+        reply = call_codex(run, zoom_prompt(plan, load(os.path.join(run, "vocab.json"))),
+                           [os.path.join(run, c) for c in sorted(crops)], "zoom", argv)
         data = extract_json(reply)
         answers = data.get("answers") if isinstance(data, dict) else None
         if not isinstance(answers, dict):
@@ -261,10 +267,10 @@ def valid_zoom_value(kind: str, value: Any) -> bool:
     return False
 
 
-def zoom_prompt(plan: dict) -> str:
+def zoom_prompt(plan: dict, vocab: dict) -> str:
     lines = [f"You are given {len(plan)} cropped and enlarged image regions. Answer each question",
-             "from that crop alone. Reply with JSON only:",
-             '{"answers": {"<crop name>": {"value": <answer>}}}', ""]
+             "from that crop alone. The classes are:", class_lines(vocab), "",
+             "Reply with JSON only:", '{"answers": {"<crop name>": {"value": <answer>}}}', ""]
     for did in sorted(plan, key=lambda d: plan[d]["crop"]):
         lines.append(f"- {os.path.basename(plan[did]['crop'])}: {plan[did]['question']}")
     return "\n".join(lines) + "\n"

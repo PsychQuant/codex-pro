@@ -22,7 +22,9 @@ import re
 import sys
 from typing import Any
 
-THRESHOLD = re.compile(r"(<=|>=|<|>|==)\s*-?\d+(\.\d+)?")
+# A relation is "<quantity> <operator> <number>" and nothing looser: "很近（< 5）" names no
+# quantity, and two models given it would each measure something different (#23 verify I5).
+DEFINITION = re.compile(r"^\s*([a-z][a-z0-9_]*)\s*(<=|>=|<|>|==)\s*(-?\d+(?:\.\d+)?)\s*$")
 MAX_EXACT_PAIRING = 7   # brute-force minimum-distance pairing up to 7! = 5040 orders
 
 
@@ -46,17 +48,37 @@ def vocab_problems(vocab: Any) -> list[str]:
         return ["vocabulary is not a JSON object"]
     if not isinstance(vocab.get("classes"), dict) or not vocab["classes"]:
         problems.append("classes must be a non-empty object")
+    classes = vocab.get("classes") if isinstance(vocab.get("classes"), dict) else {}
     relations = vocab.get("relations", {})
     if not isinstance(relations, dict):
         problems.append("relations must be an object")
     else:
-        for name, definition in relations.items():
-            if not isinstance(definition, str) or not THRESHOLD.search(definition):
-                problems.append(f"relation '{name}' has no quantitative definition (e.g. 'distance_pct < 5')")
-    threshold = vocab.get("position_threshold_pct", 5)
-    if not isinstance(threshold, (int, float)) or threshold <= 0:
-        problems.append("position_threshold_pct must be a positive number")
+        for name, spec in relations.items():
+            between = spec.get("between") if isinstance(spec, dict) else None
+            definition = spec.get("definition") if isinstance(spec, dict) else None
+            if not (isinstance(between, list) and len(between) == 2 and all(c in classes for c in between)):
+                problems.append(f"relation '{name}' must name two vocabulary classes in 'between'")
+            if not isinstance(definition, str) or not DEFINITION.match(definition):
+                problems.append(f"relation '{name}' needs a definition of the form "
+                                "'<quantity> <operator> <number>', e.g. 'distance_pct < 5'")
+    for key in ("position_threshold_pct", "sam_margin_pct"):
+        value = vocab.get(key, 1)
+        if not is_number(value) or value <= 0:
+            problems.append(f"{key} must be a positive number")
+    max_count = vocab.get("max_count", {})
+    if not isinstance(max_count, dict) or any(
+            c not in classes or not isinstance(n, int) or isinstance(n, bool) or n < 0 for c, n in max_count.items()):
+        problems.append("max_count must map vocabulary classes to non-negative integers")
+    if "track_class" in vocab and vocab["track_class"] not in classes:
+        problems.append("track_class must be a vocabulary class")
+    constraints = vocab.get("constraints", [])
+    if not isinstance(constraints, list) or not all(isinstance(c, str) for c in constraints):
+        problems.append("constraints must be a list of sentences")
     return problems
+
+
+def is_number(value: Any) -> bool:
+    return isinstance(value, (int, float)) and not isinstance(value, bool)
 
 
 def claims_list(data: Any) -> list[dict]:
@@ -89,8 +111,15 @@ def check_claim(claim: Any, vocab: dict) -> None:
             raise SchemaError(f"{frame}: every point needs a vocabulary class")
         for axis in ("x_pct", "y_pct"):
             value = point.get(axis)
-            if not isinstance(value, (int, float)) or isinstance(value, bool) or not 0 <= value <= 100:
+            if not is_number(value) or not 0 <= value <= 100:
                 raise SchemaError(f"{frame}: point {axis} must be a number from 0 to 100")
+    # One key point per counted object. Without this, a reply that leaves the points out
+    # compares as agreement, and the agreement rate is inflated (#23 verify B7).
+    for cls in allowed:
+        n_points = sum(1 for p in points if p["class"] == cls)
+        if n_points != objects.get(cls, 0):
+            raise SchemaError(f"{frame}: {objects.get(cls, 0)} object(s) of class '{cls}' "
+                              f"but {n_points} key point(s); give one key point per counted object")
     relations = claim.get("relations")
     if not isinstance(relations, dict):
         raise SchemaError(f"{frame}: 'relations' must be an object")
@@ -154,7 +183,8 @@ def compare(vocab: dict, claude: dict[str, dict], codex: dict[str, dict], aspect
         for name in vocab.get("relations", {}):
             if mine["relations"][name] != theirs["relations"][name]:
                 disagreements.append({"frame": frame, "kind": "relation", "relation": name,
-                                      "definition": vocab["relations"][name],
+                                      "definition": vocab["relations"][name]["definition"],
+                                      "between": vocab["relations"][name]["between"],
                                       "claude": mine["relations"][name], "codex": theirs["relations"][name]})
     for number, item in enumerate(disagreements, 1):
         item["id"] = f"d{number}"

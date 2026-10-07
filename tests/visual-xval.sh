@@ -79,7 +79,8 @@ cat > "$WORK/vocab.json" <<'JSON'
 {
   "classes": {"INST": "laparoscopic instrument", "THREAD": "suture thread", "PAD": "practice pad"},
   "constraints": ["INST count is at most 2"],
-  "relations": {"tips_together": "distance_pct < 5"},
+  "max_count": {"INST": 2},
+  "relations": {"tips_together": {"between": ["INST", "INST"], "definition": "distance_pct < 5"}},
   "position_threshold_pct": 5
 }
 JSON
@@ -91,7 +92,8 @@ import json, sys
 work = sys.argv[1]
 def frame(name, together, tips):
     return {"frame": name, "objects": {"INST": 2, "THREAD": 1},
-            "points": [{"class": "INST", "x_pct": x, "y_pct": y, "touching": None} for x, y in tips],
+            "points": [{"class": "INST", "x_pct": x, "y_pct": y} for x, y in tips]
+                      + [{"class": "THREAD", "x_pct": 20, "y_pct": 80}],
             "relations": {"tips_together": together}}
 same = [(40, 50), (60, 50)]
 claude = [frame(f"f{i:02d}.png", False, same) for i in range(1, 13)]
@@ -111,13 +113,38 @@ assert_eq "0" "$RUN_STATUS" "a vocabulary whose relations all have thresholds is
 python3 - "$WORK" <<'PY'
 import json, sys
 v = json.load(open(f"{sys.argv[1]}/vocab.json"))
-v["relations"]["tips_together"] = "the tips are together"
+v["relations"]["tips_together"]["definition"] = "the tips are together"
 json.dump(v, open(f"{sys.argv[1]}/vocab_nothreshold.json", "w"))
 PY
 run_py compare_claims.py check-vocab "$WORK/vocab_nothreshold.json"
 assert_eq "2" "$RUN_STATUS" "a relation without a numeric threshold exits 2"
 assert_contains "$RUN_OUT" '"error": "target_invalid"' "a relation without a threshold is target_invalid"
 assert_contains "$RUN_OUT" "tips_together" "the target_invalid detail names the relation"
+
+# A relation names its two classes and is "<quantity> <operator> <number>", nothing looser (#23 verify I5).
+python3 - "$WORK" <<'PY'
+import json, sys
+w = sys.argv[1]
+base = json.load(open(f"{w}/vocab.json"))
+def variant(name, change):
+    v = json.loads(json.dumps(base)); change(v); json.dump(v, open(f"{w}/vocab_{name}.json", "w"))
+variant("string_relation", lambda v: v["relations"].update(tips_together="distance_pct < 5"))
+variant("loose_definition", lambda v: v["relations"]["tips_together"].update(definition="很近（< 5）"))
+variant("unknown_between", lambda v: v["relations"]["tips_together"].update(between=["INST", "SCALPEL"]))
+variant("one_between", lambda v: v["relations"]["tips_together"].update(between=["INST"]))
+variant("bad_max_count", lambda v: v.update(max_count={"INST": "two"}))
+variant("unknown_max_count", lambda v: v.update(max_count={"SCALPEL": 1}))
+variant("bad_track_class", lambda v: v.update(track_class="SCALPEL"))
+variant("bad_margin", lambda v: v.update(sam_margin_pct=-1))
+variant("bad_constraints", lambda v: v.update(constraints="INST count is at most 2"))
+PY
+for bad in string_relation loose_definition unknown_between one_between bad_max_count unknown_max_count \
+           bad_track_class bad_margin bad_constraints; do
+  run_py compare_claims.py check-vocab "$WORK/vocab_$bad.json"
+  assert_eq "2" "$RUN_STATUS" "an invalid vocabulary is target_invalid ($bad)"
+done
+run_py compare_claims.py check-vocab "$WORK/vocab_loose_definition.json"
+assert_contains "$RUN_OUT" "tips_together" "a definition that names no quantity is rejected, naming the relation"
 
 # ── compare_claims.py: the spec example ──────────────────────────
 run_py compare_claims.py compare "$WORK/vocab.json" "$WORK/claude.json" "$WORK/codex.json"
@@ -139,8 +166,8 @@ w = sys.argv[1]
 codex = json.load(open(f"{w}/codex.json"))
 c = codex["claims"]
 c[1]["objects"]["INST"] = 1                      # f02: count mismatch
-c[1]["points"] = c[1]["points"][:1]
-c[2]["points"][0] = {"class": "INST", "x_pct": 52, "y_pct": 50, "touching": None}  # f03: 12% off
+c[1]["points"] = c[1]["points"][:1] + [p for p in c[1]["points"] if p["class"] != "INST"]
+c[2]["points"][0] = {"class": "INST", "x_pct": 52, "y_pct": 50}  # f03: 12% off
 c[3]["points"].reverse()                          # f04: same points, other order
 json.dump(codex, open(f"{w}/codex_mixed.json", "w"))
 PY
@@ -181,6 +208,25 @@ done
 printf 'not json at all' > "$WORK/codex_garbage.json"
 run_py compare_claims.py compare "$WORK/vocab.json" "$WORK/claude.json" "$WORK/codex_garbage.json"
 assert_eq "3" "$RUN_STATUS" "a Codex reply that is not JSON exits 3"
+
+# Every counted object has exactly one key point (#23 verify B7): a reply that leaves the
+# points out is not agreement, it is an incomplete answer.
+python3 - "$WORK" <<'PY'
+import json, sys
+w = sys.argv[1]
+c = json.load(open(f"{w}/codex.json"))
+c["claims"][0]["points"] = [p for p in c["claims"][0]["points"] if p["class"] != "INST"]
+json.dump(c, open(f"{w}/codex_no_points.json", "w"))
+c = json.load(open(f"{w}/codex.json"))
+c["claims"][0]["points"].append({"class": "PAD", "x_pct": 10, "y_pct": 10})
+json.dump(c, open(f"{w}/codex_point_without_object.json", "w"))
+PY
+for bad in codex_no_points codex_point_without_object; do
+  run_py compare_claims.py compare "$WORK/vocab.json" "$WORK/claude.json" "$WORK/$bad.json"
+  assert_eq "3" "$RUN_STATUS" "key points that do not match the counts are parse_failed from Codex ($bad)"
+done
+run_py compare_claims.py compare "$WORK/vocab.json" "$WORK/codex_no_points.json" "$WORK/codex.json"
+assert_eq "2" "$RUN_STATUS" "key points that do not match the counts are target_invalid from Claude"
 
 run_py compare_claims.py compare "$WORK/vocab.json" "$WORK/codex_unknown_class.json" "$WORK/codex.json"
 assert_eq "2" "$RUN_STATUS" "Claude claims that break the schema are the caller's input error (exit 2)"
@@ -552,6 +598,13 @@ assert_contains "$(cat "$WORK/mock.log")" "--max-time 30" "round 1 passes the pr
 prompt=$(cat "$WORK/prompts.txt" 2>/dev/null)
 assert_contains "$prompt" "f01.png" "the prompt names the frames by their neutral names"
 assert_contains "$prompt" "tips_together" "the prompt carries the vocabulary's relations"
+assert_contains "$prompt" "at most 2 objects of class INST" "the prompt carries the vocabulary's maximum counts"
+assert_contains "$prompt" "between the key points of INST and INST" "the prompt says which key points a relation measures"
+assert_contains "$prompt" "one key point for every object you count" "the prompt asks for one key point per counted object"
+case "$prompt" in
+  *touching*) fail "the prompt no longer asks what each point touches" ;;
+  *) pass "the prompt no longer asks what each point touches" ;;
+esac
 case "$prompt" in
   *41.37*|*shot_2026*) fail "the prompt carries no Claude claim values and no original file names" ;;
   *) pass "the prompt carries no Claude claim values and no original file names" ;;
@@ -620,6 +673,7 @@ assert_eq "0" "$RUN_STATUS" "the zoom round exits 0"
 assert_eq "1" "$(grep -o -- '--image ' "$WORK/mock.log" | wc -l | tr -d ' ')" "the zoom round sends only the one crop"
 assert_contains "$(cat "$WORK/mock.log")" "crops/z01.png" "the zoom round sends the crop, not the full frame"
 zoom_prompt=$(cat "$WORK/prompts.txt" 2>/dev/null)
+assert_contains "$zoom_prompt" "INST: laparoscopic instrument" "the zoom prompt carries the class definitions"
 case "$zoom_prompt" in
   *41.37*|*'"claims"'*|*'"tips_together":'*) fail "the zoom prompt carries neither side's earlier answers" ;;
   *) pass "the zoom prompt carries neither side's earlier answers" ;;
