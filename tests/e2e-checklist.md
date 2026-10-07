@@ -215,15 +215,27 @@ list（每格都沒有物件）；黑色桿身被當成視野外（尖端跑到�
 `tests/visual-xval.sh` 的請求全部送給 stub。發布前用真實的 `codex-call` 跑一次完整流程，確認真實模型
 照 schema 回覆、中性檔名與送出順序一致、結果檔完整：
 
-- [ ] Claude 端 PATH 上的 `codex-call --help` 列出 `--image`（parallel-ai-agents 2.24.0 以上；
+- [x] Claude 端 PATH 上的 `codex-call --help` 列出 `--image`（parallel-ai-agents 2.24.0 以上；
       `claude plugin marketplace update` 後 `claude plugin update parallel-ai-agents@<marketplace>`）
-- [ ] 準備 3 張**合成圖**（不含任何真實影格），寫好詞彙表；照 SKILL.md 從 Step 1 跑到 Step 9，
+- [x] 準備 3 張**合成圖**（不含任何真實影格），寫好詞彙表；照 SKILL.md 從 Step 1 跑到 Step 9，
       至少製造一個分歧，讓放大輪實際送出
-- [ ] 第一輪：`requests.json` 有請求時間與回覆雜湊；`codex.json` 通過 schema（每個計數物件一個關鍵點）
-- [ ] 放大輪：Claude 端由 subagent 依 `zoom_prompt.md` 作答；送給 Codex 的 prompt 與該檔逐字相同
-- [ ] 結果檔：frontmatter 完整、`seal_broken: false`、封存早於請求；把結果檔路徑與重點記在下面
+- [x] 第一輪：`requests.json` 有請求時間與回覆雜湊；`codex.json` 通過 schema（每個計數物件一個關鍵點）
+- [x] 放大輪：Claude 端由 subagent 依 `zoom_prompt.md` 作答；送給 Codex 的 prompt 與該檔逐字相同
+- [x] 結果檔：frontmatter 完整、`seal_broken: false`、封存早於請求；把結果檔路徑與重點記在下面
 
-紀錄：（task 6.9 執行後填寫）
+紀錄：2026-10-07，codex-pro `512b306`，parallel-ai-agents 2.24.0（`codex-call` sha256 `50ab7eb…`，與 vendor 副本相同），
+profile `gpt-6.1-sol`／`medium`（global）。
+
+- 輸入：3 張 640×400 合成圖（紅點、藍方塊），正確答案由產生程式決定。Claude 的答案在 f03 **刻意植入一個錯誤**
+  （3 個紅點只寫 2 個），用來確保放大輪實際送出。
+- 第一輪 7.7 秒，回覆一次通過 schema（每個計數物件一個關鍵點）。比對：一致率 0.667，唯一分歧是 f03 的 DOT 數量
+  （Claude 2、Codex 3），正是植入的錯誤；f01、f02 的數量、位置與 `dots_close` 全部一致。
+- 放大輪：subagent 只依 `zoom_prompt.md` 與裁切圖作答，答 3；封存後送 Codex（4.3 秒），送出的 prompt 與題目檔逐字
+  相同，Codex 也答 3。裁決 `resolved_codex`，證據為放大輪。
+- 結果檔：frontmatter 完整，`seal_broken: false`；封存 10:21:18 早於請求 10:21:27；`profile_source: global`；
+  送出的 prompt 只有中性檔名，影格複本不含 metadata 區塊。`sam_status: not_applicable`（非影片序列）。
+- 與 SKILL 的差異：這個 session 的 PATH 在更新 plugin 之前就設定好了，`command -v codex-call` 仍指向 2.23.0，
+  所以 `runtime.txt` 直接寫 2.24.0 的路徑（新 session 的 `command -v` 會解析到的位置）。
 
 ## Post-test cleanup checklist
 

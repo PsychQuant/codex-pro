@@ -140,7 +140,7 @@
   - README 與 SKILL.md 寫明 Python 3.10 以上；重新產生原生 bundle。
   - 驗證：`bash tests/run.sh` 只剩 #24 那一條失敗。
   - [after: 6.7]
-- [ ] 6.9 真實後端端到端（B12）。
+- [x] 6.9 真實後端端到端（B12）。
   - 本機 parallel-ai-agents 更新到 2.24.0 以上。
   - 用 3 張合成圖跑完整流程（含放大輪），確認回覆符合 schema、中性檔名與送出順序一致、結果檔完整。
   - 驗證：結果檔與 run 目錄的實際內容記錄在 e2e-checklist 的對應項目。
