@@ -17,7 +17,7 @@ meant to hide. Two steps, because neither is enough alone:
   JPEG  frame, Huffman, quantisation, restart and scan segments, JFIF APP0 without its thumbnail,
         ICC colour profiles (APP2 "ICC_PROFILE") and Adobe's APP14 (by its signature), also between
         progressive scans; the copy ends at the end-of-image marker, which may follow any number of
-        0xFF fill bytes, and a JPEG without one is refused, since its end cannot be found
+        0xFF fill bytes. These rules run on sips's own output, so they meet only what sips writes.
   PNG   the chunks in PNG_KEEP; the copy ends at IEND
   WebP, GIF  encoded as PNG, then treated as PNG (sips does not write WebP)
 

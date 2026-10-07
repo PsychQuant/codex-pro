@@ -63,7 +63,10 @@ checks = {
     "zoom_dropped": "放大輪未採用" in body,
     "count_only_unsettled": "只比數量" in body and "無法裁決" in body,
     # round 4 (M9, U1, U4, background security review)
-    "closed_list_current": "refresh 被拒" not in body and "第一行" in body,
+    "closed_list_current": "refresh 被拒" not in body and "整行等於" not in body and "一律當成已送出" in body and "登入" in body,
+    # round 5 (V9, V7, N6)
+    "init_uses_up_run": "init 失敗會用掉這個 run" in body,
+    "full_res_crops": "原解析度" in body,
     "track_point": "track_point: tip" in body,
     "reencoded_copies": "重新編碼" in body,
     "resend_rule": "同一個 run 可以再送" in body,
@@ -1879,6 +1882,10 @@ assert_contains "$(cat "$result_file")" "sealed before they were read" \
   "the limitations say the zoom answers' sealing before reading depends on the skill being followed (L10)"
 assert_contains "$(cat "$result_file")" "could still make the true count higher" \
   "the limitations say what a count settled for one side does and does not show"
+case "$(cat "$result_file")" in
+  *"(M11)"*|*"(U4)"*) fail "the result file carries no internal review codes (N9)" ;;
+  *) pass "the result file carries no internal review codes (N9)" ;;
+esac
 assert_contains "$(cat "$result_file")" "agreed count" \
   "the limitations say that SAM's two-way relation evidence treats the sides' agreed count as true (M11)"
 assert_contains "$(cat "$result_file")" "PAD, THREAD" \

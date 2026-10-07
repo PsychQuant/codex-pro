@@ -41,12 +41,13 @@ allowed-tools:
 2. `target_invalid`：沒有圖片、圖片讀不到、詞彙表的關係詞沒有量化門檻、Claude 的答案不合 schema
 3. `runtime_unsupported`：`codex-call --help` 沒有列出 `--image`（舊版會把不認得的旗標當成 prompt 吞掉）
 4. `parse_failed`：Codex 的回覆不是符合 schema 的 JSON
-5. `runtime_unavailable`：找不到 `codex-call`、`python3` 比 3.10 舊，或 `codex-call` 在任何網路請求之前就停下（讀不到 prompt、鎖檔錯誤等）
+5. `runtime_unavailable`：找不到 `codex-call`、`python3` 比 3.10 舊，或 `codex-call` 根本沒能啟動
 6. `internal_error`：腳本內部的意外例外。照樣寫結果檔，detail 是例外類型與訊息
 7. `backend_error`：請求可能已經送出：後端回錯誤（例如 HTTP 500）、連線中斷，或 `codex-call` 沒說明原因（`HTTP 0`）。
-   `codex-call` 在收到回應之前的失敗都只印 `HTTP 0`，看不出有沒有送出，所以一律當成已送出；這一輪已經用掉，不重送。
-   只有 `codex-call` 印出的第一行 `error:` 整行等於它自己送出前的訊息（圖片檢查、未知選項、讀不到 prompt、`auth.json` 格式不對、
-   refresh 鎖檔、refresh 沒拿到 token）時才算沒送出。token refresh 失敗印的 `HTTP <status>` 與請求本身的失敗相同，所以一律當成已送出
+   **`codex-call` 只要失敗，一律當成已送出**：錯誤訊息的字樣證明不了什麼都沒送出（後端的錯誤事件原文照印，
+   收到回應之前的失敗都只印 `HTTP 0`），所以這一輪已經用掉，不重送。常見的送出前狀況改由 `xval.py` 在呼叫之前
+   自己檢查：Codex 是否已登入（`~/.codex/auth.json` 存在且有 token，不讀出內容）、影格與題目是否就緒；
+   沒過就不呼叫 `codex-call`，訊息會寫 nothing was sent
 
 ## Step 1: Parse arguments
 
@@ -97,7 +98,8 @@ python3 "$SKILL_DIR/scripts/xval.py" init --run "$RUN" --vocab <vocab.json> --fi
 
 `init` 寫進 run 目錄的是**處理過的複本**：先由 sips 解碼後重新編碼成新檔（轉成 sRGB、長邊縮到 2048 以內；WebP 與 GIF
 寫成 PNG），再依 EXIF 方向轉正，最後去除 EXIF／XMP 等內嵌資料（拍攝時間、GPS）。原檔的位元組不會出現在複本裡，
-兩個模型看到的都是這份複本，像素也相同。解不開的檔案以 `target_invalid` 拒收。run 目錄會寫入 `.gitignore`，影格複本不會被 `git add -A` 帶進版控。
+第一輪兩個模型拿到的都是這份複本。原圖長邊超過 2048 時，另外寫一份**原解析度**、同樣處理過的複本到 `$RUN/hires/`，
+只給放大輪裁切用，放大輪因此看得到 2048 的複本看不到的細節。解不開的檔案以 `target_invalid` 拒收。run 目錄會寫入 `.gitignore`，影格複本不會被 `git add -A` 帶進版控。
 
 Claude 依序用 Read 看 `$RUN/frames/f01.png`…，依詞彙表與 `references/claim-schema.md` 逐格作答，
 寫成 `$RUN/claude.json`（有 `--claude-answers` 就複製該檔）。**作答時不得看任何 Codex 的輸出。**
@@ -184,9 +186,11 @@ python3 "$SKILL_DIR/scripts/xval.py" ask --run "$RUN" --round 1
   這不是 run 的錯誤，`$RUN/error.json` 不會改變，run 照原本的狀態繼續；只記在 `errors.jsonl`。
 - **run 停止**：`$RUN/error.json` 記下錯誤。照下表回報，然後直接跳到 Step 9 寫結果檔。
 
-「同一個 run 可以再送」只在確定沒送出時成立：送出前的輸入檢查（`target_invalid`）、`runtime_unsupported`、`runtime_unavailable`，
-以及 `auth.json` 格式不對的 `oauth_invalid`，修好之後在同一個 run 重跑同一步即可。其他失敗都可能已經送出，
-這一輪已經用掉，要重來就另開一個 run（新的 run 不再是盲答，結果檔的 Limitations 會寫明）：
+「同一個 run 可以再送」只在 `xval.py` 自己在呼叫 `codex-call` 之前就停下時成立：訊息寫 nothing was sent
+（沒登入的 `oauth_invalid`、封存或隱私確認不齊、輸入被改過的 `target_invalid`），或 `runtime_unsupported`、
+`runtime_unavailable`，修好之後在同一個 run 重跑同一步即可。**init 失敗會用掉這個 run**：另開一個 run 目錄，
+重做 Step 2 的隱私確認。`codex-call` 本身的任何失敗都當成已送出，這一輪已經用掉，要重來就另開一個 run
+（新的 run 不再是盲答，結果檔的 Limitations 會寫明）：
 
 | 來源 | `error` 值 | 回報訊息 |
 |---|---|---|
@@ -238,7 +242,8 @@ python3 "$SKILL_DIR/scripts/xval.py" sam --run "$RUN"
 python3 "$SKILL_DIR/scripts/xval.py" crops --run "$RUN"
 ```
 
-每個有範圍可看的分歧裁出一張圖並縮放（最多 2 倍，長邊不超過 2048 px；題目檔每行寫出實際倍率）
+每個有範圍可看的分歧，從原解析度的複本（沒有的話就是第一輪的複本）裁出一張圖並縮放（最多 2 倍，長邊不超過
+2048 px；題目檔每行寫出實際倍率）
 （`$RUN/crops/z01.png`…），所有問題與類別定義寫在題目檔
 `$RUN/zoom_prompt.md`。沒有關鍵點可圈、或裁切範圍等於整張畫面的分歧不出題，`crops` 的輸出列在 `no_zoom`。
 
@@ -256,6 +261,7 @@ gives, to <RUN>/zoom_claude.json. Do not read any other file in <RUN>.
 `crops` 的輸出裡 `crops` 是空清單時（沒有任何放大題），跳過本步，直接到 Step 9。
 
 放大輪的關係題只用來證明「距離小於門檻」：兩邊都答 true 才算數；false 可能只是裁切區裡湊不出一對點，不當證據。
+所以只有定義為 `distance_pct <` 或 `<=` 的關係會出放大題，其他關係列在 `no_zoom`。
 
 subagent 結束後**立刻封存**，再把同一份題目檔送給 Codex。封存之前**不要讀** `zoom_claude.json`、**不要重跑**
 subagent、也不要替它修格式：你知道原答，看到不同的答案而重跑或修改，就是讓 Claude 這一側重抽到合意為止。

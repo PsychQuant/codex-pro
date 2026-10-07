@@ -204,11 +204,12 @@ def result(run: str, argv: list[str]) -> None:
               "- Each round is asked once per run. A new run on the same images is a fresh attempt the program cannot "
               "link to this one, and it is no longer blind to what this run showed."]
     vocab = load(os.path.join(run, "vocab.json"), {}) or {}
-    lines.append("- A SAM distance settles a relation both ways only when SAM measured as many tips as both sides "
-                 "counted, which treats the agreed count as the true count; both sides can miss the same object (M11).")
+    if vocab.get("relations"):
+        lines.append("- A SAM distance settles a relation both ways only when SAM measured as many tips as both sides "
+                     "counted, which treats the agreed count as the true count; both sides can miss the same object.")
     if fm["sam_status"] == "ok" and vocab.get("track_point") != "tip":
         lines.append("- The vocabulary does not declare `track_point: tip`, so SAM gave count evidence only: its point "
-                     "is the mask tip, which may not be the key point (U4).")
+                     "is the mask tip, which may not be the key point.")
     count_only = sorted(set(vocab.get("classes", {})) - set(vocab.get("key_points", {})))
     if count_only:   # no zoom question and no SAM evidence for them (#23 verify round 3, T8)
         lines.append(f"- Classes without a key point ({', '.join(count_only)}) are compared by count only: a count "
