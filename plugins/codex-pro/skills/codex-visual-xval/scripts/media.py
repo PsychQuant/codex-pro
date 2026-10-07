@@ -206,8 +206,9 @@ def strip_file(path: str, kind: str) -> None:
         fh.write(cleaned)
 
 
-def prepare_copy(src: str, frames_dir: str, stem: str) -> str:
-    """Write the run's copy of one image; returns its file name inside frames_dir."""
+def prepare_copy(src: str, frames_dir: str, stem: str, max_edge: int | None = MAX_EDGE) -> str:
+    """Write the run's copy of one image; returns its file name inside frames_dir. `max_edge=None`
+    keeps the full resolution, for the copy the zoom round crops from (#23 verify round 5, V7)."""
     with open(src, "rb") as fh:
         data = fh.read()
     kind = kind_of(data)
@@ -217,17 +218,26 @@ def prepare_copy(src: str, frames_dir: str, stem: str) -> str:
         raise MediaError("cannot decode the image")
     out = "jpeg" if kind == "jpeg" else "png"
     target = os.path.join(frames_dir, f"{stem}.{'jpg' if out == 'jpeg' else 'png'}")
-    cmd = ["sips", "--matchTo", SRGB_PROFILE, "-s", "format", out]
-    if out == "jpeg":
-        cmd += ["-s", "formatOptions", "95"]
-    if max(w, h) > MAX_EDGE:
-        cmd += ["-Z", str(MAX_EDGE)]
-    subprocess.run(cmd + [src, "--out", target], capture_output=True, check=True)
-    if not os.path.isfile(target) or not all(image_size(target)):
-        raise MediaError("cannot decode the image")
-    # Turn upright before stripping: sips writes an EXIF block of its own when it saves, so anything
-    # stripped before a sips step comes back.
-    for step in ORIENTATION_STEPS.get(turn, []):
-        subprocess.run(["sips", *step, target, "--out", target], capture_output=True, check=True)
+    # Decode and encode to a lossless PNG first, turn it upright there, and only then encode the final
+    # format: a JPEG is compressed once, at quality 95 (round 5, N8). sips also writes an EXIF block of
+    # its own when it saves, so stripping comes last.
+    staged = target + ".staged.png"
+    cmd = ["sips", "--matchTo", SRGB_PROFILE, "-s", "format", "png"]
+    if max_edge and max(w, h) > max_edge:
+        cmd += ["-Z", str(max_edge)]
+    try:
+        subprocess.run(cmd + [src, "--out", staged], capture_output=True, check=True)
+        if not os.path.isfile(staged) or not all(image_size(staged)):
+            raise MediaError("cannot decode the image")
+        for step in ORIENTATION_STEPS.get(turn, []):
+            subprocess.run(["sips", *step, staged, "--out", staged], capture_output=True, check=True)
+        if out == "jpeg":
+            subprocess.run(["sips", "-s", "format", "jpeg", "-s", "formatOptions", "95", staged, "--out", target],
+                           capture_output=True, check=True)
+        else:
+            os.replace(staged, target)
+    finally:
+        if os.path.exists(staged):
+            os.remove(staged)
     strip_file(target, out)
     return os.path.basename(target)

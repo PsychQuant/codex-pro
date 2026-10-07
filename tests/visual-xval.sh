@@ -1032,6 +1032,23 @@ rm -rf "$WORK/runr4h"
 xval init --run "$WORK/runr4h" --vocab "$WORK/vocab.json" "$WORK/hidden.jpg" "$WORK/wide.png"
 assert_eq "0" "$(grep -c GPSSECRET "$WORK/runr4h/frames/f01.jpg" 2>/dev/null || true)" \
   "data hidden in an allowed ICC or Adobe block does not reach the copy (re-encoded)"
+# Round 5 (N11): a structurally valid profile (the system sRGB) carrying planted text, embedded by sips.
+python3 - "$WORK" <<'PY'
+import sys
+w = sys.argv[1]
+icc = bytearray(open("/System/Library/ColorSync/Profiles/sRGB Profile.icc", "rb").read())
+i = icc.find(b"desc", 128)
+mark = b"GPSSECRET-ICC-VALID"
+start = len(icc) - 64
+icc[start:start + len(mark)] = mark   # inside the profile's tag data; header and tag table unchanged
+open(f"{w}/planted.icc", "wb").write(bytes(icc))
+PY
+sips --embedProfile "$WORK/planted.icc" "$WORK/plain.jpg" --out "$WORK/icc_valid.jpg" >/dev/null 2>&1
+rm -rf "$WORK/runr5i"
+xval init --run "$WORK/runr5i" --vocab "$WORK/vocab.json" "$WORK/icc_valid.jpg"
+assert_eq "1" "$(grep -c GPSSECRET-ICC-VALID "$WORK/icc_valid.jpg" 2>/dev/null || true)" "the test image does carry the planted profile"
+assert_eq "0" "$(grep -c GPSSECRET "$WORK/runr5i/frames/f01.jpg" 2>/dev/null || true)" \
+  "data in a valid embedded profile does not reach the copy (N11)"
 assert_eq "2048" "$(json_get "$(cat "$WORK/runr4h/frames.json" 2>/dev/null)" 'd["f02.png"]["width"]')" \
   "a copy is at most 2048 pixels on its longer side, what codex-call would send anyway"
 printf 'not an image after all' > "$WORK/broken.png"; printf '\x89PNG\r\n\x1a\n' | cat - "$WORK/broken.png" > "$WORK/broken2.png"
@@ -1758,8 +1775,26 @@ xval crops --run "$WORK/runbig"
 big_w=$(sips -g pixelWidth "$WORK/runbig/crops/z01.png" 2>/dev/null | awk '/pixelWidth/{print $2}')
 assert_eq "yes" "$([ -n "$big_w" ] && [ "$big_w" -le 2048 ] && echo yes || echo "no ($big_w)")" \
   "a crop is enlarged no further than a longer side of 2048 px (S15)"
+# Round 5 (V7): a 3000-px image keeps a full-resolution copy for the crops, so the zoom round sees real
+# detail, not the 2048 copy enlarged; the expected scale is computed here, not read back (the old check
+# only compared the plan with itself).
+big_check=$(python3 - "$WORK/runbig" <<'PY'
+import json, math, sys
+run = sys.argv[1]
+frames = json.load(open(f"{run}/frames.json")); e = json.load(open(f"{run}/zoom_plan.json"))["d1"]
+hires = frames["f01.png"].get("hires")
+cw = e["box_px"][2] - e["box_px"][0]; ch = e["box_px"][3] - e["box_px"][1]
+want_cw = round((e["box_pct"][2] - e["box_pct"][0]) / 100 * 3000)
+scale = math.floor(min(2.0, 2048 / max(cw, ch)) * 100) / 100
+print("hires=%s cw_ok=%s scale_ok=%s" % (bool(hires), abs(cw - want_cw) <= 1, abs(e["scale"] - scale) < 1e-9))
+PY
+)
+assert_contains "$big_check" "hires=True" "an image over 2048 px keeps a full-resolution copy for the crops (V7)"
+assert_contains "$big_check" "cw_ok=True" "the crop is cut from the full-resolution copy"
+assert_contains "$big_check" "scale_ok=True" "the scale is what the crop size gives, at most 2x and 2048 px"
 big_scale=$(python3 -c 'import json,sys; print("%g" % json.load(open(sys.argv[1]))["d1"]["scale"])' "$WORK/runbig/zoom_plan.json" 2>/dev/null)
 assert_contains "$(cat "$WORK/runbig/zoom_prompt.md" 2>/dev/null)" "z01.png (shown at ${big_scale}x)" "the question file states the actual enlargement"
+assert_eq "0" "$(cat "$WORK"/runbig/hires/* 2>/dev/null | grep -c -e Exif -e GPSSECRET || true)" "the full-resolution copy carries no metadata either"
 
 new_run "$WORK/run6"
 ask_with "$WORK/codex_reply.md" "$WORK/run6" 1

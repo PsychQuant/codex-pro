@@ -158,6 +158,14 @@ def init(run: str, vocab_path: str, images: list[str], sequence: bool, first_sid
             raise Stop("target_invalid", f"cannot prepare {os.path.basename(src)}: {exc}")
         w, h = image_size(os.path.join(run, "frames", name))
         frames[name] = {"source": os.path.abspath(src), "width": w, "height": h}
+        if max(v or 0 for v in image_size(src)) > media.MAX_EDGE:
+            # the zoom round crops from the full resolution, re-encoded and stripped the same way (round 5, V7)
+            os.makedirs(os.path.join(run, "hires"), exist_ok=True)
+            try:
+                hires = media.prepare_copy(src, os.path.join(run, "hires"), f"f{n:02d}", max_edge=None)
+            except (media.MediaError, OSError, subprocess.CalledProcessError, struct.error) as exc:
+                raise Stop("target_invalid", f"cannot prepare {os.path.basename(src)}: {exc}")
+            frames[name]["hires"] = os.path.join("hires", hires)
     dump(os.path.join(run, "frames.json"), frames)
     dump(os.path.join(run, "vocab.json"), vocab)
     dump(os.path.join(run, "meta.json"), {
@@ -535,16 +543,18 @@ def crops(run: str) -> None:
             skipped.append({"id": item["id"], "frame": item["frame"], "reason": "the crop would cover the whole image"})
             continue
         n += 1
-        w, h = info.get("width"), info.get("height")
+        # the full-resolution copy when there is one, so the zoom round sees real detail (round 5, V7)
+        source = os.path.join(run, info["hires"]) if info.get("hires") else os.path.join(run, "frames", item["frame"])
+        w, h = (None, None) if info.get("hires") else (info.get("width"), info.get("height"))
         if not w or not h:
-            w, h = image_size(os.path.join(run, "frames", item["frame"]))
+            w, h = image_size(source)
         px = [round(box[0] / 100 * w), round(box[1] / 100 * h), round(box[2] / 100 * w), round(box[3] / 100 * h)]
         crop = os.path.join("crops", f"z{n:02d}.png")
         target = os.path.join(run, crop)
         cw, ch = px[2] - px[0], px[3] - px[1]
         try:
             subprocess.run(["sips", "-s", "format", "png", "-c", str(ch), str(cw), "--cropOffset", str(px[1]), str(px[0]),
-                            os.path.join(run, "frames", item["frame"]), "--out", target], capture_output=True, check=True)
+                            source, "--out", target], capture_output=True, check=True)
             scale = enlargement(cw, ch)
             subprocess.run(["sips", "-Z", str(round(scale * max(cw, ch))), target, "--out", target],
                            capture_output=True, check=True)

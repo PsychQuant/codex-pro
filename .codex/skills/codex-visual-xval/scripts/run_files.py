@@ -79,7 +79,9 @@ def inputs_digest(run: str) -> str:
     import hashlib
     h = hashlib.sha256()
     # Only the frames the run lists: a file Finder adds (.DS_Store) is not an input (round 3, L2).
-    for name in ["vocab.json", "frames.json"] + [os.path.join("frames", n) for n in neutral_names(run)]:
+    frames = load(os.path.join(run, "frames.json"), {}) or {}
+    hires = [frames[n]["hires"] for n in sorted(frames) if isinstance(frames[n], dict) and frames[n].get("hires")]
+    for name in ["vocab.json", "frames.json"] + [os.path.join("frames", n) for n in neutral_names(run)] + hires:
         h.update(name.encode() + b"\0" + (safe_digest(os.path.join(run, name)) or "missing").encode() + b"\n")
     return h.hexdigest()
 
