@@ -865,6 +865,20 @@ for frame in f01.jpg f02.webp f03.webp f04.png; do
   assert_contains "$(sips -g pixelWidth "$WORK/runr3m/frames/$frame" 2>/dev/null)" "pixelWidth: " "$frame still decodes"
 done
 
+xval init --run "$WORK/runr3m" --vocab "$WORK/vocab.json" "$WORK/fill.jpg"
+assert_contains "$RUN_OUT" "already" "a run is initialised only once, so the privacy confirmation covers one set of images (L4)"
+assert_eq "4" "$(ls "$WORK/runr3m/frames" | wc -l | tr -d ' ')" "the refused second init leaves the frames as they were"
+
+# Every detail in the result file is free of local paths, not only SAM's (#23 verify round 3, L15).
+rm -rf "$WORK/runpath"
+xval init --run "$WORK/runpath" --vocab "$WORK/vocab.json" "$WORK/home/gone_2026-09-11.png" "$WORK/missing.png"
+( mkdir -p "$WORK/project" && cd "$WORK/project" && HOME="$WORK/home" python3 "$SCRIPTS/xval.py" result --run "$WORK/runpath" --out "$WORK/runpath_result.md" >/dev/null 2>&1 )
+assert_contains "$(cat "$WORK/runpath_result.md" 2>/dev/null)" "missing.png" "the detail still names the file that was not readable"
+case "$(cat "$WORK/runpath_result.md" 2>/dev/null)" in
+  *"$WORK"*) fail "the result file's error detail carries no local path" ;;
+  *) pass "the result file's error detail carries no local path" ;;
+esac
+
 rm -rf "$WORK/run13"; cp "$WORK/imgs/shot_2026-09-11_1001.png" "$WORK/thirteenth.png"
 xval init --run "$WORK/run13" --vocab "$WORK/vocab.json" "$WORK"/imgs/*.png "$WORK/thirteenth.png"
 assert_contains "$RUN_OUT" '"error": "target_invalid"' "a run with 13 images is refused"
@@ -960,8 +974,16 @@ assert_eq "gpt-global low 600 global" \
 mkdir -p "$WORK/p41b/home/.codex-pro" "$WORK/p41b/project/run"
 printf 'max_time: abc\n' > "$WORK/p41b/home/.codex-pro/profile.yaml"
 p41b_out=$( cd "$WORK/p41b/project" && HOME="$WORK/p41b/home" RUN=run bash -c "$step41" 2>&1 )
-assert_no_file "$WORK/p41b/project/run/profile.json" "an invalid max_time is not replaced by the default in silence (#23 verify round 2, S12)"
 assert_contains "$p41b_out" "max_time" "Step 4.1 says which profile field is invalid"
+case "$(cat "$WORK/p41b/project/run/profile.json" 2>/dev/null)" in
+  *600*) fail "an invalid max_time is not replaced by the default in silence (#23 verify round 2, S12)" ;;
+  *) pass "an invalid max_time is not replaced by the default in silence (#23 verify round 2, S12)" ;;
+esac
+new_run "$WORK/run4m"; cp "$WORK/p41b/project/run/profile.json" "$WORK/run4m/profile.json"
+xval ask --run "$WORK/run4m" --round 1
+assert_contains "$RUN_OUT" "max_time" "ask names the invalid max_time"
+assert_contains "$(cat "$WORK/run4m/error.json" 2>/dev/null)" "max_time" "the invalid max_time is the run's error, so the result file shows it (L6)"
+assert_no_file "$WORK/mock.log" "nothing is sent with an invalid max_time"
 rm -rf "$WORK/run0p" "$WORK/p41" "$WORK/p41b" "$WORK/mock.log"
 
 # A runtime path that is missing is runtime_unavailable, not a crash.
@@ -1186,11 +1208,25 @@ case "$qfile" in
   *41.37*|*'"claims"'*|*'"d1"'*) fail "the question file carries no earlier answers and no dispute ids" ;;
   *) pass "the question file carries no earlier answers and no dispute ids" ;;
 esac
-printf '{"answers": {"z99.png": {"value": false}}}\n' > "$WORK/run5/zoom_claude.json"
-xval seal --run "$WORK/run5" --zoom
+rm -rf "$WORK/run5r"; cp -R "$WORK/run5" "$WORK/run5r"
+printf '{"answers": {"z99.png": {"value": false}}}\n' > "$WORK/run5r/zoom_claude.json"
+xval seal --run "$WORK/run5r" --zoom
 assert_contains "$RUN_OUT" '"error": "target_invalid"' "Claude's zoom answers are checked by the same rules as Codex's"
-assert_no_file "$WORK/run5/zoom_seal.json" "invalid zoom answers are not sealed"
-rm -f "$WORK/run5/error.json"
+assert_no_file "$WORK/run5r/zoom_seal.json" "invalid zoom answers are not sealed"
+assert_no_file "$WORK/run5r/error.json" "a zoom round that is not used is not the run's error (#23 verify round 3, T6)"
+assert_contains "$(cat "$WORK/run5r/errors.jsonl" 2>/dev/null)" '"step": "seal --zoom"' "the error history names the zoom round"
+printf '{"answers": {"z01.png": {"value": false}}}\n' > "$WORK/run5r/zoom_claude.json"
+xval seal --run "$WORK/run5r" --zoom
+assert_no_file "$WORK/run5r/zoom_seal.json" "answers fixed after a failed check are not sealed: Claude's side is not redrawn (S5)"
+rm -f "$WORK/mock.log"
+ask_with "$WORK/zoom_reply.md" "$WORK/run5r" zoom
+assert_no_file "$WORK/mock.log" "no zoom request is sent after the zoom round was dropped"
+assert_no_file "$WORK/run5r/error.json" "the refused zoom request is not the run's error either"
+xval adjudicate --run "$WORK/run5r"
+( mkdir -p "$WORK/project" && cd "$WORK/project" && python3 "$SCRIPTS/xval.py" result --run "$WORK/run5r" --out "$WORK/run5r_result.md" >/dev/null 2>&1 )
+assert_eq "" "$(fm "$WORK/run5r_result.md" error)" "a run whose zoom round was dropped is complete"
+assert_contains "$(cat "$WORK/run5r_result.md" 2>/dev/null)" "zoom round was not used" "the result file says the zoom round was not used"
+rm -f "$WORK/mock.log" "$WORK/prompts.txt"
 printf '{"answers": {"z01.png": {"value": false}}}\n' > "$WORK/run5/zoom_claude.json"
 xval seal --run "$WORK/run5" --zoom
 ask_with "$WORK/zoom_reply.md" "$WORK/run5" zoom
@@ -1239,6 +1275,46 @@ printf 'edited\n' >> "$WORK/run5e/codex_round1.md"
 ( cd "$WORK/project" && python3 "$SCRIPTS/xval.py" result --run "$WORK/run5e" --out "$WORK/run5_replyedit.md" >/dev/null 2>&1 )
 assert_contains "$(cat "$WORK/run5_replyedit.md" 2>/dev/null)" "reply file no longer matches" \
   "an edited raw Codex reply is reported (#23 verify round 2, S1)"
+
+# Round 3: a completed run stays complete, and what the adjudication reads is checked (T6, L2, L3).
+rm -rf "$WORK/run5k"; cp -R "$WORK/run5" "$WORK/run5k"; rm -f "$WORK/run5k/error.json"
+printf ' ' >> "$WORK/run5k/claude.json"
+xval ask --run "$WORK/run5k" --round 1
+assert_contains "$RUN_OUT" "already requested" "asking a done round again is refused as done before any other check"
+assert_no_file "$WORK/run5k/error.json" "that refusal does not turn the completed run into a failed one"
+xval crops --run "$WORK/run5k"
+assert_contains "$RUN_OUT" "already" "the crops are not made again once Claude's zoom answers are sealed"
+assert_no_file "$WORK/run5k/error.json" "nor does that refusal"
+rm -rf "$WORK/run5d"; cp -R "$WORK/run5" "$WORK/run5d"; : > "$WORK/run5d/frames/.DS_Store"
+xval compare --run "$WORK/run5d"
+assert_eq "0" "$RUN_STATUS" "a file Finder adds to the frames directory does not count as a changed input (L2)"
+rm -rf "$WORK/run5c"; cp -R "$WORK/run5" "$WORK/run5c"
+python3 - "$WORK/run5c/comparison.json" <<'PY'
+import json, sys
+c = json.load(open(sys.argv[1])); c["disagreements"][0]["codex"] = True; json.dump(c, open(sys.argv[1], "w"))
+PY
+xval adjudicate --run "$WORK/run5c"
+assert_contains "$RUN_OUT" '"error": "target_invalid"' "a comparison changed after it was written is not adjudicated (L3)"
+rm -rf "$WORK/run5p"; cp -R "$WORK/run5" "$WORK/run5p"
+python3 - "$WORK/run5p/zoom_plan.json" <<'PY'
+import json, sys
+p = json.load(open(sys.argv[1])); p["d1"]["box_pct"][0] += 1; json.dump(p, open(sys.argv[1], "w"))
+PY
+xval adjudicate --run "$WORK/run5p"
+assert_eq "unverifiable" "$(json_get "$(cat "$WORK/run5p/adjudication.json" 2>/dev/null)" 'd["adjudications"][0]["verdict"]')" \
+  "a zoom plan changed after it was recorded settles nothing"
+assert_eq "True" "$(json_get "$(cat "$WORK/run5p/adjudication.json" 2>/dev/null)" 'd.get("zoom_plan_broken")')" \
+  "the adjudication records that the zoom plan changed"
+rm -rf "$WORK/run5s"; cp -R "$WORK/run5" "$WORK/run5s"
+python3 - "$WORK/run5s/vocab.json" <<'PY'
+import json, sys
+v = json.load(open(sys.argv[1]))
+for k in ("key_points", "relations", "track_class"):
+    v.pop(k, None)
+json.dump(v, open(sys.argv[1], "w"))
+PY
+xval sam --run "$WORK/run5s"
+assert_contains "$RUN_OUT" '"sam_status": "not_applicable"' "SAM that could not be used does not ask for the download first (L7)"
 
 # Zoom answers that change after they were sealed or recorded are not evidence (#23 verify B2).
 cp -R "$WORK/run5" "$WORK/run5b"

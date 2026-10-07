@@ -113,7 +113,7 @@ python3 "$SKILL_DIR/scripts/xval.py" seal --run "$RUN"
 
 讀 `~/.codex-pro/profile.yaml`（global）與 `.codex-pro/profile.yaml`（project，優先），缺的欄位用
 hardcoded default（`gpt-5.6-sol` / `xhigh` / `600`，鏡像 [`references/defaults.json`](../../references/defaults.json)），
-結果寫進 `$RUN/profile.json`。之後的步驟都從這個檔案讀，不靠 shell 變數：每次 Bash 呼叫都是新的 shell，
+結果寫進 `$RUN/profile.json`；值不合法時照原樣寫進去並附上原因，不換成預設值，`ask` 會以 `target_invalid` 停下，原因因此留在 run 與結果檔裡。之後的步驟都從這個檔案讀，不靠 shell 變數：每次 Bash 呼叫都是新的 shell，
 變數到下一步就不見了，原本 `ask` 會因此安靜地改用預設值。
 
 ```bash
@@ -132,20 +132,20 @@ def parse(path):
     return out
 g = parse(os.path.expanduser("~/.codex-pro/profile.yaml"))
 p = parse(".codex-pro/profile.yaml")
-resolved, sources = {}, set()
+resolved, sources, invalid = {}, set(), ""
 for f, d in DEFAULTS.items():
     v, s = (p[f], "project") if f in p else ((g[f], "global") if f in g else (d, "default"))
     if f == "max_time":
         try: v = int(v)
-        except (ValueError, TypeError): v = 0
-        if v <= 0:   # a wrong value stops here; it is not replaced by the default in silence
-            print(json.dumps({"error": "target_invalid", "detail": f"profile max_time is not a positive integer ({s} profile)"}))
-            sys.exit(0)
+        except (ValueError, TypeError): pass
+        if not isinstance(v, int) or v <= 0:   # kept as given, not replaced by the default; `ask` refuses it
+            invalid = f"profile max_time is not a positive integer ({v!r}, {s} profile)"
     resolved[f] = v; sources.add(s)
 ps = "mixed" if {"project", "global"} <= sources else ("project" if "project" in sources else ("global" if "global" in sources else "default"))
+out = {**resolved, "profile_source": ps, **({"invalid": invalid} if invalid else {})}
 with open(os.path.join(sys.argv[1], "profile.json"), "w") as fh:
-    json.dump({**resolved, "profile_source": ps}, fh)
-print(json.dumps({**resolved, "profile_source": ps}))
+    json.dump(out, fh)
+print(json.dumps({"error": "target_invalid", "detail": invalid} if invalid else out))
 PY
 ```
 

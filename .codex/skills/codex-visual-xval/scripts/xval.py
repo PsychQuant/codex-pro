@@ -86,6 +86,7 @@ import adjudicate as adjudication  # noqa: E402
 import compare_claims  # noqa: E402
 import media  # noqa: E402
 import result_file  # noqa: E402
+from codex_errors import classify  # noqa: E402
 from zoom_round import (class_lines, crop_box, dispute_points, enlargement, question,  # noqa: E402
                         to_frame, valid_zoom_value, zoom_prompt, WHOLE_IMAGE_PCT)
 import sam_track  # noqa: E402
@@ -131,9 +132,9 @@ image_size = media.image_size
 
 # ── init / seal ─────────────────────────────────────────────────
 def init(run: str, vocab_path: str, images: list[str], sequence: bool, first_side: str = "") -> None:
-    if any(os.path.exists(os.path.join(run, f)) for f in ("seal.json", "requests.json")):
-        raise Stop("target_invalid", "this run is already sealed or has sent a request; start a new run directory",
-                   record=False)
+    if os.path.exists(os.path.join(run, "frames.json")):
+        # once only: the privacy confirmation and the seal both refer to this one set of images (round 3, L4)
+        raise Stop("target_invalid", "this run is already initialised; start a new run directory", record=False)
     vocab = load(vocab_path)
     if vocab is None:
         raise Stop("target_invalid", f"vocabulary unreadable: {vocab_path}")
@@ -148,10 +149,8 @@ def init(run: str, vocab_path: str, images: list[str], sequence: bool, first_sid
     missing = [p for p in images if not os.path.isfile(p)]
     if missing:
         raise Stop("target_invalid", f"not a readable file: {missing}")
+    run_dir(run)
     os.makedirs(os.path.join(run, "frames"), exist_ok=True)
-    # The run directory holds copies of the user's images: keep it out of version control.
-    with open(os.path.join(run, ".gitignore"), "w", encoding="utf-8") as fh:
-        fh.write("# copies of the images given to /codex-pro:codex-visual-xval\n*\n")
     frames = {}
     for n, src in enumerate(images, 1):
         try:
@@ -170,12 +169,20 @@ def init(run: str, vocab_path: str, images: list[str], sequence: bool, first_sid
     print(json.dumps({"ok": True, "frames": sorted(frames)}))
 
 
+def run_dir(run: str) -> None:
+    """Create the run directory, out of version control from its first file on: it holds copies of
+    the user's images, and error details that name local paths."""
+    os.makedirs(run, exist_ok=True)
+    with open(os.path.join(run, ".gitignore"), "w", encoding="utf-8") as fh:
+        fh.write("# copies of the images given to /codex-pro:codex-visual-xval\n*\n")
+
+
 def now_iso() -> str:
     return datetime.datetime.now().astimezone().isoformat(timespec="seconds")
 
 
 def confirm_privacy(run: str) -> None:
-    os.makedirs(run, exist_ok=True)
+    run_dir(run)
     dump(os.path.join(run, "privacy.json"), {"confirmed_at": now_iso()})
     print(json.dumps({"ok": True}))
 
@@ -192,15 +199,29 @@ def frame_order(run: str) -> list[str]:
 def seal_answers(run: str, zoom: bool) -> None:
     answers = os.path.join(run, "zoom_claude.json" if zoom else "claude.json")
     record = os.path.join(run, "zoom_seal.json" if zoom else "seal.json")
-    if not os.path.isfile(answers):
-        raise Stop("target_invalid", f"Claude's answers are missing: {answers}")
     # A seal is written once. Re-sealing, or sealing after Codex has answered, would make a
-    # late seal look exactly like an early one (#23 verify B1).
+    # late seal look exactly like an early one (#23 verify B1). These refusals come first, so a
+    # step that is already done is never reported as a new failure (round 3, T6).
     previous = load(record)
     if previous:
         raise Stop("target_invalid", f"already sealed at {previous.get('sealed_at')}; a seal is not rewritten", record=False)
     if load(os.path.join(run, "requests.json"), {}).get("zoom" if zoom else "1"):
         raise Stop("target_invalid", "Codex has already been asked this round; answers sealed now prove nothing", record=False)
+    if zoom and load(os.path.join(run, "zoom_rejected.json")):
+        raise Stop("target_invalid", "Claude's zoom answers already failed the checks, so the zoom round is not used; "
+                   "answers fixed afterwards are not sealed", record=False)
+    if zoom:
+        try:
+            if not os.path.isfile(answers):
+                raise Stop("target_invalid", f"Claude's zoom answers are missing: {os.path.basename(answers)}")
+            zoom_answers(load(os.path.join(run, "zoom_plan.json"), {}), load(answers), "target_invalid", "Claude's zoom answers")
+        except Stop as stop:
+            # The zoom round is dropped, not retried: fixing the answers and sealing again would let
+            # Claude's side be redrawn until it suits (S5). The run itself goes on (round 3, T6).
+            dump(os.path.join(run, "zoom_rejected.json"), {"at": now_iso(), "detail": stop.detail})
+            raise Stop(stop.error, f"{stop.detail}; the zoom round is not used and the run continues", record=False)
+    elif not os.path.isfile(answers):
+        raise Stop("target_invalid", f"Claude's answers are missing: {os.path.basename(answers)}")
     if not zoom:
         map_source_names(run, answers)
         vocab = load(os.path.join(run, "vocab.json"))
@@ -210,8 +231,6 @@ def seal_answers(run: str, zoom: bool) -> None:
             raise Stop("target_invalid", f"Claude claims: {exc}")
         if sorted(claude) != neutral_names(run):
             raise Stop("target_invalid", "Claude claims must answer every image, by its neutral name")
-    else:
-        zoom_answers(load(os.path.join(run, "zoom_plan.json"), {}), load(answers), "target_invalid", "Claude's zoom answers")
     import contextlib, io
     with contextlib.redirect_stdout(io.StringIO()):
         sealing.seal(answers, record)
@@ -288,49 +307,6 @@ def extract_json(text: str) -> Any:
     return None
 
 
-# Failures codex-call reports before any network request: the only ones that leave a round unsent.
-# A closed list, matched on codex-call's own wording; no other failure may be inferred to be unsent
-# from its wording, because codex-call prints `HTTP 0: (no body)` for every failure before a response
-# arrives, an upload that finished before the connection dropped included (#23 verify round 3, T1).
-# A precise answer needs codex-call to report what it sent: PsychQuant/parallel-ai-agents#89.
-UNSENT = (
-    (r"^--image ", "target_invalid"),                       # the image checks
-    (r"^unknown option: ", "runtime_unavailable"),
-    (r"^--max-time must be a positive integer", "runtime_unavailable"),
-    (r"^cannot read prompt file: ", "runtime_unavailable"),
-    (r"^empty prompt$", "runtime_unavailable"),
-    (r"auth\.json", "oauth_invalid"),                       # reading the token store
-    (r"^(open lock failed|flock failed): ", "runtime_unavailable"),   # the token-refresh lock
-    (r"^(refresh response missing access_token|post-refresh: tokens missing)$", "oauth_invalid"),
-    (r"\binvalid_grant\b", "oauth_invalid"),                # the token endpoint refused the refresh
-)
-
-
-def classify(stderr: str, status: int) -> tuple[str, str, bool]:
-    """(error class, detail, sent). codex-call reports a failure as one `error: <message>` line.
-    Judge that line, and match whole markers ("HTTP 429") rather than digits: an image path inside a
-    run directory named after its timestamp can contain "429" or "401" (#23 verify I1)."""
-    lines = re.findall(r"^error: (.*)$", stderr, re.MULTILINE)
-    message = (lines[-1] if lines else stderr).strip()
-    low = message.lower()
-    detail = message[-500:]
-    for pattern, error in UNSENT:
-        if re.search(pattern, message):
-            return error, detail, False
-    if re.search(r"\bhttp 429\b", low) or "rate limit" in low or "usage limit" in low:
-        return "rate_limit", detail, True
-    if re.search(r"\bhttp 40[13]\b", low) or "unauthorized" in low or "refresh_token" in low or "token expired" in low:
-        return "oauth_invalid", detail, True
-    if "timed out" in low or "timeout" in low:
-        return "timeout", detail, True
-    if re.match(r"http 0\b", low):
-        return "backend_error", (f"{detail} (no response arrived; codex-call does not say whether the request "
-                                 "was sent, so it is counted as sent)"), True
-    # The request may have been made and the backend or the connection failed. This is the default:
-    # a failure that is not known to come before sending is treated as sent (#23 verify round 3, T1).
-    return "backend_error", (detail if re.search(r"\bhttp \d{3}\b", low) else f"codex-call exit {status}: {detail}"), True
-
-
 def profile(run: str) -> dict:
     """The profile Step 4.1 resolved for this run. Shell variables do not survive between the
     skill's Bash calls, and a missing value used to fall back to a default in silence (#23 verify B11)."""
@@ -338,6 +314,8 @@ def profile(run: str) -> dict:
     ok = (isinstance(data, dict) and all(isinstance(data.get(k), str) and data[k] for k in ("model", "effort"))
           and isinstance(data.get("max_time"), int) and not isinstance(data.get("max_time"), bool) and data["max_time"] > 0)
     if not ok:
+        if isinstance(data, dict) and data.get("invalid"):   # Step 4.1 found a value it would not replace (L6)
+            raise Stop("target_invalid", f"{data['invalid']}; nothing was sent")
         raise Stop("target_invalid", "no resolved profile in the run directory (Step 4.1 writes profile.json); nothing was sent")
     return data
 
@@ -384,7 +362,8 @@ def inputs_digest(run: str) -> str:
     """One digest over the vocabulary, frames.json and every frame copy (#23 verify round 2, S2)."""
     import hashlib
     h = hashlib.sha256()
-    for name in ["vocab.json", "frames.json"] + [os.path.join("frames", n) for n in sorted(os.listdir(os.path.join(run, "frames")))]:
+    # Only the frames the run lists: a file Finder adds (.DS_Store) is not an input (round 3, L2).
+    for name in ["vocab.json", "frames.json"] + [os.path.join("frames", n) for n in neutral_names(run)]:
         h.update(name.encode() + b"\0" + sealing.digest(os.path.join(run, name)).encode() + b"\n")
     return h.hexdigest()
 
@@ -426,15 +405,18 @@ def seal_intact(run: str, zoom: bool) -> bool:
 def before_request(run: str, rnd: str) -> None:
     """Everything a request waits for. Each of these used to be a sentence in SKILL.md that the
     program did not check, so a run that skipped it looked identical to one that did not."""
+    earlier = load(os.path.join(run, "requests.json"), {}).get(rnd)
+    if earlier:   # first: a done round is refused as done, not as whatever else has changed since (T6)
+        raise Stop("target_invalid", f"round {rnd} was already requested at {earlier.get('requested_at')}; "
+                   "a recorded answer is not replaced and requests are not retried", record=False)
+    if rnd == "zoom" and load(os.path.join(run, "zoom_rejected.json")):
+        raise Stop("target_invalid", "the zoom round is not used, because Claude's zoom answers failed the checks; "
+                   "nothing was sent", record=False)
     if not load(os.path.join(run, "privacy.json")):
         raise Stop("target_invalid", "the privacy reminder has not been confirmed for this run "
                    "(run `confirm-privacy` after the user agrees); nothing was sent")
     if not seal_intact(run, zoom=(rnd == "zoom")):
         raise Stop("target_invalid", "Claude's answers are not sealed, or changed after sealing; nothing was sent")
-    earlier = load(os.path.join(run, "requests.json"), {}).get(rnd)
-    if earlier:
-        raise Stop("target_invalid", f"round {rnd} was already requested at {earlier.get('requested_at')}; "
-                   "a recorded answer is not replaced and requests are not retried", record=False)
 
 
 def record_request(run: str, rnd: str, **fields: Any) -> None:
@@ -532,6 +514,7 @@ def compare(run: str) -> None:
     aspects = {n: f["height"] / f["width"] for n, f in frames.items() if f.get("width") and f.get("height")}
     result = compare_claims.compare(vocab, claude, codex, aspects)
     dump(os.path.join(run, "comparison.json"), result)
+    dump(os.path.join(run, "comparison_record.json"), {"sha256": sealing.digest(os.path.join(run, "comparison.json"))})
     disputes = [{k: d[k] for k in ("id", "frame", "kind", "class", "relation") if k in d} for d in result["disagreements"]]
     print(json.dumps({"agreement_rate": result["agreement_rate"], "n_frames": result["n_frames"],
                       "n_disagreements": len(disputes), "seal_broken": check["seal_broken"],
@@ -541,10 +524,22 @@ def compare(run: str) -> None:
 
 
 
-def crops(run: str) -> None:
-    comparison = load(os.path.join(run, "comparison.json"))
+def checked_comparison(run: str) -> dict:
+    """The comparison as `compare` wrote it; an edited one would change what is cropped and settled (L3)."""
+    path = os.path.join(run, "comparison.json")
+    comparison = load(path)
     if comparison is None:
         raise Stop("target_invalid", "no comparison: run `compare` first")
+    if load(os.path.join(run, "comparison_record.json"), {}).get("sha256") != sealing.digest(path):
+        raise Stop("target_invalid", "comparison.json changed after `compare` wrote it")
+    return comparison
+
+
+def crops(run: str) -> None:
+    if load(os.path.join(run, "zoom_seal.json")) or load(os.path.join(run, "zoom_rejected.json")):
+        raise Stop("target_invalid", "Claude's zoom answers are already sealed or dropped; the crops are not made again",
+                   record=False)
+    comparison = checked_comparison(run)
     vocab = load(os.path.join(run, "vocab.json"))
     claude = compare_claims.by_frame(compare_claims.claims_list(load(os.path.join(run, "claude.json"))), vocab)
     codex = compare_claims.by_frame(compare_claims.claims_list(load(os.path.join(run, "codex.json"))), vocab)
@@ -607,20 +602,27 @@ def sam(run: str) -> None:
     meta = load(os.path.join(run, "meta.json"), {})
     if not meta.get("sequence"):
         return record("not_applicable", "the images are not frames of one video in time order (init --sequence)")
-    check = subprocess.run(["bash", os.path.join(HERE, "sam_env.sh"), "--check"], capture_output=True, text=True)
-    if check.returncode != 0:
-        return record("not_installed", check.stdout.strip())
+    # Whether SAM could be used at all is decided before its installation is checked, so the user is
+    # not asked for a ~1 GB download a run cannot use (#23 verify round 3, L7).
     vocab = load(os.path.join(run, "vocab.json"))
     if not vocab.get("key_points"):
         return record("not_applicable", "no class has a key point, so there is nothing to track")
     cls = vocab.get("track_class") or next(iter(vocab["key_points"]))
+    comparison = checked_comparison(run)
+    usable = [d for d in comparison["disagreements"]
+              if (d["kind"] in ("count", "position") and d.get("class") == cls) or d.get("between") == [cls, cls]]
+    if not usable:
+        return record("not_applicable", f"no disagreement SAM could settle (it tracks {cls})")
     frames = load(os.path.join(run, "frames.json"), {})
     aspects = {n: f["height"] / f["width"] for n, f in frames.items() if f.get("width") and f.get("height")}
-    plan = sam_track.anchors(load(os.path.join(run, "comparison.json")), load(os.path.join(run, "claude.json")),
+    plan = sam_track.anchors(comparison, load(os.path.join(run, "claude.json")),
                              load(os.path.join(run, "codex.json")), cls, order=frame_order(run), aspects=aspects)
     dump(os.path.join(run, "anchors.json"), plan)
     if not plan["anchors"]:
         return record("no_anchor", f"no agreeing frame has a {cls} to anchor on")
+    check = subprocess.run(["bash", os.path.join(HERE, "sam_env.sh"), "--check"], capture_output=True, text=True)
+    if check.returncode != 0:
+        return record("not_installed", check.stdout.strip())
     dump(os.path.join(run, "sam_frames.json"), [os.path.join(run, "frames", n) for n in neutral_names(run)])
     env_dir = os.path.expanduser("~/.codex-pro/sam-env")
     done = subprocess.run([os.path.join(env_dir, "bin", "python"), "-I", os.path.join(HERE, "sam_track.py"), "track",
@@ -645,8 +647,11 @@ def zoom_evidence(run: str) -> tuple[dict, dict]:
     recorded = load(os.path.join(run, "requests.json"), {}).get("zoom", {}).get("answers_sha256")
     codex_ok = bool(recorded) and sealing.digest(os.path.join(run, "zoom_codex.json")) == recorded
     claude_ok = seal_intact(run, zoom=True)
-    status = {"zoom_run": True, "zoom_seal_broken": not claude_ok, "zoom_codex_record_broken": not codex_ok}
-    if not (claude_ok and codex_ok):
+    # the plan maps each answer to its frame; an edited plan would move the evidence (round 3, L3)
+    plan_ok = load(os.path.join(run, "zoom_record.json"), {}).get("plan_sha256") == sealing.digest(os.path.join(run, "zoom_plan.json"))
+    status = {"zoom_run": True, "zoom_seal_broken": not claude_ok, "zoom_codex_record_broken": not codex_ok,
+              "zoom_plan_broken": not plan_ok}
+    if not (claude_ok and codex_ok and plan_ok):
         return {}, status
     try:
         mine = zoom_answers(plan, load(os.path.join(run, "zoom_claude.json")), "target_invalid", "Claude's zoom answers")
@@ -671,11 +676,11 @@ def adjudicate(run: str) -> None:
         dump(os.path.join(run, "adjudication.json"), {"counts": {}, "adjudications": [], "note": "no comparison"})
         print(json.dumps({"counts": {}, "note": "no comparison"}))
         return
+    comparison = checked_comparison(run)
     zoom, zoom_status = zoom_evidence(run)
     sam_state = load(os.path.join(run, "sam.json"), {})
     track = load(os.path.join(run, "track.json")) if sam_state.get("sam_status") == "ok" else None
-    result = adjudication.adjudicate(load(os.path.join(run, "vocab.json")), load(os.path.join(run, "comparison.json")),
-                                     zoom, track)
+    result = adjudication.adjudicate(vocab, comparison, zoom, track)
     result.update(zoom_status)
     dump(os.path.join(run, "adjudication.json"), result)
     print(json.dumps({"counts": result["counts"]}))
@@ -692,7 +697,8 @@ def main(argv: list[str]) -> None:
     if not run:
         print(__doc__, file=sys.stderr)
         sys.exit(64)
-    step = f"ask --round {option(argv, '--round')}" if command == "ask" else command
+    step = (f"ask --round {option(argv, '--round')}" if command == "ask"
+            else "seal --zoom" if command == "seal" and "--zoom" in argv else command)
     try:
         if command == "confirm-privacy":
             confirm_privacy(run)
@@ -727,6 +733,9 @@ def main(argv: list[str]) -> None:
 
 def stop_run(run: str, command: str, error: str, detail: str, record_error: bool = True) -> None:
     record = {"error": error, "detail": detail, "step": command, "at": now_iso()}
+    # A step that fails before the run directory exists (init with an unreadable image) still leaves
+    # its error, or the result file would show a failed run as one without an error (round 3).
+    run_dir(run)
     if os.path.isdir(run):
         if record_error:
             dump(os.path.join(run, "error.json"), record)

@@ -54,8 +54,11 @@ NATIVE_PREFLIGHT = {"runtime_unavailable", "package_corruption"}
 
 
 def sanitize(text: str) -> str:
+    """One line, no control characters, and no local paths: the home directory becomes `~` and any
+    other absolute path keeps only its last part (#23 verify round 3, L15)."""
     text = re.sub(r"[\r\n\t]", " ", text)
-    return re.sub(r"[\x00-\x1f\x7f]", "", text)[:500]
+    text = re.sub(r"[\x00-\x1f\x7f]", "", text).replace(os.path.expanduser("~"), "~")
+    return re.sub(r"(?<![\w~.])/(?:[^\s'\"\],)/]+/)+([^\s'\"\],)/]+)", r"…/\1", text)[:500]
 
 
 def describe(item: dict) -> str:
@@ -145,10 +148,16 @@ def result(run: str, argv: list[str]) -> None:
     if adjudicated.get("zoom_seal_broken"):
         lines += ["", "**The zoom seal failed**: Claude's zoom answers changed after they were sealed, so no "
                   "disagreement was settled by the zoom round."]
+    if load(os.path.join(run, "zoom_rejected.json")):
+        rejected = load(os.path.join(run, "zoom_rejected.json"), {})
+        lines += ["", f"**The zoom round was not used**: Claude's zoom answers failed the checks "
+                  f"({sanitize(rejected.get('detail', ''))}), so no disagreement was settled by it."]
+    if adjudicated.get("zoom_plan_broken"):
+        lines += ["", "**The zoom plan changed after it was recorded**, so no disagreement was settled by the zoom round."]
     if adjudicated.get("zoom_codex_record_broken"):
         lines += ["", "**Codex's zoom answers changed after they were recorded**, so no disagreement was settled "
                   "by the zoom round."]
-    sam_detail = sanitize(sam_state.get("detail", "")).replace(os.path.expanduser("~"), "~")   # no local home path
+    sam_detail = sanitize(sam_state.get("detail", ""))
     lines += ["", "## SAM evidence", "", f"Status: `{fm['sam_status']}`. {sam_detail}".rstrip()]
     if track:
         anchors = [a["frame"] for a in load(os.path.join(run, "anchors.json"), {}).get("anchors", [])]
