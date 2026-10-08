@@ -22,6 +22,8 @@ class Stop(Exception):
 
 
 def load(path: str, default: Any = None) -> Any:
+    if not os.path.isfile(path):   # a FIFO or a device would stall the step (#23 verify round 8, K1)
+        return default
     try:
         with open(path, encoding="utf-8") as fh:
             return json.load(fh)

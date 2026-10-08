@@ -1912,7 +1912,7 @@ rm -rf "$WORK/run6r"; cp -R "$WORK/run6w" "$WORK/run6r"
 xval adjudicate --run "$WORK/run6r"
 edit_json "$WORK/run6r/claude.json" 'd["claims"][0]["objects"] = {"INST": 9}'
 ( cd "$WORK/project" && python3 "$SCRIPTS/xval.py" result --run "$WORK/run6r" --out "$WORK/run6r_result.md" >/dev/null 2>&1 )
-assert_contains "$(cat "$WORK/run6r_result.md" 2>/dev/null)" "changed after the comparison" \
+assert_contains "$(cat "$WORK/run6r_result.md" 2>/dev/null)" "claude.json changed after the step that wrote it" \
   "the result file reports an answer file changed after the comparison (W2)"
 assert_eq "target_invalid" "$(fm "$WORK/run6r_result.md" error)" "and says so in the frontmatter, where codex-status reads (Y4)"
 for target in comparison adjudication; do
@@ -1930,6 +1930,71 @@ rm -rf "$WORK/run7s"; cp -R "$WORK/run6w" "$WORK/run7s"; xval adjudicate --run "
 edit_json "$WORK/run7s/seal.json" 'd.pop("inputs_sha256")'
 ( cd "$WORK/project" && python3 "$SCRIPTS/xval.py" result --run "$WORK/run7s" --out "$WORK/run7s_result.md" >/dev/null 2>&1 )
 assert_eq "target_invalid" "$(fm "$WORK/run7s_result.md" error)" "a seal without the input digest counts as changed (Y4)"
+assert_eq "1" "$(grep -c 'changed after' "$WORK/run6r_result.md")" "and the change is reported once (K10)"
+# Round 8 (Z2): the fallback keeps the run's own error.
+rm -rf "$WORK/run8f"; cp -R "$WORK/run6w" "$WORK/run8f"; xval adjudicate --run "$WORK/run8f"
+printf '{"error": "rate_limit", "detail": "limit", "step": "ask --round zoom"}' > "$WORK/run8f/error.json"
+edit_json "$WORK/run8f/adjudication.json" 'd["adjudications"] = None'
+( cd "$WORK/project" && python3 "$SCRIPTS/xval.py" result --run "$WORK/run8f" --out "$WORK/run8f_result.md" >/dev/null 2>&1 )
+assert_eq "rate_limit" "$(fm "$WORK/run8f_result.md" error)" "a result written from the fallback keeps the run's own error (Z2)"
+assert_eq "unknown" "$(fm "$WORK/run8f_result.md" seal_broken)" "and does not claim the seal is broken"
+# Z3, K1: a record and its digest come in pairs.
+for gone in comparison_record.json adjudication.json; do
+  rm -rf "$WORK/run8g"; cp -R "$WORK/run6w" "$WORK/run8g"; xval adjudicate --run "$WORK/run8g"; rm "$WORK/run8g/$gone"
+  ( cd "$WORK/project" && python3 "$SCRIPTS/xval.py" result --run "$WORK/run8g" --out "$WORK/run8g_result.md" >/dev/null 2>&1 )
+  assert_eq "target_invalid" "$(fm "$WORK/run8g_result.md" error)" "a deleted $gone is reported as a change (Z3, K1)"
+done
+# Z4: Codex's answers and raw replies are checked against what ask recorded.
+rm -rf "$WORK/run8c"; SEQ= new_run "$WORK/run8c"; ask_with "$WORK/codex_reply.md" "$WORK/run8c" 1
+edit_json "$WORK/run8c/codex.json" 'r = d["claims"][1]["relations"]; k = next(iter(r)); r[k] = not r[k]'
+xval compare --run "$WORK/run8c"; xval adjudicate --run "$WORK/run8c"
+( cd "$WORK/project" && python3 "$SCRIPTS/xval.py" result --run "$WORK/run8c" --out "$WORK/run8c_result.md" >/dev/null 2>&1 )
+assert_eq "target_invalid" "$(fm "$WORK/run8c_result.md" error)" "Codex's answers changed after ask recorded them are in the frontmatter (Z4)"
+assert_contains "$(cat "$WORK/run8c_result.md")" "codex.json" "and named"
+rm -rf "$WORK/run8r"; cp -R "$WORK/run6w" "$WORK/run8r"; xval adjudicate --run "$WORK/run8r"
+printf 'edited\n' >> "$WORK/run8r/codex_round1.md"
+( cd "$WORK/project" && python3 "$SCRIPTS/xval.py" result --run "$WORK/run8r" --out "$WORK/run8r_result.md" >/dev/null 2>&1 )
+assert_eq "target_invalid" "$(fm "$WORK/run8r_result.md" error)" "an edited raw Codex reply is in the frontmatter (Z4)"
+# K1: a FIFO among the records does not stall result; writing the file failing is target_invalid, not refused.
+rm -rf "$WORK/run8p"; cp -R "$WORK/run6w" "$WORK/run8p"; rm "$WORK/run8p/comparison.json"; mkfifo "$WORK/run8p/comparison.json"
+k1f=$(python3 - "$SCRIPTS" "$WORK/run8p" "$WORK/run8p_result.md" <<'PY'
+import subprocess, sys
+try:
+    done = subprocess.run([sys.executable, f"{sys.argv[1]}/xval.py", "result", "--run", sys.argv[2], "--out", sys.argv[3]],
+                          capture_output=True, text=True, timeout=30)
+    print("exit", done.returncode)
+except subprocess.TimeoutExpired:
+    print("hung")
+PY
+)
+rm -f "$WORK/run8p/comparison.json"
+assert_eq "exit 0" "$k1f" "a FIFO among the run's records does not stall result (K1)"
+rm -rf "$WORK/run8w"; cp -R "$WORK/run6w" "$WORK/run8w"
+RUN_OUT=$(cd "$WORK/project" && python3 "$SCRIPTS/xval.py" result --run "$WORK/run8w" --out "$WORK/no-such-dir/x.md" 2>&1)
+assert_contains "$RUN_OUT" '"error": "target_invalid"' "a result file that cannot be written is target_invalid (K1)"
+case "$(tail -1 "$WORK/run8w/errors.jsonl" 2>/dev/null)" in
+  *refused*) fail "and its history entry is not marked refused" ;;
+  *) pass "and its history entry is not marked refused" ;;
+esac
+rm -rf "$WORK/run8n"; xval init --run "$WORK/run8n" --vocab "$WORK/vocab.json" "$WORK"/imgs/*.png
+xval compare --run "$WORK/run8n"
+assert_contains "$RUN_OUT" "never sealed" "compare on a run that was never sealed says so (K1)"
+if [ -x "$OLDPY" ] && "$OLDPY" -c 'import sys; sys.exit(0 if sys.version_info < (3, 10) else 1)' 2>/dev/null; then
+  rm -rf "$WORK/runold2"; cp -R "$WORK/run6w" "$WORK/runold2"; printf '[1]' > "$WORK/runold2/profile.json"; printf '1' > "$WORK/runold2/frames.json"
+  ( cd "$WORK/project" && "$OLDPY" "$SCRIPTS/xval.py" result --run "$WORK/runold2" --out "$WORK/runold2_result.md" >/dev/null 2>&1 )
+  assert_file "$WORK/runold2_result.md" "an old Python writes the result file even when records have the wrong type (K1)"
+  case "$(cat "$WORK/runold2_result.md" 2>/dev/null)" in
+    *"$(dirname "$OLDPY")"*) fail "and names the interpreter without its directory (K6)" ;;
+    *) pass "and names the interpreter without its directory (K6)" ;;
+  esac
+else
+  skip "an old Python writes the result file even when records have the wrong type" "no Python older than 3.10 at $OLDPY"
+fi
+# K5: values copied into the frontmatter carry no control characters.
+rm -rf "$WORK/run8k"; cp -R "$WORK/run6w" "$WORK/run8k"
+printf '{"model": "gpt\\nerror: forged", "effort": "high", "max_time": 30, "profile_source": "default"}' > "$WORK/run8k/profile.json"
+( cd "$WORK/project" && python3 "$SCRIPTS/xval.py" result --run "$WORK/run8k" --out "$WORK/run8k_result.md" >/dev/null 2>&1 )
+assert_eq "" "$(fm "$WORK/run8k_result.md" error)" "a line break in a profile value adds no frontmatter field (K5)"
 # N1: a run whose init record lacks the input digest is not sealed.
 rm -rf "$WORK/run6n"
 xval init --run "$WORK/run6n" --vocab "$WORK/vocab.json" "$WORK"/imgs/*.png
@@ -2500,7 +2565,7 @@ xval adjudicate --run "$WORK/run8b"
 sleep 1
 result_in "$WORK/run8b"
 codex_file=$(ls -t "$WORK"/project/.codex-pro/visual-xval-*.md | head -1)
-assert_contains "$(cat "$codex_file")" "Codex's answers changed after they were recorded" \
+assert_contains "$(cat "$codex_file")" "codex.json changed after the step that wrote it" \
   "the result file says Codex's recorded answer was changed"
 
 # ── Native Codex bundle: resolver writes the runtime files in its own shell (task 4.4) ──

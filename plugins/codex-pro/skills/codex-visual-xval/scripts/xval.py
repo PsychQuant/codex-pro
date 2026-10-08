@@ -38,7 +38,8 @@ def _older_python(argv):
     syntax and would crash at import, leaving no result file (#23 verify B10). This function
     must itself stay 3.9-compatible."""
     found = "%d.%d.%d" % tuple(sys.version_info[:3])
-    detail = "Python 3.10 or later is required; this is Python %s (%s)" % (found, sys.executable.replace(os.path.expanduser("~"), "~"))
+    # the interpreter by its name only: its directory can be a person's (round 8, K6)
+    detail = "Python 3.10 or later is required; this is Python %s (%s)" % (found, os.path.basename(sys.executable))
     command = argv[0] if argv else ""
     run = argv[argv.index("--run") + 1] if "--run" in argv and argv.index("--run") + 1 < len(argv) else None
     if not run:
@@ -58,14 +59,16 @@ def _older_python(argv):
                 fh.write(json.dumps({"error": "runtime_unavailable", "detail": detail, "step": command}) + "\n")
         print(json.dumps({"error": "runtime_unavailable", "detail": detail}))
         sys.exit(5)
-    def read(name, default):
-        if not is_run(run):
+    def read(name, default):   # a record of another type is read as missing (round 8, K1)
+        path = os.path.join(run, name)
+        if not is_run(run) or not os.path.isfile(path):
             return default
         try:
-            with open(os.path.join(run, name), encoding="utf-8") as fh:
-                return json.load(fh)
+            with open(path, encoding="utf-8") as fh:
+                value = json.load(fh)
         except (OSError, ValueError):
             return default
+        return value if isinstance(value, type(default)) else default
     profile, frames, meta = read("profile.json", {}), read("frames.json", {}), read("meta.json", {})
     now = datetime.datetime.now().astimezone()
     fm = [("skill", "visual-xval"), ("target", "%d images" % len(frames)), ("model", profile.get("model", "")),
@@ -523,6 +526,8 @@ def compare(run: str) -> None:
     else:
         check = {"seal_broken": True, "sha256_sealed": None, "sha256_now": None}
     dump(os.path.join(run, "seal_check.json"), check)
+    if not load(os.path.join(run, "seal.json")):
+        raise Stop("target_invalid", "Claude's answers were never sealed")   # round 8, K1
     sealed_inputs = load(os.path.join(run, "seal.json"), {}).get("inputs_sha256")
     if sealed_inputs != inputs_digest(run):   # a seal without the digest is not a pass (round 7, Y4)
         raise Stop("target_invalid", "the vocabulary or the image copies changed after Claude's answers were sealed")
@@ -531,8 +536,13 @@ def compare(run: str) -> None:
     codex_broken = not recorded or not os.path.isfile(codex_path) or sealing.digest(codex_path) != recorded
     dump(os.path.join(run, "codex_check.json"), {"codex_record_broken": codex_broken})
     vocab = load(os.path.join(run, "vocab.json"))
-    claude = compare_claims.by_frame(compare_claims.claims_list(load(os.path.join(run, "claude.json"))), vocab)
-    codex = compare_claims.by_frame(compare_claims.claims_list(load(os.path.join(run, "codex.json"))), vocab)
+    sides = {}
+    for name in ("claude.json", "codex.json"):   # both passed the schema once, so a failure now is a change (round 8)
+        try:
+            sides[name] = compare_claims.by_frame(compare_claims.claims_list(load(os.path.join(run, name))), vocab)
+        except (compare_claims.SchemaError, TypeError, AttributeError):
+            raise Stop("target_invalid", f"{name} no longer matches the claim schema; it changed after it was recorded")
+    claude, codex = sides["claude.json"], sides["codex.json"]
     frames = load(os.path.join(run, "frames.json"), {})
     aspects = {n: f["height"] / f["width"] for n, f in frames.items() if f.get("width") and f.get("height")}
     result = compare_claims.compare(vocab, claude, codex, aspects)
@@ -775,13 +785,17 @@ def main(argv: list[str]) -> None:
             print(__doc__, file=sys.stderr)
             sys.exit(64)
     except Stop as stop:   # result's own failure goes to the history only: the run's error stays (round 7, Y3)
-        stop_run(run, step, stop.error, stop.detail, stop.record and command != "result")
+        stop_run(run, step, stop.error, stop.detail, stop.record and command != "result",
+                 refused=not stop.record)
     except Exception as exc:   # an unexpected failure still leaves a record and a result file
-        stop_run(run, step, "internal_error", f"{type(exc).__name__}: {failure(exc)}", command != "result")
+        stop_run(run, step, "internal_error", f"{type(exc).__name__}: {failure(exc)}", command != "result", refused=False)
     clear_error(run, step)
 
 
-def stop_run(run: str, command: str, error: str, detail: str, record_error: bool = True) -> None:
+def stop_run(run: str, command: str, error: str, detail: str, record_error: bool = True,
+             refused: bool | None = None) -> None:
+    """refused marks a command whose step was already done; a result step's own failure is not one,
+    though it does not replace the run's error either (round 8, K1)."""
     record = {"error": error, "detail": detail, "step": command, "at": now_iso()}
     # A failed init still leaves its error, or the result file would show a failed run as one without
     # an error (round 3). No other step creates a directory, and nothing is written into a directory
@@ -794,7 +808,7 @@ def stop_run(run: str, command: str, error: str, detail: str, record_error: bool
     if is_run_dir(run):
         if record_error:
             dump(os.path.join(run, "error.json"), record)
-        else:
+        elif refused if refused is not None else True:
             record["refused"] = True
         with open(os.path.join(run, "errors.jsonl"), "a", encoding="utf-8") as fh:   # history survives clearing
             fh.write(json.dumps(record, ensure_ascii=False) + "\n")

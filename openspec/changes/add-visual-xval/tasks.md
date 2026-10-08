@@ -329,7 +329,7 @@
   - 驗證：`spectra validate` 與 `spectra analyze` 無 warning。
 - [x] 13.2 送出邊界：只有建立程序的例外撤回紀錄、輸出以 UTF-8 取代解碼；CFFIXED_USER_HOME 的空值（Z1、K7）。
   - [after: 13.1]
-- [ ] 13.3 結果檔：退路保留 run 的錯誤、寫入失敗的類別、只讀一般檔案、紀錄與雜湊對稱、Codex 答案與原始回覆的核對、frontmatter 的值、措辭（Z2、Z3、Z4、K1、K5、K10）。
+- [x] 13.3 結果檔：退路保留 run 的錯誤、寫入失敗的類別、只讀一般檔案、紀錄與雜湊對稱、Codex 答案與原始回覆的核對、frontmatter 的值、措辭（Z2、Z3、Z4、K1、K5、K10）。
   - [after: 13.2]
 - [ ] 13.4 路徑過濾、3.9 路徑、eXIf、PNG 讀取上限（K4、K6、K8、K9）。
   - [after: 13.3]

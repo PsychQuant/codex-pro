@@ -13,12 +13,14 @@ from typing import Any
 
 import compare_claims
 import seal as sealing
-from run_files import answers_changed, failure, inputs_digest, is_run_dir, neutral_names, safe_digest
+from run_files import Stop, failure, inputs_digest, is_run_dir, neutral_names, safe_digest
 
 
 def load(path: str, default: Any = None) -> Any:
     """A record, or `default` when it is missing, unreadable or of another type than `default`: the
     result file is written whatever the run directory holds (#23 verify round 7, Y3)."""
+    if not os.path.isfile(path):   # a FIFO or a device would stall the step (round 8, K1)
+        return default
     try:
         with open(path, encoding="utf-8") as fh:
             value = json.load(fh)
@@ -97,41 +99,75 @@ def describe(item: dict) -> str:
 
 
 def result(run: str, argv: list[str]) -> None:
+    """Render the result file, then write it. Rendering never stops the result: a record of a shape
+    nothing expected falls back to a file rendered from an empty directory that still carries the run's
+    own error (round 7, Y3; round 8, Z2). Writing can fail, and that is the result step's own error."""
     if not is_run_dir(run):
         # Nothing in a directory that is not a run is read: its files are not a run's, and an error.json
-        # placed there would read as this run's outcome (#23 verify round 6, Q1). The file is still
-        # written, from an empty directory, so the run ends with a result as always.
+        # placed there would read as this run's outcome (#23 verify round 6, Q1).
         with tempfile.TemporaryDirectory() as empty:
-            write_result(empty, argv, {"error": "target_invalid", "step": "result",
-                                       "detail": f"{os.path.basename(os.path.abspath(run))} is not a run directory, "
-                                                 "so nothing in it was read"})
-        return
+            text, error = render(empty, {"error": "target_invalid", "step": "result",
+                                         "detail": f"{os.path.basename(os.path.abspath(run))} is not a run directory, "
+                                                   "so nothing in it was read"})
+    else:
+        try:
+            text, error = render(run, None)
+        except Exception as exc:
+            note = f"the run's records could not be read: {type(exc).__name__}: {failure(exc)}"
+            own = load(os.path.join(run, "error.json"), {})
+            own = own if isinstance(own.get("error"), str) else None
+            with tempfile.TemporaryDirectory() as empty:
+                text, error = render(empty, own or {"error": "internal_error", "step": "result", "detail": note},
+                                     note=note if own else "", fallback=True)
+    emit(text, error, argv)
+
+
+def emit(text: str, error: str | None, argv: list[str]) -> None:
+    out = option(argv, "--out")
     try:
-        write_result(run, argv, None)
-    except OSError:
-        raise   # the result file itself cannot be written, for example --out in a directory that does not exist
-    except Exception as exc:   # a record of a shape nothing expected: still a result file (round 7, Y3)
-        with tempfile.TemporaryDirectory() as empty:
-            write_result(empty, argv, {"error": "internal_error", "step": "result",
-                                       "detail": f"the run's records could not be read: {type(exc).__name__}: {failure(exc)}"})
+        if not out:   # .codex-pro is created only for the default location (round 6, Q1)
+            os.makedirs(".codex-pro", exist_ok=True)
+            stamp = datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+            out = os.path.join(".codex-pro", f"visual-xval-{stamp}.md")
+        with open(out, "w", encoding="utf-8") as fh:
+            fh.write(text)
+    except OSError as exc:   # the result step's own error, kept out of the run's (round 8, K1)
+        raise Stop("target_invalid", f"cannot write the result file {os.path.basename(out or '.codex-pro')}: "
+                   f"{exc.strerror or type(exc).__name__}")
+    print(json.dumps({"result": out, "error": error}))
 
 
 def records_changed(run: str, seal_record: dict) -> list[str]:
-    """What changed after the step that wrote it, rechecked when the result is written (round 7, Y4)."""
+    """Every record checked against the digest written beside it when the result is written: a record
+    without its digest, or a digest without its record, counts as changed too (round 7, Y4; round 8,
+    Z3, Z4). Claude's first-round answers are reported by seal_broken."""
     changed = []
-    if seal_record and seal_record.get("inputs_sha256") != inputs_digest(run):   # a missing digest is no pass
-        changed.append("the vocabulary, the image copies or the run's settings")
-    changed += answers_changed(run)
-    record = load(os.path.join(run, "comparison_record.json"), {})
-    if record and record.get("sha256") != safe_digest(os.path.join(run, "comparison.json")):
-        changed.append("comparison.json")
-    if os.path.exists(os.path.join(run, "adjudication.json")) and \
-            load(os.path.join(run, "adjudication_record.json"), {}).get("sha256") != safe_digest(os.path.join(run, "adjudication.json")):
+    path = lambda name: os.path.join(run, name)
+    if seal_record and seal_record.get("inputs_sha256") != inputs_digest(run):
+        changed.append("the vocabulary, the image copies or the run's settings" if seal_record.get("inputs_sha256")
+                       else "the seal (it lacks the inputs' digest)")
+    comparison = load(path("comparison_record.json"), {})
+    if comparison or os.path.exists(path("comparison.json")):
+        for name, key in (("comparison.json", "sha256"), ("claude.json", "claude.json"), ("codex.json", "codex.json")):
+            if comparison.get(key) != safe_digest(path(name)):
+                changed.append(name)
+    verdicts = load(path("adjudication_record.json"), {})
+    if (verdicts or os.path.exists(path("adjudication.json"))) and verdicts.get("sha256") != safe_digest(path("adjudication.json")):
         changed.append("adjudication.json")
-    return changed
+    requests = load(path("requests.json"), {})
+    for rnd, answers, reply in (("1", "codex.json", "codex_round1.md"), ("zoom", "zoom_codex.json", "codex_zoom.md")):
+        record = requests.get(rnd) if isinstance(requests.get(rnd), dict) else {}
+        if (record.get("answers_sha256") or os.path.exists(path(answers))) and record.get("answers_sha256") != safe_digest(path(answers)):
+            changed.append(answers)
+        if record.get("reply_sha256") and record["reply_sha256"] != safe_digest(path(reply)):
+            changed.append(reply)
+    zoom_seal = load(path("zoom_seal.json"), {})
+    if zoom_seal and zoom_seal.get("sha256") != safe_digest(path("zoom_claude.json")):
+        changed.append("zoom_claude.json")
+    return list(dict.fromkeys(changed))
 
 
-def write_result(run: str, argv: list[str], stopped: dict | None) -> None:
+def render(run: str, stopped: dict | None, note: str = "", fallback: bool = False) -> tuple[str, str | None]:
     error = stopped or load(os.path.join(run, "error.json"), {}) or None
     if error and not isinstance(error.get("error"), str):
         error = None
@@ -151,7 +187,6 @@ def write_result(run: str, argv: list[str], stopped: dict | None) -> None:
     settings = load(os.path.join(run, "profile.json"), {})
     request = load(os.path.join(run, "requests.json"), {}).get("1", {})
     request = request if isinstance(request, dict) else {}
-    codex_check = load(os.path.join(run, "codex_check.json"), {})
     sam_state = load(os.path.join(run, "sam.json"), {})
     track = load(os.path.join(run, "track.json"), {}) if sam_state.get("sam_status") == "ok" else {}
     meta = load(os.path.join(run, "meta.json"), {})
@@ -168,7 +203,7 @@ def write_result(run: str, argv: list[str], stopped: dict | None) -> None:
         "model": settings.get("model", ""),
         "effort": settings.get("effort", ""),
         "profile_source": settings.get("profile_source", ""),
-        "first_side_model": sanitize(str(meta.get("first_side_model", ""))),
+        "first_side_model": str(meta.get("first_side_model", "")),
         "timestamp": now.isoformat(timespec="seconds"),
         "n_images": n_images,
         "n_claims": n_claims,
@@ -180,12 +215,19 @@ def write_result(run: str, argv: list[str], stopped: dict | None) -> None:
         "codex_reply_sha256": request.get("reply_sha256", ""),
         "sam_status": sam_state.get("sam_status", "not_run"),
     }
+    if fallback:   # nothing was read, so nothing is claimed about the seal (round 8, Z2)
+        fm["seal_broken"] = "unknown"
     changed = records_changed(run, seal_record) if not stopped else []
     if error:
         fm["error"] = error["error"]
     elif changed:   # in the frontmatter, where codex-status reads (round 7, Y4)
         fm["error"] = "target_invalid"
+    # one line each, no control characters: a value copied from a record cannot add a field (round 8, K5)
+    fm = {k: sanitize(v) if isinstance(v, str) else v for k, v in fm.items()}
     lines = ["---"] + [f"{k}: {v}" for k, v in fm.items()] + ["---", "", f"# Visual cross-validation — {fm['target']}", ""]
+    if note:
+        lines += [f"The result step could not read all of the run's records ({sanitize(note)}); the run's own error "
+                  "is shown, and nothing else from the run is.", ""]
     if changed:
         lines += [f"Found when the result was written: {', '.join(changed)} changed after the step that wrote "
                   f"{'them' if len(changed) > 1 else 'it'}, so the values below may not be the ones the steps produced.", ""]
@@ -251,16 +293,6 @@ def write_result(run: str, argv: list[str], stopped: dict | None) -> None:
     for rnd, label, reply_name, seal_name in (("1", "round 1", "codex_round1.md", "seal.json"),
                                               ("zoom", "zoom round", "codex_zoom.md", "zoom_seal.json")):
         lines += request_lines(run, rnd, label, reply_name, load(os.path.join(run, seal_name), {}))
-    if seal_record.get("inputs_sha256") and seal_record["inputs_sha256"] != inputs_digest(run):
-        lines += ["", "**The vocabulary, the image copies or the run's settings changed after Claude's answers were "
-                  "sealed** (checked when the result was written)."]
-    changed = answers_changed(run)
-    if changed:   # rechecked now, not only when compare ran (#23 verify round 6, W2)
-        lines += ["", f"**{' and '.join(changed)} changed after the comparison read {'them' if len(changed) > 1 else 'it'}**, "
-                  "so the answers in the run directory are not the ones compared and settled above."]
-    if codex_check.get("codex_record_broken"):
-        lines += ["", "**Codex's answers changed after they were recorded**: the comparison used a file whose "
-                  "digest no longer matches the one recorded when Codex answered."]
     lines += ["", "## Limitations", "",
               "- Agreement between the two models does not establish that either is correct; only a human reference can.",
               "- Zoom-round answers on Claude's side come from a subagent that saw only the crops and the question "
@@ -289,10 +321,4 @@ def write_result(run: str, argv: list[str], stopped: dict | None) -> None:
     elif not first.lower().startswith("claude"):
         lines.append(f"- The first side's answers came from `{first}`, not a Claude model. Both sides may then come from "
                      "one model family, whose errors are not independent, so agreement says less than it would across families.")
-    out = option(argv, "--out")
-    if not out:   # .codex-pro is created only for the default location (round 6, Q1)
-        os.makedirs(".codex-pro", exist_ok=True)
-        out = os.path.join(".codex-pro", f"visual-xval-{now.astimezone(datetime.timezone.utc).strftime('%Y%m%dT%H%M%SZ')}.md")
-    with open(out, "w", encoding="utf-8") as fh:
-        fh.write("\n".join(lines) + "\n")
-    print(json.dumps({"result": out, "error": fm.get("error")}))
+    return "\n".join(lines) + "\n", fm.get("error")
