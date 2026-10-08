@@ -384,7 +384,7 @@
   - [after: 16.2]
 - [x] 16.4 結果檔與訊息：請求那一行的封存狀態、錨點與「沒有比對」的區分、訊息以位置稱呼使用者的圖（F4、F5）。
   - [after: 16.3]
-- [ ] 16.5 文件：SKILL、CHANGELOG、spec 的外來文字清單（Codex 回覆）與 runtime 措辭、design 的指向（F10）。
+- [x] 16.5 文件：SKILL、CHANGELOG、spec 的外來文字清單（Codex 回覆）與 runtime 措辭、design 的指向（F10）。
   - 驗證：`bash tests/run.sh` 只剩 #24。
   - [after: 16.4]
 - [ ] 16.6 真實後端端到端（第十一次）。

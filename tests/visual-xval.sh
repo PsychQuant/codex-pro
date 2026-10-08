@@ -96,10 +96,15 @@ checks = {
     "profile_field_only": "不帶原值" in body,
     # round 10 (C1, C2, C3, C5, D3, D9): the ledger's reach, the fifth source, derived records, the runtime class
     "already_done_by_ledger": "移開再放回不會讓一步重來" in body and "`hires/`" in body.split("不是紀錄的檔只有這些")[1][:300],
-    "fifth_source": "外來文字只有這五種" in body and "Claude 答案裡的文字" in body,
+    "fifth_source": "外來文字只有這六種" in body and "Claude 答案裡的文字" in body and "Codex 的回覆" in body,   # round 11
     "derived_records": "推導出來的紀錄要連來源一起核對過才呈現" in body,
     "runtime_before_login": bool(re.search(r"`runtime_error.txt` 記有錯誤就以那個錯誤停下（在登入檢查之前", body)),
     "path_filter_risk": "接受的風險" in body,
+    # round 11 (E1, F8, F5, F11): only what a step wrote; the two refusal kinds; positions; the harness limit
+    "only_what_it_wrote": "每一步只登記它這一步剛寫出的檔" in body and "清除錯誤之前先核對" in body,
+    "two_refusal_kinds": "這一步已經做過" in body and "這一步還不能做" in body,
+    "images_by_position": "使用者給的圖以位置稱呼" in body,
+    "harness_timeout_noted": "codex-pro#26" in body,
     "track_point": "track_point: tip" in body,
     "reencoded_copies": "重新編碼" in body,
     "resend_rule": "同一個 run 可以再送" in body,

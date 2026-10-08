@@ -51,6 +51,11 @@ Issue: [#23](https://github.com/PsychQuant/codex-pro/issues/23)
 - `ask` 被 SIGINT 或 SIGTERM 中斷時 codex-call 跟著終止，記為 `backend_error`（算作已送出）；原生 bundle 的
   preflight 失敗在登入檢查之前回報，跳過 `ask` 時結果檔從 `runtime_error.txt` 取錯誤類別。
 - 結果檔的路徑過濾只是後備，它在反引號、全形標點等邊界上的殘留是接受的風險。
+- xval 只登記它這一步剛寫出的檔，中途停下時也一樣；帳本已經發現不符的紀錄不會被清除或重新登記（清除錯誤前先核對
+  `error.json`），帳本不見時不重建。所有寫入只寫一般檔案（FIFO、symlink 一律拒絕）。
+- 被拒絕而不取代 run 錯誤的指令只有兩類：已經做過，與還不能做（沒有比對結果、沒有放大計畫）。
+- 訊息以位置稱呼使用者給的圖，`--run`、`--vocab`、`--out` 以角色稱呼；外來文字的封閉清單是六種（加上 Codex 的回覆）。
+- 在 Claude Code 裡，Bash 工具的逾時上限等於預設的 `max_time`，`timeout` 類別出不來（#26 追蹤）。
 - 結果檔的路徑過濾只保留 http、https 網址；`file://`、`smb://` 等其他網址與本機路徑一樣縮成最後一段。
 - 兩個模型一致不代表正確；準度要靠人工標準答案。
 - `tests/codex-plugin.sh` 的 plugin-creator validator 檢查在 Codex CLI 0.160.1 下必定失敗（#24），與本版無關。
