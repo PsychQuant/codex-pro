@@ -23,6 +23,7 @@ import datetime
 import json
 import os
 import re
+import signal
 import struct
 import subprocess
 import sys
@@ -315,11 +316,17 @@ def seal_answers(run: str, zoom: bool) -> None:
 
 
 # ── ask ─────────────────────────────────────────────────────────
-def runtime(run: str) -> str:
-    lines = open(os.path.join(run, "runtime_error.txt"), encoding="utf-8").read().splitlines() \
-        if os.path.exists(os.path.join(run, "runtime_error.txt")) else []
+def preflight_error(run: str) -> None:
+    """Stop on the error the runtime resolution recorded. It comes before the login check: a failed native
+    preflight must not read OAuth state, and its class must not be replaced by oauth_invalid (round 10, C5)."""
+    path = os.path.join(run, "runtime_error.txt")
+    lines = open(path, encoding="utf-8", errors="replace").read().splitlines() if os.path.isfile(path) else []
     if lines and lines[0].strip():   # the runtime check's own text: kept in the run, not in the result file (round 9)
         raise Stop(lines[0].strip(), " ".join(lines[1:]).strip() or lines[0].strip(), source="runtime")
+
+
+def runtime(run: str) -> str:
+    preflight_error(run)
     path = open(os.path.join(run, "runtime.txt"), encoding="utf-8").read().strip() \
         if os.path.exists(os.path.join(run, "runtime.txt")) else ""
     if not path or not os.access(path, os.X_OK):
@@ -439,12 +446,19 @@ def call_codex(run: str, prompt: str, images: list[str], tag: str, argv: list[st
     # It started: from here on nothing withdraws the record. Its output is read only now, and bytes that
     # are not UTF-8 are replaced rather than raised, since a decoding error here once withdrew a call
     # that had already run (round 8, Z1). Foreground; the hard timeout is codex-call's.
+    def terminated(signum: int, frame: Any) -> None:   # SIGTERM takes the path SIGINT takes (round 10, C4)
+        raise KeyboardInterrupt
+    previous = signal.signal(signal.SIGTERM, terminated)
     try:
         _, stderr = proc.communicate()
     except BaseException:   # interrupted: codex-call stops too, as it did under subprocess.run (round 9, B3)
         proc.kill()
         proc.wait()
-        raise
+        enter(run, os.path.basename(output))   # what it wrote before it stopped is entered (round 10, C4)
+        raise Stop("backend_error", "interrupted: codex-call was stopped; the request is counted as sent, so this "
+                   "round is used up")
+    finally:
+        signal.signal(signal.SIGTERM, previous)
     enter(run, os.path.basename(output))   # whatever it wrote, also on failure (round 9)
     if proc.returncode != 0:   # counted as sent, whatever the message says (round 5, V1)
         error, detail = classify(stderr, proc.returncode)   # codex-call's own text (round 9)
@@ -510,6 +524,7 @@ def before_request(run: str, rnd: str) -> None:
     # what is sent is what was sealed, asked about the inputs as init wrote them (U6; round 9)
     reads = (("zoom_plan.json", "zoom_prompt.md", "crops/", "comparison.json") if rnd == "zoom" else INPUTS)   # D1
     checked(run, (answers, seal, "privacy.json", "requests.json") + reads, then="nothing was sent")
+    preflight_error(run)   # before the login check (round 10, C5)
     problem = login_problem()   # checked here, since a failed call counts as sent (round 5, V2)
     if problem:
         raise Stop("oauth_invalid", f"{problem}; run /codex-pro:codex-setup to log in; nothing was sent")

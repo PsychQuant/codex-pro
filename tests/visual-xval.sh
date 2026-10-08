@@ -862,7 +862,8 @@ while [ $# -gt 0 ]; do
 done
 [ -n "$prompt" ] && cat "$prompt" >> "$MOCK_PROMPTS"
 # MOCK_SLEEP: a call still running when xval is interrupted; exec keeps the pid written to MOCK_PIDFILE
-[ -n "${MOCK_SLEEP:-}" ] && { printf '%s\n' "$$" > "$MOCK_PIDFILE"; exec sleep "$MOCK_SLEEP"; }
+[ -n "${MOCK_SLEEP:-}" ] && { [ -n "${MOCK_PARTIAL:-}" ] && [ -n "$out" ] && printf 'partial reply' > "$out"
+  printf '%s\n' "$$" > "$MOCK_PIDFILE"; exec sleep "$MOCK_SLEEP"; }
 [ -n "${MOCK_STDERR:-}" ] && printf '%s\n' "$MOCK_STDERR" >&2
 [ -n "${MOCK_REPLY:-}" ] && [ -n "$out" ] && cp "$MOCK_REPLY" "$out"
 exit "${MOCK_STATUS:-0}"
@@ -2466,6 +2467,45 @@ rm -rf "$WORK/home/.codex-pro"; xval sam --run "$WORK/r10q"
 assert_eq "xval" "$(json_get "$(cat "$WORK/r10q/sam.json")" 'd.get("detail_source")')" "a missing SAM environment is described by xval itself (D8)"
 result9 "$WORK/r10q"
 assert_contains "$(cat "$WORK/r10q_result.md")" "~/.codex-pro/sam-env" "so the result file still says where SAM goes"
+
+# Round 10 (C4): an interrupted ask, by SIGINT or SIGTERM, stops codex-call and enters what it wrote.
+for sig in INT TERM; do
+  rm -rf "$WORK/r10g$sig" "$WORK/r10g$sig.pid"; SEQ= new_run "$WORK/r10g$sig"
+  c4=$(HOME="$WORK/home" MOCK_SLEEP=60 MOCK_PARTIAL=1 MOCK_PIDFILE="$WORK/r10g$sig.pid" MOCK_LOG="$WORK/mock.log" \
+    MOCK_PROMPTS="$WORK/prompts.txt" PATH="$WORK/stubbin:$PATH" python3 - "$SCRIPTS" "$WORK/r10g$sig" "$WORK/r10g$sig.pid" "$sig" <<'PY'
+import os, signal, subprocess, sys, time
+proc = subprocess.Popen([sys.executable, f"{sys.argv[1]}/xval.py", "ask", "--run", sys.argv[2], "--round", "1"],
+                        stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
+for _ in range(100):
+    if os.path.exists(sys.argv[3]) and open(sys.argv[3]).read().strip():
+        break
+    time.sleep(0.1)
+child = int(open(sys.argv[3]).read())
+proc.send_signal(getattr(signal, "SIG" + sys.argv[4]))
+out, _ = proc.communicate(timeout=20)
+time.sleep(0.3)
+try:
+    os.kill(child, 0)
+    print("codex-call still running"); os.kill(child, signal.SIGKILL)
+except ProcessLookupError:
+    print("codex-call stopped", out.strip()[:80])
+PY
+)
+  assert_contains "$c4" "codex-call stopped" "SIG$sig to ask stops codex-call too (C4)"
+  assert_contains "$c4" '"error": "backend_error"' "and the interrupted round is backend_error, counted as sent (C4)"
+  assert_eq "" "$(ledger_changed "$WORK/r10g$sig")" "and what codex-call wrote is entered, so no later step calls it unentered (C4)"
+done
+# C5: the runtime check comes before the login check, and a skipped ask still leaves its class in the result.
+rm -rf "$WORK/r10h"; SEQ= new_run "$WORK/r10h"
+printf 'package_corruption\nerror=hash_mismatch\n' > "$WORK/r10h/runtime_error.txt"
+mkdir -p "$WORK/nologin"
+RUN_OUT=$(CFFIXED_USER_HOME="$WORK/nologin" HOME="$WORK/nologin" PATH="$WORK/stubbin:$PATH" python3 "$SCRIPTS/xval.py" ask --run "$WORK/r10h" --round 1 2>&1)
+assert_contains "$RUN_OUT" '"error": "package_corruption"' "a failed native preflight is reported before the login check (C5)"
+rm -rf "$WORK/r10j"; SEQ= new_run "$WORK/r10j"
+printf 'package_corruption\nerror=hash_mismatch\n' > "$WORK/r10j/runtime_error.txt"
+xval adjudicate --run "$WORK/r10j"; result9 "$WORK/r10j"
+assert_eq "package_corruption" "$(fm "$WORK/r10j_result.md" error)" "a native preflight failure reaches the result file without ask (C5)"
+refute_contains "$(cat "$WORK/r10j_result.md")" "hash_mismatch" "with its class only"
 
 # Round 6 (Q1): the steps that write into a directory are a closed list.
 rm -rf "$WORK/typo"

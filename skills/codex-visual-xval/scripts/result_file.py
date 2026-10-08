@@ -142,7 +142,8 @@ FORMS = {
     "sam_status": r"not_run|not_applicable|no_anchor|not_installed|failed|ok",
     "error": "|".join(ERRORS),
 }
-STEP = re.compile(r"init|confirm-privacy|seal(?: --zoom)?|ask --round (?:1|zoom|None)|compare|crops|sam|adjudicate|result")
+STEP = re.compile(r"init|confirm-privacy|seal(?: --zoom)?|ask --round (?:1|zoom|None)|compare|crops|sam|adjudicate|result"
+                  r"|runtime resolution")
 # Who may have written an error's detail. Only xval's own is shown; the others, a closed list, stay in the run
 # directory (round 9): codex-call's messages, the runtime check's detail and Python's exception text. SAM's
 # output is the fourth, kept in sam.json.
@@ -169,7 +170,22 @@ def error_detail(error: dict) -> str:
     if source == "xval" and isinstance(detail, str):
         return sanitize(detail)
     what = OUTSIDE.get(source, "its detail") if isinstance(source, str) else "its detail"
-    return f"kept in error.json in the run directory ({what}, which the result file does not show)."
+    where = "runtime_error.txt" if error.get("kept") == "runtime_error.txt" else "error.json"
+    return f"kept in {where} in the run directory ({what}, which the result file does not show)."
+
+
+def runtime_failure(run: str) -> dict | None:
+    """The error the runtime resolution recorded, when the run skipped `ask` (the native SKILL does): its class
+    only, from the first line of runtime_error.txt (round 10, C5)."""
+    path = os.path.join(run, "runtime_error.txt")
+    if not os.path.isfile(path):
+        return None
+    try:
+        with open(path, encoding="utf-8", errors="replace") as fh:
+            first = fh.readline().strip()
+    except OSError:
+        return None
+    return {"error": first, "step": "runtime resolution", "source": "runtime", "kept": "runtime_error.txt"} if first else None
 
 
 def result(run: str, argv: list[str]) -> None:
@@ -244,6 +260,8 @@ def render(run: str, stopped: dict | None) -> tuple[str, str | None]:
     error = stopped or record("error.json", {}) or None
     if error and "error" not in error:
         error = None
+    if not error and not stopped and "error.json" not in bad:
+        error = runtime_failure(run)
 
     compared_ok = not any(n == x or (x.endswith("/") and n.startswith(x)) for n in bad for x in COMPARED_FROM)
     comparison = (record("comparison.json", {}) or None) if compared_ok else None
