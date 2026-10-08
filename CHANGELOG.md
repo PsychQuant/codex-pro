@@ -45,6 +45,12 @@ Issue: [#23](https://github.com/PsychQuant/codex-pro/issues/23)
   codex-call 跟著終止；回覆不是 UTF-8 時為 `parse_failed`。工具的輸出一律以 UTF-8 解碼，Big5、Shift-JIS 的 locale 下
   檔名含中日文的圖也量得到尺寸。
 - `--vocab` 可以是管線或程序替換（`--vocab <(...)`）；run 的紀錄仍只讀一般檔案。
+- 「已經做過」以帳本為準：封存、這一輪的請求、被拒的放大輪答案、已 init 的 run，檔案或它的帳本條目任一存在就算，
+  移開再放回不會讓一步重來。run 的錯誤與 `ask` 用的 profile 也登記；中途失敗的步驟照樣登記它已寫出的紀錄。
+- Claude 答案裡的文字是第五種外來文字，不進結果檔；推導出來的紀錄（比對結果、裁決）要連來源一起核對過才呈現。
+- `ask` 被 SIGINT 或 SIGTERM 中斷時 codex-call 跟著終止，記為 `backend_error`（算作已送出）；原生 bundle 的
+  preflight 失敗在登入檢查之前回報，跳過 `ask` 時結果檔從 `runtime_error.txt` 取錯誤類別。
+- 結果檔的路徑過濾只是後備，它在反引號、全形標點等邊界上的殘留是接受的風險。
 - 結果檔的路徑過濾只保留 http、https 網址；`file://`、`smb://` 等其他網址與本機路徑一樣縮成最後一段。
 - 兩個模型一致不代表正確；準度要靠人工標準答案。
 - `tests/codex-plugin.sh` 的 plugin-creator validator 檢查在 Codex CLI 0.160.1 下必定失敗（#24），與本版無關。

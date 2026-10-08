@@ -703,8 +703,9 @@ native preflight failure 的 result body 必須另寫一行
         runtime_failure_contract = """
 
 native preflight failure 的 result body 另寫一行 `Runtime preflight detail:`，但不帶 detail 本身：
-`$CODEX_RUNTIME_DETAIL` 是 runtime 檢查自己的文字，只留在 run 目錄（`runtime_error.txt` 與 `error.json`），
-這一行只說它保存在哪裡；它也不得放進 YAML frontmatter。
+`$CODEX_RUNTIME_DETAIL` 是 runtime 檢查自己的文字，只留在 run 目錄的 `runtime_error.txt`（跑過 `ask` 時也在
+`error.json`），這一行只說它保存在哪裡；它也不得放進 YAML frontmatter。跳過 `ask` 時，`result` 從
+`runtime_error.txt` 的第一行取錯誤類別寫進 frontmatter（只取類別）。
 """
     sub_exact(r"(?=\n\n\*\*所有 failure 仍寫 result file\*\*)",
               "\n" + runtime_failure_rows + runtime_failure_contract, 1,

@@ -45,7 +45,8 @@ allowed-tools:
 5. `runtime_unavailable`：找不到 `codex-call`、`python3` 比 3.10 舊、`codex-call` 根本沒能啟動，或寫不進 prompt 檔
 6. `internal_error`：腳本內部的意外例外。照樣寫結果檔；例外的文字只留在 run 目錄的 `error.json`，結果檔只說它在那裡
 7. `backend_error`：`codex-call` 啟動之後失敗、沒有更具體的類別：後端回錯誤（例如 HTTP 500）、連線中斷、
-   沒說明原因（`HTTP 0`），或它自己的本機問題（讀不到 prompt、鎖檔權限）。
+   沒說明原因（`HTTP 0`），或它自己的本機問題（讀不到 prompt、鎖檔權限）；`ask` 被 SIGINT 或 SIGTERM 中斷時也是這一類
+   （codex-call 跟著終止，它已寫出的回覆照樣登記）。
    **`codex-call` 只要失敗，一律當成已送出**：錯誤訊息的字樣證明不了什麼都沒送出（後端的錯誤事件原文照印，
    收到回應之前的失敗都只印 `HTTP 0`），所以這一輪已經用掉，不重送。常見的送出前狀況改由 `xval.py` 在呼叫之前
    自己檢查：Codex 是否已登入（`codex-call` 讀的那一份 `~/.codex/auth.json` 存在且有 token，不讀出內容；它在帳號
@@ -125,9 +126,13 @@ python3 "$SKILL_DIR/scripts/xval.py" seal --run "$RUN"
 ```
 
 每一步寫下的紀錄都連同 SHA-256 登記在 `$RUN/ledger.json`（帳本）。之後的步驟讀到的紀錄若內容不同、被刪掉，
-或存在卻沒有登記，就停在 `target_invalid`，訊息照實寫出是哪一種。例外只有尚未封存的那一輪 Claude 答案；
-`frames/`、`crops/` 裡以點開頭的檔案（Finder 的 `.DS_Store`）不算紀錄。帳本也在 run 目錄裡：它防的是誤改與
-事後的手動修改，不是能寫入 run 目錄的人。
+或存在卻沒有登記，就停在 `target_invalid`，訊息照實寫出是哪一種。run 的錯誤（`error.json`）與 `ask` 用的 profile
+也登記；中途停下的步驟照樣登記它已寫出的紀錄。例外只有兩種：尚未封存的那一輪 Claude 答案，以及第一次請求之前的
+`profile.json`。不是紀錄的檔只有這些：`ledger.json` 本身、`.gitignore`、`errors.jsonl`、`init_attempt.json`、
+`claude_source.json`、`runtime.txt`、`runtime_error.txt`，以及 `frames/`、`hires/`、`crops/` 裡以點開頭的檔案
+（Finder 的 `.DS_Store`）。「已經做過」（封存過、這一輪送過、放大輪答案被拒過、run 已經 init）以檔案或它在帳本上
+的條目為準，任一存在就算；把檔案移開再放回不會讓一步重來。帳本也在 run 目錄裡：它防的是誤改與事後的手動修改，
+不是能寫入 run 目錄的人。
 
 ## Step 4: Invoke codex-call
 
@@ -186,7 +191,8 @@ python3 "$SKILL_DIR/scripts/xval.py" ask --run "$RUN" --round 1
 ```
 
 `xval.py ask` 依序：這一輪已經送過就拒絕（只記在 `errors.jsonl`，不取代 run 的錯誤）、放大輪已不採用就拒絕；
-確認隱私確認已記錄、Claude 的答案已封存且未被改動、Codex 已登入（`oauth_invalid`）；第一輪另外確認詞彙表、
+確認隱私確認已記錄、Claude 的答案已封存且未被改動；`runtime_error.txt` 記有錯誤就以那個錯誤停下（在登入檢查之前，
+原生 bundle 的 preflight 失敗時不讀 OAuth）；確認 Codex 已登入（`oauth_invalid`）；第一輪另外確認詞彙表、
 影格與 run 的設定都和封存時相同，影格都在 run 的 frames 目錄內；放大輪另外確認放大計畫存在、裁切圖都在 run 的
 crops 目錄內，計畫、題目檔、裁切圖與比對結果都和 `crops` 寫下時相同；`$RUN/profile.json` 有效。任一不符就停下，
 **不送任何請求**，訊息寫 nothing was sent。接著讀 `runtime_error.txt`（有錯就停）、確認 runtime 存在、確認
@@ -359,6 +365,10 @@ error: <rate_limit | oauth_invalid | timeout | target_invalid | runtime_unsuppor
 
 結果檔只用帳本核對過的紀錄產生；沒通過的紀錄不呈現，只列名一次，frontmatter 設 `error: target_invalid`
 （run 已經因別的錯誤停下時保留那個錯誤）。frontmatter 每個欄位只寫它自己的格式（模型 ID、列舉值、時間、
-十六進位雜湊、數字），否則寫 `invalid`。結果檔不帶 xval 以外的文字：codex-call 印出的訊息、runtime 檢查的
-detail、Python 例外的文字（三者在 `error.json`，記有來源）與 SAM 的輸出（在 `sam.json`）只留在 run 目錄，
-結果檔寫出錯誤類別並說明它們保存在哪裡。核對過的紀錄若仍無法呈現，結果檔只寫固定內容與 run 自己的錯誤類別。
+十六進位雜湊、數字），否則寫 `invalid`。結果檔不帶 xval 以外的文字，外來文字只有這五種：codex-call 印出的訊息、
+runtime 檢查的 detail、Python 例外的文字、Claude 答案裡的文字（影格、類別、關係名稱，四者在 `error.json`，記有
+來源），以及 SAM 的輸出（在 `sam.json`）。它們只留在 run 目錄，結果檔寫出錯誤類別並說明保存在哪裡；詞彙表裡的
+名稱是使用者自己的輸入，照常出現。推導出來的紀錄要連來源一起核對過才呈現：比對結果的來源是輸入與兩邊答案，裁決
+的來源是所有紀錄。檔名只印 xval 自己的格式，其他寫成「不在預期之內的檔」。run 沒有自己的錯誤、而 runtime 解析
+記下了錯誤時（原生 bundle 跳過 `ask` 的情況），結果檔帶上那個錯誤類別。核對過的紀錄若仍無法呈現，結果檔只寫固定
+內容與 run 自己的錯誤類別。路徑過濾只是後備，它在反引號、全形標點等邊界上的殘留是接受的風險。

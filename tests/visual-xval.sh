@@ -90,10 +90,16 @@ checks = {
     "writers_uv": "uv" in body.split("不是 run 的目錄就拒絕")[0][-700:] and "遇到不是 run 的目錄時，用自己的暫存目錄" in body
         and "紀錄無法呈現時，用自己的暫存目錄" not in body,
     # round 9 (A4, A1, A3, B5): the ledger, compare stops, no outside text, field forms, the profile's field only
-    "ledger": "`$RUN/ledger.json`" in body and "例外只有尚未封存的那一輪 Claude 答案" in body,
+    "ledger": "`$RUN/ledger.json`" in body and "例外只有兩種：尚未封存的那一輪 Claude 答案" in body,   # round 10: the profile is the second
     "compare_stops": "但照樣比對" not in body and "不比對" in body,
     "no_outside_text": "不帶 xval 以外的文字" in body and "否則寫 `invalid`" in body,
     "profile_field_only": "不帶原值" in body,
+    # round 10 (C1, C2, C3, C5, D3, D9): the ledger's reach, the fifth source, derived records, the runtime class
+    "already_done_by_ledger": "移開再放回不會讓一步重來" in body and "`hires/`" in body.split("不是紀錄的檔只有這些")[1][:300],
+    "fifth_source": "外來文字只有這五種" in body and "Claude 答案裡的文字" in body,
+    "derived_records": "推導出來的紀錄要連來源一起核對過才呈現" in body,
+    "runtime_before_login": bool(re.search(r"`runtime_error.txt` 記有錯誤就以那個錯誤停下（在登入檢查之前", body)),
+    "path_filter_risk": "接受的風險" in body,
     "track_point": "track_point: tip" in body,
     "reencoded_copies": "重新編碼" in body,
     "resend_rule": "同一個 run 可以再送" in body,
@@ -2037,7 +2043,7 @@ if [ -x "$OLDPY" ] && "$OLDPY" -c 'import sys; sys.exit(0 if sys.version_info < 
   # Round 9 (B5): the old-Python result file keeps the same rules as the other.
   rm -rf "$WORK/runold4"; cp -R "$WORK/run6w" "$WORK/runold4"
   python3 -c 'import sys; open(sys.argv[1], "w").write("[" * 200000)' "$WORK/runold4/meta.json"
-  printf '{"model": "gpt test", "effort": "high", "max_time": 30, "profile_source": "elsewhere"}' > "$WORK/runold4/profile.json"
+  printf '{"model": "gpt test", "effort": "high", "max_time": 30, "profile_source": "elsewhere"}' > "$WORK/runold4/profile.json"; enter_rec "$WORK/runold4" profile.json
   RUN_OUT=$(cd "$WORK/project" && "$OLDPY" "$SCRIPTS/xval.py" result --run "$WORK/runold4" --out "$WORK/runold4_result.md" 2>&1)
   assert_contains "$RUN_OUT" '"result"' "a record nested too deep does not stop the old-Python result file (B5)"
   assert_eq "invalid invalid" "$(fm "$WORK/runold4_result.md" model) $(fm "$WORK/runold4_result.md" profile_source)" \
@@ -2045,6 +2051,11 @@ if [ -x "$OLDPY" ] && "$OLDPY" -c 'import sys; sys.exit(0 if sys.version_info < 
   RUN_OUT=$(cd "$WORK/project" && "$OLDPY" "$SCRIPTS/xval.py" result --run "$WORK/runold4" --out "$WORK/no-such-dir/x.md" 2>&1)
   assert_contains "$RUN_OUT" '"error": "target_invalid"' "an old-Python result file that cannot be written is target_invalid"
   assert_contains "$(tail -1 "$WORK/runold4/errors.jsonl" 2>/dev/null)" "cannot write the result file" "and it is kept in the history (B5)"
+  # Round 10 (D9): the old-Python result file reads only the records the ledger verifies, too.
+  rm -rf "$WORK/runold5"; cp -R "$WORK/run6w" "$WORK/runold5"; edit_json "$WORK/runold5/meta.json" 'd["first_side_model"] = "forged-model"'
+  ( cd "$WORK/project" && "$OLDPY" "$SCRIPTS/xval.py" result --run "$WORK/runold5" --out "$WORK/runold5_result.md" >/dev/null 2>&1 )
+  assert_eq "" "$(fm "$WORK/runold5_result.md" first_side_model)" "an old Python does not show a record that fails the ledger (D9)"
+  assert_eq "12 images" "$(fm "$WORK/runold5_result.md" target)" "and still shows the verified ones"
   rm -rf "$WORK/oldproj"; mkdir -p "$WORK/oldproj"; : > "$WORK/oldproj/.codex-pro"
   RUN_OUT=$(cd "$WORK/oldproj" && "$OLDPY" "$SCRIPTS/xval.py" result --run "$WORK/runold4" 2>&1)
   assert_contains "$RUN_OUT" '"error": "target_invalid"' "a default location that cannot be created gives a structured answer (B5)"
@@ -3091,6 +3102,7 @@ checks = {
     "error_enum": bool(re.search(r"error: <[^>]*runtime_unavailable[^>]*package_corruption[^>]*>", text)),
     "detail_contract": "Runtime preflight detail:" in text,
     "detail_not_shown": "<sanitized detail>" not in text and "只留在 run 目錄" in text,   # round 9
+    "class_without_ask": "從\n`runtime_error.txt` 的第一行取錯誤類別" in text or "從 `runtime_error.txt` 的第一行取錯誤類別" in text.replace("\n", " "),   # round 10
 }
 print(" ".join(f"{k}={'ok' if v else 'MISSING'}" for k, v in checks.items()))
 PY

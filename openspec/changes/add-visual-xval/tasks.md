@@ -367,7 +367,7 @@
   - [after: 15.2]
 - [x] 15.4 中斷與原生 preflight：中斷時照樣登記回覆、SIGTERM 也終止 codex-call；runtime 檢查先於登入檢查，結果檔讀 runtime_error.txt 的類別（C4、C5）。
   - [after: 15.3]
-- [ ] 15.5 文件：SKILL、原生 SKILL、CHANGELOG、design 的指向、B1 的路徑過濾殘留列為接受的風險（D9）。
+- [x] 15.5 文件：SKILL、原生 SKILL、CHANGELOG、design 的指向、B1 的路徑過濾殘留列為接受的風險（D9）。
   - 驗證：`bash tests/run.sh` 只剩 #24。
   - [after: 15.4]
 - [ ] 15.6 真實後端端到端（第十次）。

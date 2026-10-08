@@ -80,10 +80,33 @@ def _older_python(argv):
                 fh.write(json.dumps(entry) + "\n")
         print(json.dumps({"error": "runtime_unavailable", "detail": detail}))
         sys.exit(5)
+    def entered():   # the ledger, read the way run_files reads it; 3.9-compatible
+        path = os.path.join(run, "ledger.json")
+        if not os.path.isfile(path):
+            return {}
+        try:
+            with open(path, encoding="utf-8") as fh:
+                value = json.load(fh)
+        except (OSError, ValueError, RecursionError):
+            return {}
+        return value if isinstance(value, dict) else {}
+    entries = entered() if is_run(run) else {}
     def read(name, default):   # a record of another type is read as missing (round 8, K1)
+        import hashlib
         path = os.path.join(run, name)
         if not is_run(run) or not os.path.isfile(path):
             return default
+        # only what the ledger verifies, as on the main path (round 10, D9); the profile is pending before a request
+        expected = entries.get(name)
+        if expected is None and not (name == "profile.json" and not os.path.exists(os.path.join(run, "requests.json"))):
+            return default
+        if expected is not None:
+            try:
+                with open(path, "rb") as fh:
+                    if hashlib.sha256(fh.read()).hexdigest() != expected:
+                        return default
+            except OSError:
+                return default
         try:
             with open(path, encoding="utf-8") as fh:
                 value = json.load(fh)
