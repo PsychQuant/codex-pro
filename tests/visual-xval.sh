@@ -1843,8 +1843,8 @@ printf 'edited\n' >> "$WORK/run5e/codex_round1.md"
 ( cd "$WORK/project" && python3 "$SCRIPTS/xval.py" result --run "$WORK/run5e" --out "$WORK/run5_replyedit.md" >/dev/null 2>&1 )
 assert_contains "$(cat "$WORK/run5_replyedit.md" 2>/dev/null)" "codex_round1.md changed after the step that wrote it" \
   "an edited raw Codex reply is reported (#23 verify round 2, S1)"
-assert_contains "$(cat "$WORK/run5_replyedit.md" 2>/dev/null)" "it does not match the ledger" \
-  "and its request line says the reply no longer matches, without naming it again (round 9, B4)"
+assert_contains "$(cat "$WORK/run5_replyedit.md" 2>/dev/null)" "Codex round 1: requested at" \
+  "and its request line keeps the time without saying the mismatch again (round 9, B4; round 10, D4)"
 
 # Round 3: a completed run stays complete, and what the adjudication reads is checked (T6, L2, L3).
 rm -rf "$WORK/run5k"; cp -R "$WORK/run5" "$WORK/run5k"; rm -f "$WORK/run5k/error.json"
@@ -2418,6 +2418,54 @@ assert_contains "$d5" '"error": "target_invalid"' "a ledger that is a FIFO stops
 rm -rf "$WORK/r10k"; cp -R "$WORK/run6w" "$WORK/r10k"; printf 'outside\n' > "$WORK/outside_r10k.txt"
 edit_json "$WORK/r10k/ledger.json" 'd["frames/../../outside_r10k.txt"] = "0" * 64'
 assert_eq "" "$(ledger_changed "$WORK/r10k")" "a ledger key that leads out of the run is not a record, and is not opened (D6)"
+
+# Round 10 (C3): the text of Claude's answers is the fifth outside source.
+rm -rf "$WORK/r10t"; xval init --run "$WORK/r10t" --vocab "$WORK/vocab.json" --first-side claude-test "$WORK"/imgs/*.png
+python3 - "$WORK/claude_marked.json" "$WORK/r10t/claude.json" <<'PY'
+import json, sys
+c = json.load(open(sys.argv[1])); c["claims"][0]["objects"]["answer-marker-r10t"] = 1
+json.dump(c, open(sys.argv[2], "w"))
+PY
+xval seal --run "$WORK/r10t"
+assert_eq "claude-answers" "$(json_get "$(cat "$WORK/r10t/error.json")" 'd.get("source")')" "a schema error in Claude's answers is marked as theirs (C3)"
+result9 "$WORK/r10t"
+refute_contains "$(cat "$WORK/r10t_result.md")" "answer-marker-r10t" "and their text stays out of the result file (C3)"
+assert_contains "$(cat "$WORK/r10t_result.md")" "the text of Claude's answers" "which says where it is kept"
+python3 - "$WORK/claude_marked.json" "$WORK/r10t/claude.json" <<'PY'
+import json, sys
+c = json.load(open(sys.argv[1])); c["claims"][0]["points"][0]["class"] = ["INST"]
+json.dump(c, open(sys.argv[2], "w"))
+PY
+xval seal --run "$WORK/r10t"; result9 "$WORK/r10t"
+refute_contains "$(cat "$WORK/r10t_result.md")" "unhashable" "nor does Python's text about them (C3)"
+# D3: a derived record is shown only when what it came from is verified too.
+rm -rf "$WORK/r10v"; cp -R "$WORK/run5" "$WORK/r10v"; rm -f "$WORK/r10v/error.json"
+printf '{"answers": {"z01.png": {"value": true}}}\n' > "$WORK/r10v/zoom_claude.json"
+result9 "$WORK/r10v"
+assert_contains "$(cat "$WORK/r10v_result.md")" "the verdicts are not shown" "verdicts resting on changed zoom answers are not shown (D3)"
+refute_contains "$(cat "$WORK/r10v_result.md")" "→ **unverifiable**" "so no verdict sits beside the failed zoom seal"
+rm -rf "$WORK/r10w"; cp -R "$WORK/run6w" "$WORK/r10w"; xval adjudicate --run "$WORK/r10w"
+edit_json "$WORK/r10w/codex.json" 'r = d["claims"][1]["relations"]; k = next(iter(r)); r[k] = not r[k]'
+result9 "$WORK/r10w"
+assert_contains "$(cat "$WORK/r10w_result.md")" "Not shown: the comparison" "a comparison whose answers changed is not shown (D3)"
+result9 "$WORK/run9s"
+refute_contains "$(cat "$WORK/run9s_result.md")" "sealed at never" "a seal that fails the ledger is not shown as never made (D3)"
+# D4: a changed raw reply is named once.
+rm -rf "$WORK/r10y"; cp -R "$WORK/run6w" "$WORK/r10y"; printf 'edited\n' >> "$WORK/r10y/codex_round1.md"
+result9 "$WORK/r10y"
+assert_eq "1" "$(grep -c 'codex_round1' "$WORK/r10y_result.md")" "a changed raw reply is named once (D4)"
+refute_contains "$(cat "$WORK/r10y_result.md")" "does not match the ledger" "and the request line does not say it again"
+# D6: a file name nobody wrote is not printed.
+rm -rf "$WORK/r10x"; cp -R "$WORK/run6w" "$WORK/r10x"; cp "$WORK/r10x/frames/f01.png" "$WORK/r10x/frames/evil <!-- x.png"
+result9 "$WORK/r10x"
+refute_contains "$(cat "$WORK/r10x_result.md")" "<!--" "a file name that is not xval's form is not printed (D6)"
+assert_contains "$(cat "$WORK/r10x_result.md")" "an unexpected file in frames/" "it is counted instead"
+# D8: where SAM goes, in xval's own words.
+rm -rf "$WORK/r10q"; SEQ=1 new_run "$WORK/r10q"; ask_with "$WORK/codex_reply.md" "$WORK/r10q" 1; xval compare --run "$WORK/r10q"
+rm -rf "$WORK/home/.codex-pro"; xval sam --run "$WORK/r10q"
+assert_eq "xval" "$(json_get "$(cat "$WORK/r10q/sam.json")" 'd.get("detail_source")')" "a missing SAM environment is described by xval itself (D8)"
+result9 "$WORK/r10q"
+assert_contains "$(cat "$WORK/r10q_result.md")" "~/.codex-pro/sam-env" "so the result file still says where SAM goes"
 
 # Round 6 (Q1): the steps that write into a directory are a closed list.
 rm -rf "$WORK/typo"

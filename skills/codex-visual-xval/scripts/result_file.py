@@ -41,10 +41,14 @@ def request_lines(requests: dict, entries: dict, run: str, rnd: str, label: str,
     if not isinstance(record, dict):
         return []
     entered = entries.get(reply_name)
-    line = f"Codex {label}: requested at {record.get('requested_at')}; reply SHA-256 `{entered or 'none'}`"
-    if entered:
-        line += ("; the reply file still matches." if safe_digest(os.path.join(run, reply_name)) == entered
-                 else "; **it does not match the ledger**.")
+    when = in_form("codex_requested_at", record.get("requested_at")) or "an unrecorded time"
+    if entered and safe_digest(os.path.join(run, reply_name)) != entered:
+        line = f"Codex {label}: requested at {when}."   # the reply is named once, in the list above (D4)
+    else:
+        digest = entered if isinstance(entered, str) and HEX64.fullmatch(entered) else "none"
+        line = f"Codex {label}: requested at {when}; reply SHA-256 `{digest}`"
+        if entered:
+            line += "; the reply file still matches."
     if not seal_record:
         line += " Claude's answers for this round were never sealed."
     elif (seal_record.get("sealed_epoch") or 0) < (record.get("requested_epoch") or 0):
@@ -143,7 +147,12 @@ STEP = re.compile(r"init|confirm-privacy|seal(?: --zoom)?|ask --round (?:1|zoom|
 # directory (round 9): codex-call's messages, the runtime check's detail and Python's exception text. SAM's
 # output is the fourth, kept in sam.json.
 OUTSIDE = {"codex-call": "the message codex-call printed", "runtime": "the runtime check's detail",
-           "python": "the text of the unexpected exception"}
+           "python": "the text of the unexpected exception", "claude-answers": "the text of Claude's answers"}
+# The records the comparison is derived from: it is shown only when they are verified too (round 10, D3).
+# The adjudication is derived from every record, so any difference keeps its verdicts out.
+COMPARED_FROM = ("vocab.json", "frames.json", "meta.json", "frames/", "hires/", "claude.json", "seal.json",
+                 "codex.json", "comparison.json")
+HEX64 = re.compile(r"[0-9a-f]{64}")
 
 
 def in_form(field: str, value: Any) -> str:
@@ -236,12 +245,13 @@ def render(run: str, stopped: dict | None) -> tuple[str, str | None]:
     if error and "error" not in error:
         error = None
 
-    comparison = record("comparison.json", {}) or None
+    compared_ok = not any(n == x or (x.endswith("/") and n.startswith(x)) for n in bad for x in COMPARED_FROM)
+    comparison = (record("comparison.json", {}) or None) if compared_ok else None
     if comparison and not (isinstance(comparison.get("disagreements"), list)
                            and all(isinstance(d, dict) for d in comparison["disagreements"])):
         comparison = None
-    adjudicated = record("adjudication.json", {})
-    verdicts_shown = "adjudication.json" not in bad
+    verdicts_shown = not found   # the adjudication rests on every record (D3)
+    adjudicated = record("adjudication.json", {}) if verdicts_shown else {}
     seal_record = record("seal.json", {})
     # The seal is checked now: one never checked is not reported as intact, a missing one counts as broken (A4)
     sealed_now = safe_digest(os.path.join(run, "claude.json"))
@@ -295,15 +305,16 @@ def render(run: str, stopped: dict | None) -> tuple[str, str | None]:
         label = "Runtime preflight detail" if fm["error"] in NATIVE_PREFLIGHT else "Detail"
         lines += [f"{label}: {error_detail(error)}", ""]
     lines += ["## Agreement", ""]
-    if "comparison.json" in bad:
-        lines += ["Not shown: the comparison does not match the run's ledger."]
+    if not compared_ok:
+        lines += ["Not shown: the comparison, or a record it came from, does not match the run's ledger."]
     elif comparison:
         n_dis = len(comparison["disagreements"])
         counts = adjudicated.get("counts", {})
         summary = f"Agreement rate {fm['agreement_rate']} over {comparison['n_frames']} frames; {n_dis} disagreement(s)"
         lines += [summary + (f": {counts.get('resolved_claude', 0)} resolved for Claude, {counts.get('resolved_codex', 0)} "
                              f"for Codex, {counts.get('unverifiable', n_dis)} unverifiable." if verdicts_shown
-                             else "; the verdicts are not shown: the adjudication does not match the run's ledger.")]
+                             else "; the verdicts are not shown: the adjudication, or a record it came from, does "
+                                  "not match the run's ledger.")]
     else:
         lines += ["No comparison was made."]
     if fm["seal_broken"] == "true" and "seal.json" in entries:   # a seal was made; also before comparing (A4)
@@ -325,10 +336,10 @@ def render(run: str, stopped: dict | None) -> tuple[str, str | None]:
         if a.get("note"):
             lines.append(f"  - {a['note']}")
     if not (comparison or {}).get("disagreements"):
-        lines.append("None." if "comparison.json" not in bad else "Not shown.")
+        lines.append("None." if compared_ok else "Not shown.")
     if adjudicated.get("zoom_seal_broken") or bad & {"zoom_claude.json", "zoom_seal.json"}:
-        lines += ["", "**The zoom seal failed**: Claude's zoom answers changed after they were sealed, so no "
-                  "disagreement was settled by the zoom round."]
+        lines += ["", "**The zoom seal failed**: Claude's zoom answers or their seal no longer match what was sealed, "
+                  "so no disagreement is settled by the zoom round."]
     rejected = record("zoom_rejected.json", {})
     if rejected:   # xval's own words about the answers it refused
         detail = rejected.get("detail") if isinstance(rejected.get("detail"), str) else ""
@@ -348,9 +359,12 @@ def render(run: str, stopped: dict | None) -> tuple[str, str | None]:
         anchors = [a["frame"] for a in record("anchors.json", {}).get("anchors", [])]
         lines.append(f"Anchors: {', '.join(anchors) or 'none'}; collapsed (invalid) frames: "
                      f"{len(track.get('invalid_frames', []))} — {', '.join(track.get('invalid_frames', [])) or 'none'}.")
+    if "seal.json" in bad:   # not "never sealed": the seal is there in the ledger, and not shown (D3)
+        sealed = "the seal does not match the run's ledger, so it is not shown"
+    else:
+        sealed = f"SHA-256 `{fm['claude_answers_sha256'] or 'none'}`, sealed at {fm['sealed_at'] or 'never'}"
     lines += ["", "## Seal", "",
-              f"Claude's answers: SHA-256 `{fm['claude_answers_sha256'] or 'none'}`, sealed at {fm['sealed_at'] or 'never'}; "
-              f"recomputed when the result was written: `{sealed_now or 'n/a'}` → "
+              f"Claude's answers: {sealed}; recomputed when the result was written: `{sealed_now or 'n/a'}` → "
               + ("**broken**." if fm["seal_broken"] == "true" else "intact.")]
     for rnd, label, reply_name, seal_name in (("1", "round 1", "codex_round1.md", "seal.json"),
                                               ("zoom", "zoom round", "codex_zoom.md", "zoom_seal.json")):

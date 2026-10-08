@@ -5,6 +5,7 @@ checks that what a step reads is what an earlier step wrote. scripts/xval.py dri
 import datetime
 import json
 import os
+import re
 import struct
 import subprocess
 from typing import Any
@@ -205,6 +206,22 @@ def changed(run: str, names: Any = None) -> list[str]:
     return [name for name, _ in differences(run, names)]
 
 
+# The names xval itself writes in its directories. Any other name found there is not printed: it is text from
+# outside xval, and this message reaches the result file as xval's own (#23 verify round 10, D6).
+OWN_NAME = re.compile(r"(?:frames|hires)/f\d{2}\.(?:png|jpg)|crops/z\d{2}\.png")
+
+
+def shown_names(group: list[str]) -> list[str]:
+    """The names as printed: xval's own as they are, the others counted per directory."""
+    shown = [n for n in group if n in TRACKED or OWN_NAME.fullmatch(n)]
+    others: dict[str, int] = {}
+    for n in group:
+        if n not in shown:
+            folder = n.split("/", 1)[0] + "/" if "/" in n else "the run directory"
+            others[folder] = others.get(folder, 0) + 1
+    return shown + [f"{k} unexpected files in {d}" if k > 1 else f"an unexpected file in {d}" for d, k in others.items()]
+
+
 def describe_differences(found: list[tuple[str, str]]) -> str:
     """One clause per kind, in the order the kinds were first met, each record named once."""
     groups: dict[str, list[str]] = {}
@@ -212,7 +229,7 @@ def describe_differences(found: list[tuple[str, str]]) -> str:
         groups.setdefault(how, []).append(name)
     clauses = []
     for how, group in groups.items():
-        names, many = ", ".join(group), len(group) > 1
+        names, many = ", ".join(shown_names(group)), len(group) > 1
         if how == "not entered":
             clauses.append(f"{names} {'are' if many else 'is'} not in the run's ledger")
             continue

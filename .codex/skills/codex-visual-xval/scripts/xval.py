@@ -303,7 +303,8 @@ def seal_answers(run: str, zoom: bool) -> None:
         try:
             claude = compare_claims.by_frame(compare_claims.claims_list(load(answers)), vocab)
         except (compare_claims.SchemaError, TypeError) as exc:
-            raise Stop("target_invalid", f"Claude claims: {exc}")
+            # its text quotes Claude's answers, written after seeing the images: kept in the run (round 10, C3)
+            raise Stop("target_invalid", f"Claude claims: {exc}", source="claude-answers")
         if sorted(claude) != neutral_names(run):
             raise Stop("target_invalid", "Claude claims must answer every image, by its neutral name")
     import contextlib, io
@@ -730,7 +731,9 @@ def sam(run: str) -> None:
     check = subprocess.run(["bash", os.path.join(HERE, "sam_env.sh"), "--check"], capture_output=True,
                            encoding="utf-8", errors="replace")
     if check.returncode != 0:
-        return record("not_installed", check.stdout.strip(), source="sam")
+        # xval's own words: the check prints a full path, and the result file must still say where SAM goes (D8)
+        return record("not_installed", "SAM 2.1 is not installed; it goes to ~/.codex-pro/sam-env once the user "
+                      "agrees to the download (sam_env.sh install)")
     dump(os.path.join(run, "sam_frames.json"), [os.path.join(run, "frames", n) for n in neutral_names(run)])
     enter(run, "sam_frames.json")
     env_dir = os.path.expanduser("~/.codex-pro/sam-env")
