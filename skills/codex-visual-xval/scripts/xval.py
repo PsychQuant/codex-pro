@@ -223,15 +223,15 @@ def init(run: str, vocab_path: str, images: list[str], sequence: bool, first_sid
     try:
         run_dir(run)
     except OSError as exc:   # a --run that cannot be a directory is the caller's input (round 6, Q7)
-        raise Stop("target_invalid", f"cannot create the run directory {os.path.basename(os.path.abspath(run))}: "
-                   f"{failure(exc)}")
+        # the user's directory names are not repeated: by role only (round 11, F5)
+        raise Stop("target_invalid", f"cannot create the --run directory: {exc.strerror or type(exc).__name__}")
     dump(os.path.join(run, "init_attempt.json"), {"at": now_iso()})
     if first_side and not FIRST_SIDE.fullmatch(first_side):
         # it goes into the result file's frontmatter, where a line break would add keys (round 3, L1)
         raise Stop("target_invalid", "--first-side must be a model identifier on one line (letters, digits, . _ : / @ + -)")
     vocab = load_vocab(vocab_path)
     if vocab is None:
-        raise Stop("target_invalid", f"vocabulary unreadable: {os.path.basename(vocab_path)}")   # W1
+        raise Stop("target_invalid", "the vocabulary file given by --vocab is unreadable")   # W1; F5
     problems = compare_claims.vocab_problems(vocab)
     if problems:
         raise Stop("target_invalid", "; ".join(problems))
@@ -243,7 +243,9 @@ def init(run: str, vocab_path: str, images: list[str], sequence: bool, first_sid
     missing = [p for p in images if not os.path.isfile(p)]
     if missing:
         # file names only: a local directory can name a person or a client (round 5, V4)
-        raise Stop("target_invalid", f"not a readable file: {[os.path.basename(p) for p in missing]}")
+        where = ", ".join(str(images.index(p) + 1) for p in missing)   # by position, not by name (round 11, F5)
+        raise Stop("target_invalid", f"image{'s' if len(missing) > 1 else ''} {where} of {len(images)} "
+                   f"{'are not readable files' if len(missing) > 1 else 'is not a readable file'}")
     os.makedirs(os.path.join(run, "frames"), exist_ok=True)
     before = snapshot(run, *INPUTS)
     try:
@@ -271,6 +273,12 @@ def stopped_partway(run: str, before: dict, *names: str) -> None:
         pass   # the step's own error is the one to report
 
 
+def by_position(src: str, n: int, total: int, exc: BaseException) -> str:
+    """'image n of total: reason', with the user's file name replaced by the position wherever it appears."""
+    reason, name = failure(exc), os.path.basename(src)
+    return f"image {n} of {total}: " + (reason.replace(name, f"image {n}") if name else reason)
+
+
 def copy_frames(run: str, images: list[str]) -> dict:
     """The neutral copies, and full-resolution copies where an image is larger than the first round's."""
     frames = {}
@@ -278,7 +286,7 @@ def copy_frames(run: str, images: list[str]) -> dict:
         try:
             name = media.prepare_copy(src, os.path.join(run, "frames"), f"f{n:02d}")
         except (media.MediaError, OSError, subprocess.CalledProcessError, struct.error) as exc:
-            raise Stop("target_invalid", f"cannot prepare {os.path.basename(src)}: {failure(exc)}")
+            raise Stop("target_invalid", f"cannot prepare {by_position(src, n, len(images), exc)}")
         w, h = image_size(os.path.join(run, "frames", name))
         frames[name] = {"source": os.path.abspath(src), "width": w, "height": h}
         if max(v or 0 for v in image_size(src)) > media.MAX_EDGE:
@@ -287,7 +295,7 @@ def copy_frames(run: str, images: list[str]) -> dict:
             try:
                 hires = media.prepare_copy(src, os.path.join(run, "hires"), f"f{n:02d}", max_edge=None)
             except (media.MediaError, OSError, subprocess.CalledProcessError, struct.error) as exc:
-                raise Stop("target_invalid", f"cannot prepare {os.path.basename(src)}: {failure(exc)}")
+                raise Stop("target_invalid", f"cannot prepare {by_position(src, n, len(images), exc)}")
             frames[name]["hires"] = os.path.join("hires", hires)
     return frames
 
@@ -888,7 +896,7 @@ def main(argv: list[str]) -> None:
     try:
         if command not in ("init", "confirm-privacy", "result") and not is_run_dir(run):
             # the steps that may write into a directory that is not a run are a closed list (round 6, Q1)
-            raise Stop("target_invalid", f"{os.path.basename(os.path.abspath(run))} is not a run directory", record=False)
+            raise Stop("target_invalid", "the --run directory is not a run directory", record=False)   # F5
         if command == "confirm-privacy":
             confirm_privacy(run)
         elif command == "init":

@@ -76,8 +76,8 @@ def run_dir(run: str) -> None:
     other files is not taken over, and an existing .gitignore is never overwritten: `--run .` used to
     replace a project's own .gitignore (#23 verify round 4, U5)."""
     if os.path.isdir(run) and not is_run_dir(run) and os.listdir(run):
-        raise Stop("target_invalid", f"{os.path.basename(os.path.abspath(run))} is not a run directory: it already holds "
-                   "other files; use a new directory such as .codex-pro/visual-xval-run-<timestamp>", record=False)
+        raise Stop("target_invalid", "the --run directory is not a run directory: it already holds other files; use a "
+                   "new directory such as .codex-pro/visual-xval-run-<timestamp>", record=False)   # F5: by role
     os.makedirs(run, exist_ok=True)
     if not os.path.exists(os.path.join(run, ".gitignore")):
         with open(os.path.join(run, ".gitignore"), "w", encoding="utf-8") as fh:
@@ -88,8 +88,8 @@ def adopt_run_dir(run: str) -> None:
     """Take over an existing empty directory as the run directory, creating none: SKILL Step 1 creates
     it, so a mistyped --run is refused instead of becoming a new directory tree (#23 verify round 6, Q1)."""
     if not os.path.isdir(run):
-        raise Stop("target_invalid", f"{os.path.basename(os.path.abspath(run))} does not exist; create the run directory "
-                   "first (SKILL Step 1)", record=False)
+        raise Stop("target_invalid", "the --run directory does not exist; create it first (SKILL Step 1)",
+                   record=False)   # F5: by role
     run_dir(run)
 
 

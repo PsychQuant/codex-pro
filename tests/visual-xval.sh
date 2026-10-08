@@ -1121,7 +1121,7 @@ assert_contains "$RUN_OUT" '"error": "target_invalid"' "a file that cannot be de
 rm -rf "$WORK/runpath"
 xval init --run "$WORK/runpath" --vocab "$WORK/vocab.json" "$WORK/home/gone_2026-09-11.png" "$WORK/missing.png"
 ( mkdir -p "$WORK/project" && cd "$WORK/project" && HOME="$WORK/home" python3 "$SCRIPTS/xval.py" result --run "$WORK/runpath" --out "$WORK/runpath_result.md" >/dev/null 2>&1 )
-assert_contains "$(cat "$WORK/runpath_result.md" 2>/dev/null)" "missing.png" "the detail still names the file that was not readable"
+assert_contains "$(cat "$WORK/runpath_result.md" 2>/dev/null)" "images 1, 2 of 2" "the detail names the images that were not readable by position (round 11, F5)"
 case "$(cat "$WORK/runpath_result.md" 2>/dev/null)" in
   *"$WORK"*) fail "the result file's error detail carries no local path" ;;
   *) pass "the result file's error detail carries no local path" ;;
@@ -1131,7 +1131,7 @@ esac
 rm -rf "$WORK/runpath2"; mkdir -p "$WORK/home/My Docs"
 xval init --run "$WORK/runpath2" --vocab "$WORK/vocab.json" "$WORK/home/My Docs/gone 2026.png"
 ( cd "$WORK/project" && HOME="$WORK/home" python3 "$SCRIPTS/xval.py" result --run "$WORK/runpath2" --out "$WORK/runpath2_result.md" >/dev/null 2>&1 )
-assert_contains "$(cat "$WORK/runpath2_result.md" 2>/dev/null)" "gone 2026.png" "a path with spaces keeps its file name"
+assert_contains "$(cat "$WORK/runpath2_result.md" 2>/dev/null)" "image 1 of 1" "a path with spaces is named by position (round 11, F5)"
 case "$(cat "$WORK/runpath2_result.md" 2>/dev/null)" in
   *"My Docs"*) fail "and loses its directories, also under home (V4)" ;;
   *) pass "and loses its directories, also under home (V4)" ;;
@@ -1187,7 +1187,7 @@ assert_contains "$RUN_OUT" '"error"' "init under a file answers with an error, n
 rm -rf "$WORK/runv4"
 xval init --run "$WORK/runv4" --vocab "$WORK/vocab.json" "/Volumes/ClientData/case42/scan.png"
 ( cd "$WORK/project" && HOME="$WORK/home" python3 "$SCRIPTS/xval.py" result --run "$WORK/runv4" --out "$WORK/runv4_result.md" >/dev/null 2>&1 )
-assert_contains "$(cat "$WORK/runv4_result.md" 2>/dev/null)" "scan.png" "the detail still names the unreadable file"
+assert_contains "$(cat "$WORK/runv4_result.md" 2>/dev/null)" "image 1" "the detail names the unreadable image by its position (round 11, F5)"
 case "$(cat "$WORK/runv4_result.md" 2>/dev/null)" in
   *ClientData*|*case42*) fail "a path outside home and the temporary directory loses its directories (V4)" ;;
   *) pass "a path outside home and the temporary directory loses its directories (V4)" ;;
@@ -1351,7 +1351,7 @@ rm -rf "$WORK/runw1a" "$WORK/Client Data"; mkdir -p "$WORK/Client Data/Wang Xiao
 IMG1=$(ls "$WORK"/imgs/*.png | head -1)
 xval init --run "$WORK/runw1a" --vocab "$WORK/Client Data/Wang Xiaoming/vocab.json" "$IMG1"
 w1a=$(cat "$WORK/runw1a/error.json" 2>/dev/null)
-assert_contains "$w1a" "vocab.json" "an unreadable vocabulary is named by its file name"
+assert_contains "$w1a" "given by --vocab" "an unreadable vocabulary is named by its role (round 11, F5)"
 case "$w1a" in
   *"Client Data"*|*Wang*) fail "and its directories stay out of the error (W1)" ;;
   *) pass "and its directories stay out of the error (W1)" ;;
@@ -1360,7 +1360,7 @@ rm -rf "$WORK/runw1b"; cp "$IMG1" "$WORK/Client Data/Wang Xiaoming/scan.png"; ch
 xval init --run "$WORK/runw1b" --vocab "$WORK/vocab.json" "$WORK/Client Data/Wang Xiaoming/scan.png"
 chmod 644 "$WORK/Client Data/Wang Xiaoming/scan.png"
 w1b=$(cat "$WORK/runw1b/error.json" 2>/dev/null)
-assert_contains "$w1b" "scan.png" "an image that cannot be read is named by its file name"
+assert_contains "$w1b" "image 1 of 1" "an image that cannot be read is named by position (round 11, F5)"
 case "$w1b" in
   *"Client Data"*|*Wang*) fail "and an OSError's path stays out of the error (W1)" ;;
   *) pass "and an OSError's path stays out of the error (W1)" ;;
@@ -2613,6 +2613,38 @@ if [ -x "$OLDPY" ] && "$OLDPY" -c 'import sys; sys.exit(0 if sys.version_info < 
 else
   skip "an old Python does not stall on an error history that is a FIFO" "no Python older than 3.10 at $OLDPY"
 fi
+
+# Round 11 (F5): the user's file and directory names are not repeated; images are named by their position.
+rm -rf "$WORK/r11u"; printf 'not an image' > "$WORK/x <!-- hide.png"
+xval init --run "$WORK/r11u" --vocab "$WORK/vocab.json" "$WORK/imgs/shot_2026-09-11_1001.png" "$WORK/x <!-- hide.png"
+result9 "$WORK/r11u"
+refute_contains "$(cat "$WORK/r11u_result.md")" "<!--" "a user's image name does not reach the result file (F5)"
+assert_contains "$(cat "$WORK/r11u_result.md")" "image 2 of 2" "the image is named by its position"
+rm -rf "$WORK/r11v"; xval init --run "$WORK/r11v" --vocab "$WORK/no <!-- vocab.json" "$WORK"/imgs/*.png
+result9 "$WORK/r11v"
+refute_contains "$(cat "$WORK/r11v_result.md")" "<!--" "nor does the vocabulary file's name (F5)"
+rm -rf "$WORK/client-acme-dir"; mkdir -p "$WORK/client-acme-dir"
+( cd "$WORK/project" && python3 "$SCRIPTS/xval.py" result --run "$WORK/client-acme-dir" --out "$WORK/r11w_result.md" >/dev/null 2>&1 )
+refute_contains "$(cat "$WORK/r11w_result.md")" "client-acme" "nor the name of a directory that is not a run (F5)"
+# F4: the result file's residue.
+result9 "$WORK/run9s"
+refute_contains "$(cat "$WORK/run9s_result.md")" "were never sealed" "a request line does not call an unverified seal never made (F4)"
+rm -rf "$WORK/r11x"; SEQ= new_run "$WORK/r11x"; edit_json "$WORK/r11x/vocab.json" 'd["max_count"] = {"INST": 1}'
+result9 "$WORK/r11x"
+assert_contains "$(cat "$WORK/r11x_result.md")" "No comparison was made." "a run that never compared says so, even with a changed input (F4)"
+rm -rf "$WORK/r11a2"; cp -R "$WORK/run6w" "$WORK/r11a2"; rm -f "$WORK/r11a2/error.json"
+python3 -B - "$WORK/r11a2" "$SCRIPTS" <<'PY'
+import json, sys
+run = sys.argv[1]; sys.path.insert(0, sys.argv[2])
+import run_files
+json.dump({"sam_status": "ok", "detail": "1 frames tracked, 0 collapsed", "detail_source": "xval"}, open(f"{run}/sam.json", "w"))
+json.dump({"sam_status": "ok", "class": "INST", "frames": {}, "invalid_frames": ["f03.png"]}, open(f"{run}/track.json", "w"))
+json.dump({"anchors": [{"frame": "f01.png"}]}, open(f"{run}/anchors.json", "w"))
+run_files.enter(run, "sam.json", "track.json", "anchors.json")
+PY
+edit_json "$WORK/r11a2/claude.json" 'd["claims"][0]["objects"] = {"INST": 9}'
+result9 "$WORK/r11a2"
+refute_contains "$(cat "$WORK/r11a2_result.md")" "Anchors:" "SAM's anchors, derived from the comparison, are not shown when it is not (F4)"
 
 # Round 6 (Q1): the steps that write into a directory are a closed list.
 rm -rf "$WORK/typo"

@@ -33,7 +33,7 @@ def option(argv: list[str], name: str) -> str | None:
 
 
 def request_lines(requests: dict, entries: dict, run: str, rnd: str, label: str, reply_name: str,
-                  seal_record: dict) -> list[str]:
+                  seal_record: dict, seal_unverified: bool = False) -> list[str]:
     """One round's request, from the verified request record, with the raw reply's digest from the ledger,
     re-checked now (#23 verify round 2, S1, S9). A mismatch is named once, in the list of records that do not
     match the ledger (round 9, B4)."""
@@ -49,7 +49,9 @@ def request_lines(requests: dict, entries: dict, run: str, rnd: str, label: str,
         line = f"Codex {label}: requested at {when}; reply SHA-256 `{digest}`"
         if entered:
             line += "; the reply file still matches."
-    if not seal_record:
+    if seal_unverified:   # not "never sealed": the seal is there, and not shown (round 11, F4)
+        line += " The seal does not match the run's ledger, so whether it predates the request is not shown."
+    elif not seal_record:
         line += " Claude's answers for this round were never sealed."
     elif (seal_record.get("sealed_epoch") or 0) < (record.get("requested_epoch") or 0):
         line += " The seal predates the request."
@@ -197,8 +199,8 @@ def result(run: str, argv: list[str]) -> None:
         # placed there would read as this run's outcome (#23 verify round 6, Q1).
         with tempfile.TemporaryDirectory() as empty:
             text, error = render(empty, {"error": "target_invalid", "step": "result", "source": "xval",
-                                         "detail": f"{os.path.basename(os.path.abspath(run))} is not a run directory, "
-                                                   "so nothing in it was read"})
+                                         "detail": "the --run directory is not a run directory, so nothing in it was "
+                                                   "read"})   # by role (round 11, F5)
     else:
         try:
             text, error = render(run, None)
@@ -220,8 +222,7 @@ def emit(text: str, error: str | None, argv: list[str]) -> None:
         with open(out, "wb") as fh:
             fh.write(data)
     except OSError as exc:   # the result step's own error, kept out of the run's (round 8, K1)
-        raise Stop("target_invalid", f"cannot write the result file {os.path.basename(out or '.codex-pro')}: "
-                   f"{exc.strerror or type(exc).__name__}")
+        raise Stop("target_invalid", f"cannot write the result file: {exc.strerror or type(exc).__name__}")   # F5
     print(json.dumps({"result": out, "error": error}))
 
 
@@ -325,7 +326,10 @@ def render(run: str, stopped: dict | None) -> tuple[str, str | None]:
         label = "Runtime preflight detail" if fm["error"] in NATIVE_PREFLIGHT else "Detail"
         lines += [f"{label}: {error_detail(error)}", ""]
     lines += ["## Agreement", ""]
-    if not compared_ok:
+    compared = os.path.exists(os.path.join(run, "comparison.json")) or "comparison.json" in entries
+    if not compared:   # no comparison was made at all: nothing is hidden (round 11, F4)
+        lines += ["No comparison was made."]
+    elif not compared_ok:
         lines += ["Not shown: the comparison, or a record it came from, does not match the run's ledger."]
     elif comparison:
         n_dis = len(comparison["disagreements"])
@@ -356,7 +360,7 @@ def render(run: str, stopped: dict | None) -> tuple[str, str | None]:
         if a.get("note"):
             lines.append(f"  - {a['note']}")
     if not (comparison or {}).get("disagreements"):
-        lines.append("None." if compared_ok else "Not shown.")
+        lines.append("None." if compared_ok or not compared else "Not shown.")
     if adjudicated.get("zoom_seal_broken") or bad & {"zoom_claude.json", "zoom_seal.json"}:
         lines += ["", "**The zoom seal failed**: Claude's zoom answers or their seal no longer match what was sealed, "
                   "so no disagreement is settled by the zoom round."]
@@ -375,7 +379,7 @@ def render(run: str, stopped: dict | None) -> tuple[str, str | None]:
         else:   # SAM's own output, the fourth outside source (round 9)
             shown = "SAM's output is kept in sam.json in the run directory." if detail else ""
         lines.append(f"Status: `{fm['sam_status']}`. {shown}".rstrip())
-    if track and "anchors.json" not in bad:
+    if track and "anchors.json" not in bad and compared_ok:   # anchors rest on the comparison (round 11, F4)
         anchors = [a["frame"] for a in record("anchors.json", {}).get("anchors", [])]
         lines.append(f"Anchors: {', '.join(anchors) or 'none'}; collapsed (invalid) frames: "
                      f"{len(track.get('invalid_frames', []))} — {', '.join(track.get('invalid_frames', [])) or 'none'}.")
@@ -388,7 +392,8 @@ def render(run: str, stopped: dict | None) -> tuple[str, str | None]:
               + ("**broken**." if fm["seal_broken"] == "true" else "intact.")]
     for rnd, label, reply_name, seal_name in (("1", "round 1", "codex_round1.md", "seal.json"),
                                               ("zoom", "zoom round", "codex_zoom.md", "zoom_seal.json")):
-        lines += request_lines(requests, entries, run, rnd, label, reply_name, record(seal_name, {}))
+        lines += request_lines(requests, entries, run, rnd, label, reply_name, record(seal_name, {}),
+                               seal_unverified=seal_name in bad)
     lines += ["", "## Limitations", "",
               "- Agreement between the two models does not establish that either is correct; only a human reference can.",
               "- Zoom-round answers on Claude's side come from a subagent that saw only the crops and the question "
