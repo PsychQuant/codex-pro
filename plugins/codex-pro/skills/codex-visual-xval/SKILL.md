@@ -43,7 +43,7 @@ allowed-tools:
 3. `runtime_unsupported`：`codex-call --help` 沒有列出 `--image`（舊版會把不認得的旗標當成 prompt 吞掉）
 4. `parse_failed`：Codex 的回覆不是符合 schema 的 JSON
 5. `runtime_unavailable`：找不到 `codex-call`、`python3` 比 3.10 舊、`codex-call` 根本沒能啟動，或寫不進 prompt 檔
-6. `internal_error`：腳本內部的意外例外。照樣寫結果檔，detail 是例外類型與訊息
+6. `internal_error`：腳本內部的意外例外。照樣寫結果檔；例外的文字只留在 run 目錄的 `error.json`，結果檔只說它在那裡
 7. `backend_error`：`codex-call` 啟動之後失敗、沒有更具體的類別：後端回錯誤（例如 HTTP 500）、連線中斷、
    沒說明原因（`HTTP 0`），或它自己的本機問題（讀不到 prompt、鎖檔權限）。
    **`codex-call` 只要失敗，一律當成已送出**：錯誤訊息的字樣證明不了什麼都沒送出（後端的錯誤事件原文照印，
@@ -81,7 +81,7 @@ mkdir -p "$RUN"
 Step 2 的 `confirm-privacy` 只接管這個剛建立的空目錄：目錄必須已經存在，打錯的路徑會被拒絕，不會另外建立。
 會建立目錄或寫進非 run 目錄的只有這六處：Step 1 的 `mkdir -p`；init（run 目錄與缺少的上層目錄、`frames/`、
 `hires/`）；confirm-privacy（只接管已存在的空目錄）；crops（run 內的 `crops/`）；result（寫到 `--out`，沒給時建立
-`.codex-pro/`；遇到不是 run 的目錄、或 run 的紀錄無法呈現時，用自己的暫存目錄）；SAM 環境安裝（`~/.codex-pro` 與
+`.codex-pro/`；遇到不是 run 的目錄時，用自己的暫存目錄）；SAM 環境安裝（`~/.codex-pro` 與
 `~/.codex-pro/sam-env`）。被呼叫的工具另有自己的寫入：codex-call refresh token 時寫 `~/.codex`、sips 的暫存檔、
 uv（SAM 環境安裝時）的快取與需要時安裝的受管理 Python、直譯器的快取。其他步驟遇到
 不是 run 的目錄就拒絕、不寫任何檔案。
@@ -124,13 +124,18 @@ Claude 依序用 Read 看 `$RUN/frames/f01.png`…，依詞彙表與 `references
 python3 "$SKILL_DIR/scripts/xval.py" seal --run "$RUN"
 ```
 
+每一步寫下的紀錄都連同 SHA-256 登記在 `$RUN/ledger.json`（帳本）。之後的步驟讀到的紀錄若內容不同、被刪掉，
+或存在卻沒有登記，就停在 `target_invalid`，訊息照實寫出是哪一種。例外只有尚未封存的那一輪 Claude 答案；
+`frames/`、`crops/` 裡以點開頭的檔案（Finder 的 `.DS_Store`）不算紀錄。帳本也在 run 目錄裡：它防的是誤改與
+事後的手動修改，不是能寫入 run 目錄的人。
+
 ## Step 4: Invoke codex-call
 
 ### Step 4.1: Resolve profile
 
 讀 `~/.codex-pro/profile.yaml`（global）與 `.codex-pro/profile.yaml`（project，優先），缺的欄位用
 hardcoded default（`gpt-5.6-sol` / `xhigh` / `600`，鏡像 [`references/defaults.json`](../../references/defaults.json)），
-結果寫進 `$RUN/profile.json`；值不合法時照原樣寫進去並附上原因，不換成預設值，`ask` 會以 `target_invalid` 停下，原因因此留在 run 與結果檔裡。之後的步驟都從這個檔案讀，不靠 shell 變數：每次 Bash 呼叫都是新的 shell，
+結果寫進 `$RUN/profile.json`；值不合法時照原樣寫進去並附上原因，不換成預設值，`ask` 會以 `target_invalid` 停下。原因與使用者的原值留在 `profile.json`；`ask` 的訊息與結果檔只寫是哪個欄位，不帶原值。之後的步驟都從這個檔案讀，不靠 shell 變數：每次 Bash 呼叫都是新的 shell，
 變數到下一步就不見了，原本 `ask` 會因此安靜地改用預設值。
 
 ```bash
@@ -231,7 +236,8 @@ crops 目錄內，計畫、題目檔、裁切圖與比對結果都和 `crops` �
 python3 "$SKILL_DIR/scripts/xval.py" compare --run "$RUN"
 ```
 
-先重算封存的 SHA-256（被改過就標 `seal_broken`，但照樣比對），再逐格比對。只印出一致率與分歧的
+先以帳本核對詞彙表、影格、run 的設定與兩邊的答案：Claude 的答案或封存在封存之後被改過，就停在 `target_invalid`，
+不比對。Codex 還沒答完時（例如第一輪失敗），`compare` 拒絕執行，但不取代這個 run 原本的錯誤。核對通過才逐格比對，只印出一致率與分歧的
 編號、影格、類型。**此時不要讀 `$RUN/codex.json` 與 `$RUN/comparison.json` 的內容**，放大輪要用。
 
 沒有分歧就跳到 Step 9。
@@ -295,8 +301,8 @@ python3 "$SKILL_DIR/scripts/xval.py" ask --run "$RUN" --round zoom
 `seal --zoom` 用與 Codex 回覆相同的規則檢查答案（不合格就 `target_invalid`）。
 
 每一輪在一個 run 裡只送一次。對同一批圖片另開一個 run 重來，程式無法把兩次連起來，而且那時已經看過
-這一次的結果，不再是盲答；結果檔的 Limitations 也寫了這一點。裁決時會重算這份封存，
-答案被改過就不採用放大輪證據。
+這一次的結果，不再是盲答；結果檔的 Limitations 也寫了這一點。裁決時以帳本核對這份封存與放大輪的其他紀錄
+（裁切、問題檔、Codex 的放大輪答案），任何一份被改過就停在 `target_invalid`，不裁決。
 
 **沒有 subagent 可用時，不要自己作答**：跳過 `seal --zoom` 與 `ask --round zoom`，分歧只剩 SAM 與
 `max_count` 兩種證據（`max_count` 只能排除一方，要與 SAM 看到的數量一起才可能裁決），結果檔會顯示沒有放大輪證據。
@@ -350,3 +356,9 @@ error: <rate_limit | oauth_invalid | timeout | target_invalid | runtime_unsuppor
 
 各段依序：一致率與分歧摘要、逐筆分歧的類型與裁決及證據、SAM 狀態（錨點、塌陷格數）、封存驗證、限制
 （必須寫明兩個模型一致不代表正確）。
+
+結果檔只用帳本核對過的紀錄產生；沒通過的紀錄不呈現，只列名一次，frontmatter 設 `error: target_invalid`
+（run 已經因別的錯誤停下時保留那個錯誤）。frontmatter 每個欄位只寫它自己的格式（模型 ID、列舉值、時間、
+十六進位雜湊、數字），否則寫 `invalid`。結果檔不帶 xval 以外的文字：codex-call 印出的訊息、runtime 檢查的
+detail、Python 例外的文字（三者在 `error.json`，記有來源）與 SAM 的輸出（在 `sam.json`）只留在 run 目錄，
+結果檔寫出錯誤類別並說明它們保存在哪裡。核對過的紀錄若仍無法呈現，結果檔只寫固定內容與 run 自己的錯誤類別。

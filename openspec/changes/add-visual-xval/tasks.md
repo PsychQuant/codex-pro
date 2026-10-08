@@ -350,7 +350,7 @@
   - [after: 14.2]
 - [x] 14.4 其餘：使用者給的詞彙表不受一般檔案限制、Popen 中斷時終止 codex-call、回覆不是 UTF-8 時為 parse_failed、sam 與 sips 探測以 UTF-8 解碼、Python 3.9 路徑（B2、B3、B5、B8）。
   - [after: 14.3]
-- [ ] 14.5 文件：SKILL、CHANGELOG、design 的指向（B6）。
+- [x] 14.5 文件：SKILL、CHANGELOG、design 的指向（B6）。
   - 驗證：`bash tests/run.sh` 只剩 #24。
   - [after: 14.4]
 - [ ] 14.6 真實後端端到端（第九次）。

@@ -31,12 +31,20 @@ Issue: [#23](https://github.com/PsychQuant/codex-pro/issues/23)
 - 第一輪的複本長邊不超過 2048；放大輪從原解析度、同樣清除 metadata 的複本裁切。
 - 結構顯示資料損毀或截斷的圖、超過 2.5 億像素的圖都拒收（PNG 的壓縮串流要結束並通過自己的 checksum，超出表頭
   承諾的資料最多 1 MB）；結構完整但壓縮資料本身壞掉的 JPEG、GIF、WebP 看不出來。
-- 錯誤細節只寫檔名；結果檔把剩下的絕對路徑縮成最後一段，相對路徑無法從文字裡認出來。
+- 結果檔不帶 xval 以外的文字：codex-call 印出的訊息、runtime 檢查的 detail、Python 例外的文字與 SAM 的輸出只留在
+  run 目錄（`error.json` 記下來源，SAM 的輸出在 `sam.json`），結果檔寫出錯誤類別並說明保存在哪裡。其餘錯誤細節是 xval
+  自己的字句，只寫檔名；結果檔的路徑過濾只是後備，相對路徑無法從文字裡認出來。
 - 會建立目錄或寫進非 run 目錄的只有六處；`confirm-privacy` 要求 run 目錄已經存在。
-- 結果檔永遠寫得出來：紀錄型別不對或不是一般檔案時當成沒有；result 自己失敗不取代 run 原本的錯誤（結果檔裡也不換）；
-  寫出時發現任何一份紀錄（輸入、兩邊兩輪的答案、Codex 的原始回覆、比對結果、裁決）與它的雜湊對不上，frontmatter
-  記為 `target_invalid`。
-- 只有 codex-call 根本沒能啟動時才撤回這一輪的紀錄；啟動之後的任何事（含輸出無法解碼）都不撤回。
+- 每一步寫下的紀錄都連同 SHA-256 登記在 run 目錄的 `ledger.json`；之後的步驟讀到內容不同、被刪掉或沒有登記的紀錄
+  就停在 `target_invalid`（例外只有尚未封存的那一輪 Claude 答案），Claude 的答案在封存後被改，下一個讀它的步驟就停下。
+  帳本也在 run 目錄裡，防的是誤改與事後的手動修改，不是能寫入 run 目錄的人。
+- 結果檔只用帳本核對過的紀錄產生，沒通過的只列名一次，frontmatter 記為 `target_invalid`（run 已因別的錯誤停下時保留
+  那個錯誤）；frontmatter 每個欄位只寫自己的格式，否則寫 `invalid`；`seal_broken` 只有 true／false。核對過的紀錄仍無法
+  呈現時，結果檔只寫固定內容與 run 自己的錯誤類別；result 自己失敗不取代 run 原本的錯誤。
+- 只有 codex-call 根本沒能啟動時才撤回這一輪的紀錄；啟動之後的任何事（含輸出無法解碼）都不撤回。`ask` 被中斷時
+  codex-call 跟著終止；回覆不是 UTF-8 時為 `parse_failed`。工具的輸出一律以 UTF-8 解碼，Big5、Shift-JIS 的 locale 下
+  檔名含中日文的圖也量得到尺寸。
+- `--vocab` 可以是管線或程序替換（`--vocab <(...)`）；run 的紀錄仍只讀一般檔案。
 - 結果檔的路徑過濾只保留 http、https 網址；`file://`、`smb://` 等其他網址與本機路徑一樣縮成最後一段。
 - 兩個模型一致不代表正確；準度要靠人工標準答案。
 - `tests/codex-plugin.sh` 的 plugin-creator validator 檢查在 Codex CLI 0.160.1 下必定失敗（#24），與本版無關。

@@ -697,6 +697,15 @@ native preflight failure 的 result body 必須另寫一行
 寫入前把 CR／LF／TAB 改為空白、移除其他 control characters，並截到 500 個字元；
 不得把未清理或未截斷的 detail 放進 YAML frontmatter。
 """
+    if skill in RUN_DIR_PRODUCER_SKILLS:
+        # visual-xval's result file shows no text from outside xval (#23 verify round 9): the
+        # runtime check's detail stays in the run directory, and the line says where.
+        runtime_failure_contract = """
+
+native preflight failure 的 result body 另寫一行 `Runtime preflight detail:`，但不帶 detail 本身：
+`$CODEX_RUNTIME_DETAIL` 是 runtime 檢查自己的文字，只留在 run 目錄（`runtime_error.txt` 與 `error.json`），
+這一行只說它保存在哪裡；它也不得放進 YAML frontmatter。
+"""
     sub_exact(r"(?=\n\n\*\*所有 failure 仍寫 result file\*\*)",
               "\n" + runtime_failure_rows + runtime_failure_contract, 1,
               "producer native preflight failure rows")

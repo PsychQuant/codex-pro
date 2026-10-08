@@ -85,8 +85,15 @@ checks = {
     "six_writers": "Step 1 的 `mkdir -p`" in body and "暫存目錄" in body and "codex-call" in body.split("不是 run 的目錄就拒絕")[0][-400:],
     "zoom_checks": "放大計畫存在" in body,
     "cffixed": "CFFIXED_USER_HOME" in body,
-    # round 8 (K2): uv, ~/.codex-pro and result's fallback are in the writers list
-    "writers_uv": "uv" in body.split("不是 run 的目錄就拒絕")[0][-700:] and "紀錄無法呈現" in body,
+    # round 8 (K2): uv and ~/.codex-pro are in the writers list; round 9: result's temporary directory is only
+    # for a directory that is not a run, since the last resort reads no record
+    "writers_uv": "uv" in body.split("不是 run 的目錄就拒絕")[0][-700:] and "遇到不是 run 的目錄時，用自己的暫存目錄" in body
+        and "紀錄無法呈現時，用自己的暫存目錄" not in body,
+    # round 9 (A4, A1, A3, B5): the ledger, compare stops, no outside text, field forms, the profile's field only
+    "ledger": "`$RUN/ledger.json`" in body and "例外只有尚未封存的那一輪 Claude 答案" in body,
+    "compare_stops": "但照樣比對" not in body and "不比對" in body,
+    "no_outside_text": "不帶 xval 以外的文字" in body and "否則寫 `invalid`" in body,
+    "profile_field_only": "不帶原值" in body,
     "track_point": "track_point: tip" in body,
     "reencoded_copies": "重新編碼" in body,
     "resend_rule": "同一個 run 可以再送" in body,
@@ -2887,6 +2894,7 @@ checks = {
     "failure_rows": "runtime_unavailable" in step5 and "package_corruption" in step5,
     "error_enum": bool(re.search(r"error: <[^>]*runtime_unavailable[^>]*package_corruption[^>]*>", text)),
     "detail_contract": "Runtime preflight detail:" in text,
+    "detail_not_shown": "<sanitized detail>" not in text and "只留在 run 目錄" in text,   # round 9
 }
 print(" ".join(f"{k}={'ok' if v else 'MISSING'}" for k, v in checks.items()))
 PY
