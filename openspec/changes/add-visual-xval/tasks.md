@@ -370,6 +370,6 @@
 - [x] 15.5 文件：SKILL、原生 SKILL、CHANGELOG、design 的指向、B1 的路徑過濾殘留列為接受的風險（D9）。
   - 驗證：`bash tests/run.sh` 只剩 #24。
   - [after: 15.4]
-- [ ] 15.6 真實後端端到端（第十次）。
+- [x] 15.6 真實後端端到端（第十次）。
   - 驗證：紀錄寫進 e2e-checklist §F。
   - [after: 15.5]

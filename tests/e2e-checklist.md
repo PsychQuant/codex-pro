@@ -323,6 +323,14 @@ f01 是 PIL 寫出的 3000×1875 PNG，f02 是 PIL 寫出的 JPEG（品質 92）
 - 帳本登記 27 筆紀錄，跑完後一條規則核對沒有任何不符；各自成對的舊紀錄（comparison_record 等）都不再產生。
 - 結果檔沒有 error、沒有 `invalid` 欄位、沒有外來文字的轉述，也沒有出現資料夾名稱；複本與裁切圖都不含 EXIF 或文字區塊。
 
+第十次紀錄：2026-10-08，codex-pro `43e41ed`（第十輪 verify 的修正：帳本那條規則套用到拒絕檢查、run 的錯誤、profile 與中途失敗的步驟），
+同一個 runtime 與 profile。原圖（PIL 的 PNG 與 JPEG）放在名稱含撇號與括號的資料夾。
+
+- 第一輪 6.5 秒、放大輪 7.4 秒，各一次請求；Codex 收到的放大輪題目檔與 subagent 作答的那份逐字相同。
+- 植入與先前相同的兩個錯誤，分歧三筆全是植入的錯誤；裁決與第六到九次相同（兩筆 `resolved_codex`，「不近」不採用）。
+- 帳本登記 28 筆紀錄，`profile.json` 在第一次請求時登記；沒有錯誤的 run 沒有 `error.json`；跑完後一條規則核對沒有任何不符。
+- 結果檔沒有 error、沒有 `invalid`、沒有「not shown」或外來文字的轉述，也沒有出現資料夾名稱；複本與裁切圖都不含 EXIF 或文字區塊。
+
 ## Post-test cleanup checklist
 
 - [ ] B 段使用的 disposable account／VM 沒有污染日常 Codex home
