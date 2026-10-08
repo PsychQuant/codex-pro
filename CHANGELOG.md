@@ -33,8 +33,11 @@ Issue: [#23](https://github.com/PsychQuant/codex-pro/issues/23)
   承諾的資料最多 1 MB）；結構完整但壓縮資料本身壞掉的 JPEG、GIF、WebP 看不出來。
 - 錯誤細節只寫檔名；結果檔把剩下的絕對路徑縮成最後一段，相對路徑無法從文字裡認出來。
 - 會建立目錄或寫進非 run 目錄的只有六處；`confirm-privacy` 要求 run 目錄已經存在。
-- 結果檔永遠寫得出來：紀錄型別不對時當成沒有；result 自己失敗不取代 run 原本的錯誤；寫出時發現紀錄被改過，
-  frontmatter 記為 `target_invalid`。
+- 結果檔永遠寫得出來：紀錄型別不對或不是一般檔案時當成沒有；result 自己失敗不取代 run 原本的錯誤（結果檔裡也不換）；
+  寫出時發現任何一份紀錄（輸入、兩邊兩輪的答案、Codex 的原始回覆、比對結果、裁決）與它的雜湊對不上，frontmatter
+  記為 `target_invalid`。
+- 只有 codex-call 根本沒能啟動時才撤回這一輪的紀錄；啟動之後的任何事（含輸出無法解碼）都不撤回。
+- 結果檔的路徑過濾只保留 http、https 網址；`file://`、`smb://` 等其他網址與本機路徑一樣縮成最後一段。
 - 兩個模型一致不代表正確；準度要靠人工標準答案。
 - `tests/codex-plugin.sh` 的 plugin-creator validator 檢查在 Codex CLI 0.160.1 下必定失敗（#24），與本版無關。
 

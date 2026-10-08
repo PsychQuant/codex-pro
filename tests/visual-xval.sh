@@ -85,6 +85,8 @@ checks = {
     "six_writers": "Step 1 的 `mkdir -p`" in body and "暫存目錄" in body and "codex-call" in body.split("不是 run 的目錄就拒絕")[0][-400:],
     "zoom_checks": "放大計畫存在" in body,
     "cffixed": "CFFIXED_USER_HOME" in body,
+    # round 8 (K2): uv, ~/.codex-pro and result's fallback are in the writers list
+    "writers_uv": "uv" in body.split("不是 run 的目錄就拒絕")[0][-700:] and "紀錄無法呈現" in body,
     "track_point": "track_point: tip" in body,
     "reencoded_copies": "重新編碼" in body,
     "resend_rule": "同一個 run 可以再送" in body,

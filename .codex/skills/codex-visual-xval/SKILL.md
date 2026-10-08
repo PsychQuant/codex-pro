@@ -85,8 +85,9 @@ mkdir -p "$RUN"
 Step 2 的 `confirm-privacy` 只接管這個剛建立的空目錄：目錄必須已經存在，打錯的路徑會被拒絕，不會另外建立。
 會建立目錄或寫進非 run 目錄的只有這六處：Step 1 的 `mkdir -p`；init（run 目錄與缺少的上層目錄、`frames/`、
 `hires/`）；confirm-privacy（只接管已存在的空目錄）；crops（run 內的 `crops/`）；result（寫到 `--out`，沒給時建立
-`.codex-pro/`；遇到不是 run 的目錄時用自己的暫存目錄）；SAM 環境安裝（`~/.codex-pro/sam-env`）。被呼叫的工具另有
-自己的寫入：codex-call refresh token 時寫 `~/.codex`、sips 的暫存檔、直譯器的快取。其他步驟遇到
+`.codex-pro/`；遇到不是 run 的目錄、或 run 的紀錄無法呈現時，用自己的暫存目錄）；SAM 環境安裝（`~/.codex-pro` 與
+`~/.codex-pro/sam-env`）。被呼叫的工具另有自己的寫入：codex-call refresh token 時寫 `~/.codex`、sips 的暫存檔、
+uv（SAM 環境安裝時）的快取與需要時安裝的受管理 Python、直譯器的快取。其他步驟遇到
 不是 run 的目錄就拒絕、不寫任何檔案。
 
 ## Step 2: 送出前的隱私提醒
