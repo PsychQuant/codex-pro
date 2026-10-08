@@ -1234,6 +1234,20 @@ PY
 )
 assert_contains "$k4" "leaks=[]" "paths after a colon or CJK text, file:// URLs and the home directory before punctuation are cut (K4)"
 assert_contains "$k4" "url=True" "while a web URL is still kept"
+# Background security review after e79ff81: a path that starts with '//', or right after a hyphen, is cut too.
+br5=$(HOME="$WORK/home" python3 -B - "$SCRIPTS" <<'PY'
+import sys
+sys.path.insert(0, sys.argv[1])
+import result_file
+cases = ["error: //Volumes/Client Data/scan.png", "x-/Volumes/Client Data/scan.png", "'//server/share/Client Data/scan.png'",
+         "smb://server/share/Client Data/scan.png", "afp://nas/Client Data/scan.png"]
+out = [result_file.sanitize(c) for c in cases]
+print("leaks=" + str([o for o in out if "Client Data" in o]) + " names=" + str(all("scan.png" in o for o in out)))
+print("url=" + str(result_file.sanitize("see https://a.b/c/d") == "see https://a.b/c/d"))
+PY
+)
+assert_contains "$br5" "leaks=[] names=True" "a path starting with // or right after a hyphen is cut (background review after e79ff81)"
+assert_contains "$br5" "url=True" "and a web URL is still kept"
 for login_msg in "$(grep -o '"Codex is not logged in[^"]*"' "$SCRIPTS/codex_errors.py")" "$(grep -o '"the Codex token store[^"]*"' "$SCRIPTS/codex_errors.py")"; do
   case "$login_msg" in
     *"~/"*|*"/."*) fail "the login check's messages carry no path ($login_msg)" ;;

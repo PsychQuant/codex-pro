@@ -67,10 +67,12 @@ def local_roots() -> list[tuple[str, str]]:
 # The skill's own fixed location, which tells the user where SAM goes. Only the place itself is kept:
 # anything below it is cut like any other path (#23 verify round 7, X2).
 OWN_PLACE = re.compile(r"~/\.codex-pro/sam-env(?![\w./-])")
-# A path starts at a root: '~/' or '$TMPDIR/' (any number of slashes after them), or a single '/' not
-# preceded by an ASCII letter, digit or one of '_.-/$~\'. A colon or a CJK character may come before it
-# (round 8, K4); a URL's '//' never starts one, since the first of its slashes is followed by another.
-PATH = re.compile(r"(?<![A-Za-z0-9_.\-/$~\\])(?:(?:~|\$TMPDIR)/+|/(?!/))(?:(?!://)[^\"\x00])*/")
+# A path starts at a root: '~/' or '$TMPDIR/', or '/' not preceded by an ASCII letter, digit or one of
+# '_./$~\', in each case with any number of slashes; a colon or a CJK character may come before it
+# (round 8, K4). Only the '//' of a URL, right after its ':', is not a root: a path that starts with '//'
+# or follows a hyphen is cut too, and after a colon a single '/' still starts one (background security
+# review after e79ff81).
+PATH = re.compile(r"(?<![A-Za-z0-9_./$~\\])(?:(?:~|\$TMPDIR)/+|(?<!:)/+|(?<=:)/(?!/))(?:(?!://)[^\"\x00])*/")
 
 
 def cut_paths(clause: str) -> str:
@@ -89,7 +91,9 @@ def sanitize(text: str) -> str:
     it split at '; ' (how the skill joins its own messages), is cut on its own."""
     text = text.replace("\r\n", "\n").replace("\r", "\n").replace("\t", " ")
     text = re.sub(r"[\x00-\x09\x0b-\x1f\x7f]", "", text)
-    text = re.sub(r"file://(?=/)", "", text)   # a file URL is a local path (round 8, K4)
+    # Only a web URL is kept: file://, smb://, afp:// and the like name local or shared folders, so they
+    # are cut like paths (round 8, K4; background review after e79ff81).
+    text = re.sub(r"(?<![A-Za-z0-9+.-])(?!https?://)[A-Za-z][A-Za-z0-9+.-]*://", "/", text)
     for root, name in local_roots():   # also before punctuation, which ends a path (round 8, K4)
         text = re.sub(re.escape(root) + r"(?=/|$|[\s'\",.;:)\]])", name, text, flags=re.MULTILINE)
     text = OWN_PLACE.sub("\x00", text)
