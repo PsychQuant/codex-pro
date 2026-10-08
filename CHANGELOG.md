@@ -36,31 +36,36 @@ Issue: [#23](https://github.com/PsychQuant/codex-pro/issues/23)
   自己的字句，只寫檔名；結果檔的路徑過濾只是後備，相對路徑無法從文字裡認出來。
 - 會建立目錄或寫進非 run 目錄的只有六處；`confirm-privacy` 要求 run 目錄已經存在。
 - 每一步寫下的紀錄都連同 SHA-256 登記在 run 目錄的 `ledger.json`；之後的步驟讀到內容不同、被刪掉或沒有登記的紀錄
-  就停在 `target_invalid`（例外只有尚未封存的那一輪 Claude 答案），Claude 的答案在封存後被改，下一個讀它的步驟就停下。
-  帳本也在 run 目錄裡，防的是誤改與事後的手動修改，不是能寫入 run 目錄的人。
+  就停在 `target_invalid`。可以存在而沒有登記的只有兩種：尚未封存的那一輪 Claude 答案，以及還沒記下請求之前的 profile。
+  Claude 的答案在封存後被改，下一個讀它的步驟就停下。帳本也在 run 目錄裡，防的是誤改與事後的手動修改，不是能寫入 run
+  目錄的人。
+- 登記與寫入各只有一個入口：每一步經同一個 `Step` 登記它自己寫的檔（含 codex-call、SAM 為它寫的那一個），中途停下或被
+  中斷時也一樣；帳本已經發現不符的紀錄不會被登記、重新登記或移除條目，帳本不見時不重建；`result` 不登記任何東西，也不把
+  結果檔寫進 run 目錄。所有寫入（含影格複本、裁切圖、封存檔）先寫暫存檔再以 `os.replace` 換上，名字上的 symlink、硬連結
+  與 FIFO 都會被換掉而不會被寫穿；run 自己的目錄是 symlink 時不寫進去；`--out` 是使用者的路徑，那裡是 symlink 或 FIFO
+  時改為拒絕。
 - 結果檔只用帳本核對過的紀錄產生，沒通過的只列名一次，frontmatter 記為 `target_invalid`（run 已因別的錯誤停下時保留
   那個錯誤）；frontmatter 每個欄位只寫自己的格式，否則寫 `invalid`；`seal_broken` 只有 true／false。核對過的紀錄仍無法
   呈現時，結果檔只寫固定內容與 run 自己的錯誤類別；result 自己失敗不取代 run 原本的錯誤。
-- 只有 codex-call 根本沒能啟動時才撤回這一輪的紀錄；啟動之後的任何事（含輸出無法解碼）都不撤回。`ask` 被中斷時
-  codex-call 跟著終止；回覆不是 UTF-8 時為 `parse_failed`。工具的輸出一律以 UTF-8 解碼，Big5、Shift-JIS 的 locale 下
+- 只有 codex-call 根本沒能啟動時才撤回這一輪的紀錄（連同為它登記的 profile）；啟動之後的任何事（含輸出無法解碼）都不
+  撤回。`ask` 在 codex-call 啟動之後被 SIGINT 或 SIGTERM 中斷時，codex-call 跟著終止，記為 `backend_error`（算作已送出）；
+  其他步驟被中斷時記為 `internal_error`，已寫出的檔照樣登記。回覆不是 UTF-8 時為 `parse_failed`。工具的輸出一律以 UTF-8 解碼，Big5、Shift-JIS 的 locale 下
   檔名含中日文的圖也量得到尺寸。
 - `--vocab` 可以是管線或程序替換（`--vocab <(...)`）；run 的紀錄仍只讀一般檔案。
-- 「已經做過」以帳本為準：封存、這一輪的請求、被拒的放大輪答案、已 init 的 run，檔案或它的帳本條目任一存在就算，
-  移開再放回不會讓一步重來。run 的錯誤與 `ask` 用的 profile 也登記；中途失敗的步驟照樣登記它已寫出的紀錄。
-- Claude 答案裡的文字是第五種外來文字，不進結果檔；推導出來的紀錄（比對結果、裁決）要連來源一起核對過才呈現。
-- `ask` 被 SIGINT 或 SIGTERM 中斷時 codex-call 跟著終止，記為 `backend_error`（算作已送出）；原生 bundle 的
-  preflight 失敗在登入檢查之前回報，跳過 `ask` 時結果檔從 `runtime_error.txt` 取錯誤類別。
+- 「已經做過」以帳本為準：隱私確認、封存、這一輪的請求、被拒的放大輪答案、init 的嘗試，檔案或它的帳本條目任一存在就算，
+  移開再放回不會讓一步重來。init 之後的步驟（`adjudicate` 除外）要求 init 完成。
+- 被拒絕而不取代 run 錯誤的指令列成四組的封閉清單：已經做過、還不能做或沒有事可做、Claude 的放大輪答案沒通過檢查、
+  指令沒有指到一步。
+- run 的錯誤若與帳本不符，或永遠解不開（init 嘗試記下之後的 init 錯誤、請求記下之後那一輪的錯誤），不會被其他步驟取代或
+  清除；用掉與否在寫下錯誤的當下判定、記在錯誤裡，所以送出前停下的錯誤，修好後重跑成功時照常清除。結果檔也會從紀錄推出
+  這類失敗。
+- 外來文字的封閉清單是六種（含 Claude 答案裡的文字與 Codex 的回覆），不進結果檔；推導出來的紀錄（比對結果、裁決）要連
+  來源一起核對過才呈現；訊息以位置稱呼使用者給的圖，`--run`、`--vocab`、`--out` 以角色稱呼。
+- 原生 bundle 的 preflight 失敗在登入檢查之前回報；沒有送過請求時，結果檔從 `runtime_error.txt` 取錯誤類別。
 - 結果檔的路徑過濾只是後備，它在反引號、全形標點等邊界上的殘留是接受的風險。
-- xval 只登記它這一步剛寫出的檔，中途停下時也一樣；帳本已經發現不符的紀錄不會被清除或重新登記（清除錯誤前先核對
-  `error.json`），帳本不見時不重建。所有寫入只寫一般檔案（FIFO、symlink 一律拒絕）。
-- 被拒絕而不取代 run 錯誤的指令只有兩類：已經做過，與還不能做（沒有比對結果、沒有放大計畫）。
-- 訊息以位置稱呼使用者給的圖，`--run`、`--vocab`、`--out` 以角色稱呼；外來文字的封閉清單是六種（加上 Codex 的回覆）。
-- 在 Claude Code 裡呼叫 `ask` 時 Bash 工具的 timeout 要設成 600000；它的上限等於預設的 `max_time`，`timeout` 類別出不來，
-  SIGKILL 時結果檔從請求紀錄推出 `backend_error`（#26 追蹤）。
-- 登記與寫入各只有一個入口：每一步經同一個 `Step` 登記它自己寫的檔（含 codex-call、SAM 為它寫的那一個），所有寫入
-  （含影格複本、裁切圖、封存檔）先寫暫存檔再以 `os.replace` 換上，硬連結與 symlink 都不會被寫穿。
-- init 的嘗試是紀錄，init 之後的步驟要求 init 完成；用掉的 run 或一輪的錯誤不會被取代或清除，結果檔也會從紀錄推出它；
-  `ask` 以外的步驟被中斷時記成 `internal_error`。不取代 run 錯誤的拒絕列成四組的封閉清單。
+- 在 Claude Code 裡呼叫 `ask` 時 Bash 工具的 timeout 要設成 600000；它的上限等於預設的 `max_time`，`timeout` 類別出不來。
+  harness 以 SIGKILL 結束時結果檔仍顯示這一輪失敗：沒有其他紀錄不符時從請求紀錄推出 `backend_error`，否則是
+  `target_invalid`（#26 追蹤）。
 - 結果檔的路徑過濾只保留 http、https 網址；`file://`、`smb://` 等其他網址與本機路徑一樣縮成最後一段。
 - 兩個模型一致不代表正確；準度要靠人工標準答案。
 - `tests/codex-plugin.sh` 的 plugin-creator validator 檢查在 Codex CLI 0.160.1 下必定失敗（#24），與本版無關。

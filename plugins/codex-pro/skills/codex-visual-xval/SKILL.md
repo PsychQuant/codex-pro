@@ -44,9 +44,9 @@ allowed-tools:
 4. `parse_failed`：Codex 的回覆不是符合 schema 的 JSON
 5. `runtime_unavailable`：找不到 `codex-call`、`python3` 比 3.10 舊、`codex-call` 根本沒能啟動，或寫不進 prompt 檔
 6. `internal_error`：腳本內部的意外例外。照樣寫結果檔；例外的文字只留在 run 目錄的 `error.json`，結果檔只說它在那裡。
-   `ask` 以外的步驟被 SIGINT 或 SIGTERM 中斷時也是這一類（它已寫出的檔照樣登記）
+   步驟被 SIGINT 或 SIGTERM 中斷時也是這一類（它已寫出的檔照樣登記），只有 `ask` 在 codex-call 啟動之後被中斷是 `backend_error`
 7. `backend_error`：`codex-call` 啟動之後失敗、沒有更具體的類別：後端回錯誤（例如 HTTP 500）、連線中斷、
-   沒說明原因（`HTTP 0`），或它自己的本機問題（讀不到 prompt、鎖檔權限）；`ask` 被 SIGINT 或 SIGTERM 中斷時也是這一類
+   沒說明原因（`HTTP 0`），或它自己的本機問題（讀不到 prompt、鎖檔權限）；`ask` 在 codex-call 啟動之後被 SIGINT 或 SIGTERM 中斷時也是這一類
    （codex-call 跟著終止，它已寫出的回覆照樣登記）。
    **`codex-call` 只要失敗，一律當成已送出**：錯誤訊息的字樣證明不了什麼都沒送出（後端的錯誤事件原文照印，
    收到回應之前的失敗都只印 `HTTP 0`），所以這一輪已經用掉，不重送。常見的送出前狀況改由 `xval.py` 在呼叫之前
@@ -128,15 +128,16 @@ python3 "$SKILL_DIR/scripts/xval.py" seal --run "$RUN"
 
 每一步寫下的紀錄都連同 SHA-256 登記在 `$RUN/ledger.json`（帳本）。之後的步驟讀到的紀錄若內容不同、被刪掉，
 或存在卻沒有登記，就停在 `target_invalid`，訊息照實寫出是哪一種。run 的錯誤（`error.json`）與 init 的嘗試
-（`init_attempt.json`）也登記，profile 在第一次請求記下時登記，用的是這一步讀到的那份內容。每一步只登記它這一步剛寫出的檔：
+（`init_attempt.json`）也登記，profile 在請求記下、codex-call 啟動之前登記，用的是這一步讀到的那份內容（codex-call 沒能啟動而撤回請求時，這筆登記也撤回）；Claude 的答案以封存記下的雜湊登記。每一步只登記它這一步剛寫出的檔：
 經 xval 的寫入入口寫出的紀錄，加上它執行的 codex-call、SAM 為它寫出的那一個檔（新寫或改寫時）；中途停下（失敗或被中斷）
 時也一樣，送出請求之前先登記一次。帳本已經發現不符的紀錄不會被登記、重新登記或移除條目，清除錯誤之前先核對
 `error.json`；帳本不見或讀不到時，不會寫一份新的蓋過去。xval 寫任何檔都先寫到同一目錄下的暫存檔再換上：名字上的
-symlink、硬連結或 FIFO 會被換掉，不會被寫穿到 run 外，本身是 symlink 的目錄也不寫進去（`--out` 是使用者自己的路徑，
-那裡是 symlink 或 FIFO 時改為拒絕）。例外只有兩種：尚未封存的那一輪 Claude 答案，以及第一次請求之前的
+symlink、硬連結或 FIFO 會被換掉，不會被寫穿到 run 外；run 目錄與它的 `frames/`、`hires/`、`crops/` 本身是 symlink 時
+不寫進去（`--out` 是使用者自己的路徑：那裡是 symlink 或 FIFO 時改為拒絕，它的上層目錄由使用者決定；結果檔不寫進 run 目錄，
+`result` 也不登記任何東西）。例外只有兩種：尚未封存的那一輪 Claude 答案，以及第一次請求之前的
 `profile.json`。不是紀錄的檔只有這些：`ledger.json` 本身、`.gitignore`、`errors.jsonl`、
 `claude_source.json`、`runtime.txt`、`runtime_error.txt`，以及 `frames/`、`hires/`、`crops/` 與 run 目錄裡以點開頭的檔案
-（Finder 的 `.DS_Store`、xval 自己的暫存檔）。「已經做過」（封存過、這一輪送過、放大輪答案被拒過、init 嘗試過）以檔案或它在帳本上
+（Finder 的 `.DS_Store`、xval 自己的暫存檔）。「已經做過」（隱私確認過、封存過、這一輪送過、放大輪答案被拒過、init 嘗試過）以檔案或它在帳本上
 的條目為準，任一存在就算；把檔案移開再放回不會讓一步重來。帳本也在 run 目錄裡：它防的是誤改與事後的手動修改，
 不是能寫入 run 目錄的人。
 
@@ -196,8 +197,9 @@ printf '%s\n' "$CODEX_CALL" > "$RUN/runtime.txt"
 python3 "$SKILL_DIR/scripts/xval.py" ask --run "$RUN" --round 1
 ```
 
-`xval.py ask` 依序：這一輪已經送過就拒絕（只記在 `errors.jsonl`，不取代 run 的錯誤）、放大輪已不採用就拒絕；
-確認隱私確認已記錄、Claude 的答案已封存且未被改動；`runtime_error.txt` 記有錯誤就以那個錯誤停下（在登入檢查之前，
+`xval.py ask` 依序：這一輪已經送過就拒絕、放大輪已不採用就拒絕（兩者只記在 `errors.jsonl`，不取代 run 的錯誤）；
+init 還沒嘗試就拒絕，沒完成就停在 init 的錯誤；放大輪另外在沒有比對結果、沒有計畫或計畫裡沒有題目時拒絕；
+確認隱私確認已記錄、Claude 的答案已封存且未被改動、這一輪的回覆檔不在那裡（不是 codex-call 寫的回覆會擋下請求）；`runtime_error.txt` 記有錯誤就以那個錯誤停下（在登入檢查之前，
 原生 bundle 的 preflight 失敗時不讀 OAuth）；確認 Codex 已登入（`oauth_invalid`）；第一輪另外確認詞彙表、
 影格與 run 的設定都和封存時相同，影格都在 run 的 frames 目錄內；放大輪另外確認放大計畫存在、裁切圖都在 run 的
 crops 目錄內，計畫、題目檔、裁切圖與比對結果都和 `crops` 寫下時相同；`$RUN/profile.json` 有效。任一不符就停下，
@@ -212,7 +214,8 @@ crops 目錄內，計畫、題目檔、裁切圖與比對結果都和 `crops` �
 已知限制（PsychQuant/codex-pro#26 追蹤）：在 Claude Code 裡呼叫 `ask` 時，Bash 工具的 timeout 要設成 600000
 （不設時 120 秒就被結束）。即使如此，它的上限 600 秒等於預設的 `max_time`，harness 會比 codex-call 先到期，所以
 `timeout` 這個類別出不來：harness 以 SIGTERM 結束時記成 `backend_error`；以 SIGKILL 結束時什麼都來不及記，但請求
-已經記下，結果檔會從請求紀錄推出這一輪的 `backend_error`。
+已經記下，結果檔仍會顯示這一輪失敗：沒有其他紀錄不符時從請求紀錄推出 `backend_error`，否則（例如 codex-call 之後
+才寫出、沒有登記的回覆）是 `target_invalid`。
 結果檔寫完之前本 task 未完成。
 
 ## Step 5: Handle exit code
@@ -220,7 +223,7 @@ crops 目錄內，計畫、題目檔、裁切圖與比對結果都和 `crops` �
 `xval.py` 任何一步以 exit 5 結束，代表這一步沒有完成；stdout 有 `error` 與 `detail`。兩種情況要分開：
 
 - **指令被拒**：只有下面四組，不得依性質相似類推：
-  - 這一步已經做過：同一輪再封、Codex 問過那一輪之後封存、放大輪答案被拒後再封、重新 init、同一輪再送、
+  - 這一步已經做過：再一次隱私確認、同一輪再封、Codex 問過那一輪之後封存、放大輪答案被拒後再封、重新 init、同一輪再送、
     放大輪答案被拒後送放大輪、放大輪答案封存或被拒後再做 crops。
   - 這一步還不能做或沒有事可做：init 之前的任何一步（`init`、`confirm-privacy`、`adjudicate`、`result` 除外）、
     Codex 還沒回答第一輪時的 compare、沒有比對結果時的 crops、需要比對結果卻沒有時的 sam、沒有比對結果或計畫裡
@@ -343,8 +346,9 @@ python3 "$SKILL_DIR/scripts/xval.py" result --run "$RUN"
 run 停在 Step 5 時也要跑這兩步：沒有比對結果時 `adjudicate` 照樣正常結束，`result` 讀 `$RUN/error.json`
 寫出失敗的結果檔。model、effort 與 profile 來源取自 `$RUN/profile.json`。同一步之後重跑成功時，它先前留下的
 錯誤會被清除，歷史留在 `$RUN/errors.jsonl`。被拒絕的指令（見 Step 5 的四組）只記進歷史，
-不會取代這個 run 原本的錯誤。用掉的 run 或一輪的錯誤（init 的錯誤、請求記下之後那一輪的錯誤）永遠解不開：之後別的步驟
-停下只記進歷史，不會取代它，也不會被清除；萬一它不見了，結果檔也會從紀錄推出這個失敗。回報使用者結果檔路徑、一致率與各裁決的數量。
+不會取代這個 run 原本的錯誤。用掉的 run 或一輪的錯誤（init 嘗試記下之後的 init 錯誤、請求記下之後那一輪的錯誤）
+永遠解不開：之後別的步驟停下只記進歷史，不會取代它，也不會被清除；萬一它不見了，結果檔也會從紀錄推出這個失敗。用掉與否在
+寫下錯誤的當下判定、記在錯誤裡（`used_up`），所以送出前停下的錯誤，修好後重跑那一輪成功時照常清除。回報使用者結果檔路徑、一致率與各裁決的數量。
 
 ## Result file structure（完整契約）
 
@@ -388,6 +392,6 @@ runtime 檢查的 detail、Python 例外的文字、Claude 答案裡的文字（
 來源）、SAM 的輸出（在 `sam.json`），以及 Codex 的回覆（在 `codex_round1.md`、`codex_zoom.md`；只有通過 schema 的
 數值進入紀錄）。它們只留在 run 目錄，結果檔寫出錯誤類別並說明保存在哪裡；詞彙表裡的名稱是使用者自己的輸入，照常
 出現。使用者給的圖以位置稱呼（第幾張），`--run`、`--vocab`、`--out` 以角色稱呼，不照抄使用者的檔名或目錄名。推導出來的紀錄要連來源一起核對過才呈現：比對結果的來源是輸入與兩邊答案，裁決
-的來源是所有紀錄。檔名只印 xval 自己的格式，其他寫成「不在預期之內的檔」。run 沒有自己的錯誤、而 runtime 解析
-記下了錯誤時（原生 bundle 跳過 `ask` 的情況），結果檔帶上那個錯誤類別。核對過的紀錄若仍無法呈現，結果檔只寫固定
+的來源是所有紀錄。檔名只印 xval 自己的格式，其他寫成「不在預期之內的檔」。run 沒有自己的錯誤、沒有送過請求（請求紀錄
+沒通過核對時不算沒送過），而 runtime 解析記下了錯誤時（原生 bundle 跳過 `ask` 的情況），結果檔帶上那個錯誤類別。核對過的紀錄若仍無法呈現，結果檔只寫固定
 內容與 run 自己的錯誤類別。路徑過濾只是後備，它在反引號、全形標點等邊界上的殘留是接受的風險。

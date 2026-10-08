@@ -61,7 +61,8 @@ def write_bytes(path: str, data: bytes, refuse_links: bool = False) -> None:
     (#23 verify round 12, H1). `refuse_links` is for the result file at --out, the user's own path: a link or
     anything but a regular file there is refused rather than replaced."""
     folder = os.path.dirname(os.path.abspath(path))
-    if os.path.islink(folder):
+    # the run's own directories only: --out's folder is the user's, reached as the user chose (round 13, J3)
+    if not refuse_links and os.path.islink(folder):
         raise Stop("target_invalid", f"{_where(folder)} is a symbolic link; nothing was written into it")
     if refuse_links and os.path.lexists(path) and (os.path.islink(path) or not os.path.isfile(path)):
         raise OSError(0, "not a regular file")
@@ -221,6 +222,20 @@ INPUTS = ("vocab.json", "frames.json", "meta.json", "frames/", "hires/")
 ANSWERS = ("claude.json", "seal.json", "codex.json")
 
 
+def requested(run: str) -> bool:
+    """Whether a request is recorded in the run: a withdrawn one leaves requests.json without it (round 13, J2)."""
+    requests = load(os.path.join(run, "requests.json"), {})
+    return isinstance(requests, dict) and any(isinstance(r, dict) and r.get("requested_at") for r in requests.values())
+
+
+def pending(run: str, name: str) -> bool:
+    """Whether a record of PENDING may still be without an entry: Claude's answers until their seal exists, the
+    profile until a request is recorded."""
+    if name == "profile.json":
+        return not requested(run)
+    return not os.path.exists(os.path.join(run, PENDING[name]))
+
+
 def ledger(run: str) -> dict:
     data = load(os.path.join(run, LEDGER), {})
     return {k: v for k, v in data.items() if isinstance(k, str) and isinstance(v, str)} if isinstance(data, dict) else {}
@@ -287,10 +302,10 @@ class Step:
     sends a request commits first, and every step commits as it ends, also when it fails or is interrupted. The
     two records that may exist without an entry are entered by `adopt`, and only while they have none."""
 
-    def __init__(self, run: str):
+    def __init__(self, run: str, enters: bool = True):
         global _written
-        self.run, self.outputs, self.pending = run, {}, {}
-        _written = []
+        self.run, self.outputs, self.pending, self.enters, self.adopted = run, {}, {}, enters, set()
+        _written = []   # `enters=False`: the result step, which writes outside the run and enters nothing (round 13, J1)
 
     def expect(self, name: str) -> None:
         """A file that a program this step runs (codex-call, SAM) writes: entered when new or changed since now."""
@@ -303,8 +318,20 @@ class Step:
             raise ValueError(f"{name} is not one of the records that may exist without an entry")
         self.pending[name] = digest
 
+    def release(self, name: str) -> None:
+        """Take back an entry this step adopted, as when the request the profile was entered for is withdrawn because
+        codex-call could not start: the profile is pending again (round 13, J2)."""
+        if name in self.adopted:
+            entries = ledger(self.run)
+            if entries.pop(name, None) is not None:
+                dump(os.path.join(self.run, LEDGER), entries)
+            self.adopted.discard(name)
+
     def commit(self) -> None:
         global _written
+        if not self.enters:
+            _written = []
+            return
         run = os.path.abspath(self.run)
         names = []
         for path in list(_written or []):
@@ -321,6 +348,7 @@ class Step:
         adopted = {n: d for n, d in adopted.items() if d}
         if names or adopted:
             enter(self.run, *names, *adopted, digests=adopted)
+        self.adopted |= set(adopted)
         _written = []
         self.outputs = {n: safe_digest(os.path.join(self.run, n)) for n in self.outputs}
         self.pending = {}
@@ -338,7 +366,7 @@ def differences(run: str, names: Any = None) -> list[tuple[str, str]]:
         if expected == actual:
             continue
         if expected is None:
-            if name in PENDING and not os.path.exists(os.path.join(run, PENDING[name])):
+            if name in PENDING and pending(run, name):
                 continue   # not a record yet: see PENDING
             found.append((name, "not entered"))
         else:
@@ -417,12 +445,13 @@ def initialised(run: str) -> None:
 ROUND_STEP = re.compile(r"ask --round (1|zoom)")
 
 
-def used_up(run: str, error: Any) -> bool:
-    """Whether an error can never be resolved: init's (a run is initialised once), or a round's raised after its
-    request was recorded (a round is asked once). Such an error is not replaced or cleared (round 12, G1)."""
-    step = error.get("step") if isinstance(error, dict) else None
+def uses_up(run: str, step: str) -> bool:
+    """Whether an error recorded now at `step` can never be resolved: init's once its attempt is recorded (a run
+    is initialised once), a round's once its request is recorded (a round is asked once). Decided when the error is
+    recorded and kept in it as `used_up`, never inferred later from the run's records: a request recorded after an
+    error from before it does not make that error used up (#23 verify round 12, G1; round 13, I1)."""
     if step == "init":
-        return True
+        return os.path.lexists(os.path.join(run, "init_attempt.json")) or "init_attempt.json" in ledger(run)
     match = ROUND_STEP.fullmatch(step) if isinstance(step, str) else None
     if not match:
         return False
@@ -435,10 +464,11 @@ def used_up(run: str, error: Any) -> bool:
 
 def keeps_error(run: str) -> bool:
     """Whether the run's error stays as it is when another step stops or completes: it does not match the ledger,
-    so it stays detected (round 11, E1), or it can never be resolved (round 12, G1)."""
+    so it stays detected (round 11, E1), or it was recorded as using up the run or its round (round 13, I1)."""
     if differences(run, ("error.json",)):
         return True
-    return used_up(run, load(os.path.join(run, "error.json")))
+    current = load(os.path.join(run, "error.json"))
+    return isinstance(current, dict) and current.get("used_up") is True
 
 
 def checked_inputs(run: str) -> None:

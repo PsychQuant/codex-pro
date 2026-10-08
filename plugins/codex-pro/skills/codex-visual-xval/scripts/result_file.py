@@ -224,11 +224,16 @@ def result(run: str, argv: list[str]) -> None:
             text, error = render(run, None)
         except Exception:
             text, error = last_resort(run)
-    emit(text, error, argv)
+    emit(text, error, argv, run if is_run_dir(run) else None)
 
 
-def emit(text: str, error: str | None, argv: list[str]) -> None:
+def emit(text: str, error: str | None, argv: list[str], run: str | None = None) -> None:
     out = option(argv, "--out")
+    if out and run:   # never written into the run, where it would take a record's place (round 13, J1)
+        here, folder = os.path.realpath(run), os.path.realpath(os.path.dirname(os.path.abspath(out)))
+        if os.path.commonpath([here, folder]) == here:
+            raise Stop("target_invalid", "the result file is not written into the run directory; give --out a path "
+                       "outside it")
     data = text.encode("utf-8", "replace")   # encoded before the file is opened: no empty file is left (A1)
     try:
         if not out:   # .codex-pro is created only for the default location (round 6, Q1)
@@ -284,7 +289,8 @@ def render(run: str, stopped: dict | None) -> tuple[str, str | None]:
         error = None
     if not error and not stopped and not found:   # what can never be resolved shows without its error (round 12, G1);
         error = derived_failure(run, entries, requests)   # a record that does not match is target_invalid first
-    asked = any(isinstance(r, dict) and r.get("requested_at") for r in requests.values())
+    # a request record that does not match may hold a request: not read as "none" (round 13, J5)
+    asked = "requests.json" in bad or any(isinstance(r, dict) and r.get("requested_at") for r in requests.values())
     if not error and not stopped and "error.json" not in bad and not asked:   # made no request (round 12, H3)
         error = runtime_failure(run)
 

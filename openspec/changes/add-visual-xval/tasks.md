@@ -407,3 +407,18 @@
 - [x] 17.6 真實後端端到端（第十二次）。
   - 驗證：紀錄寫進 e2e-checklist §F。
   - [after: 17.5]
+
+## 18. Verify 第十三輪修正：「用掉了沒有」在寫下錯誤的當下判定（#23 第十三輪 report 的 I1、I2、J1–J9）
+
+- [x] 18.1 規格與 design（design「第十三輪：『用掉了沒有』在寫下錯誤的當下判定」；Sealed Claude answers 的用掉判定、profile 隨請求登記、result 不登記、目錄規則的範圍、隱私確認一次、中斷保護）。
+  - 驗證：`spectra validate` 與 `spectra analyze` 無 warning。
+- [x] 18.2 錯誤的 `used_up` 欄位（含 Python 3.9 的路徑與帶輪次的 step）、profile 隨請求登記與撤回、codex-call 啟動後只剩中斷保護（I1、I2、J2、J6）。
+  - [after: 18.1]
+- [x] 18.3 其餘：result 不登記、`--out` 不進 run 目錄、目錄規則只限 run、隱私確認一次、未核對的請求紀錄、以封存的雜湊登記答案、放大輪已不採用的拒絕在前、原始碼掃描加寬、權限（J1、J3–J7、J9）。
+  - [after: 18.2]
+- [x] 18.4 文件：SKILL、CHANGELOG 0.9.0 的新舊條目整併、spec 情境（J8）。
+  - 驗證：`bash tests/run.sh` 只剩 #24。
+  - [after: 18.3]
+- [ ] 18.5 真實後端端到端（第十三次）。
+  - 驗證：紀錄寫進 e2e-checklist §F。
+  - [after: 18.4]

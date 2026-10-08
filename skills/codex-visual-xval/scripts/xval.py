@@ -44,6 +44,9 @@ def _older_python(argv):
     detail = "Python 3.10 or later is required; this is Python %s (%s)" % (found, os.path.basename(sys.executable))
     command = argv[0] if argv else ""
     run = argv[argv.index("--run") + 1] if "--run" in argv and argv.index("--run") + 1 < len(argv) else None
+    round_ = argv[argv.index("--round") + 1] if "--round" in argv and argv.index("--round") + 1 < len(argv) else None
+    step = ("ask --round %s" % round_ if command == "ask"   # named as on the main path (round 13, J6)
+            else "seal --zoom" if command == "seal" and "--zoom" in argv else command)
     if not run:
         print(__doc__, file=sys.stderr)
         sys.exit(64)
@@ -57,6 +60,9 @@ def _older_python(argv):
         try:
             with os.fdopen(fd, "wb") as fh:
                 fh.write(data)
+            mask = os.umask(0)
+            os.umask(mask)
+            os.chmod(tmp, 0o666 & ~mask)   # as the main path writes them (round 13, J6)
             os.replace(tmp, path)
         except BaseException:
             try:
@@ -96,18 +102,8 @@ def _older_python(argv):
         error_path = os.path.join(path, "error.json")
         if ledger_value.get("error.json") != digest(error_path):
             return True
-        current = read_json(error_path)
-        step = current.get("step") if isinstance(current, dict) else None
-        if step == "init":
-            return True
-        match = re.match(r"ask --round (1|zoom)$", step) if isinstance(step, str) else None
-        if not match:
-            return False
-        requests_path = os.path.join(path, "requests.json")
-        if ledger_value.get("requests.json") != digest(requests_path):
-            return True
-        asked = (read_json(requests_path) or {}).get(match.group(1))
-        return isinstance(asked, dict) and bool(asked.get("requested_at"))
+        current = read_json(error_path)   # recorded as using up the run or its round when written (round 13, I1)
+        return isinstance(current, dict) and current.get("used_up") is True
     def history(path, entry):   # appended by rewriting it whole; not a regular file: skipped (round 11, F1)
         target = os.path.join(path, "errors.jsonl")
         if os.path.lexists(target) and (os.path.islink(target) or not os.path.isfile(target)):
@@ -119,7 +115,7 @@ def _older_python(argv):
         put(target, old + (json.dumps(entry) + "\n").encode("utf-8"))
     if command != "result":
         if is_run(run):
-            entry = {"error": "runtime_unavailable", "detail": detail, "step": command, "source": "xval"}
+            entry = {"error": "runtime_unavailable", "detail": detail, "step": step, "source": "xval"}
             ledger_value = read_json(os.path.join(run, "ledger.json"))
             try:
                 if not keeps(run, ledger_value):
@@ -151,7 +147,9 @@ def _older_python(argv):
             return default
         # only what the ledger verifies, as on the main path (round 10, D9); the profile is pending before a request
         expected = entries.get(name)
-        if expected is None and not (name == "profile.json" and not os.path.exists(os.path.join(run, "requests.json"))):
+        asked = read_json(os.path.join(run, "requests.json"))   # pending until a request is recorded (round 13, J2)
+        requested = isinstance(asked, dict) and any(isinstance(r, dict) and r.get("requested_at") for r in asked.values())
+        if expected is None and not (name == "profile.json" and not requested):
             return default
         if expected is not None:
             try:
@@ -220,7 +218,7 @@ import media  # noqa: E402
 import result_file  # noqa: E402
 from run_files import (Stop, Step, INPUTS, adopt_run_dir, append_text, checked, checked_comparison,  # noqa: E402
                        checked_inputs, dump, failure, initialised, is_run_dir, keeps_error, ledger, ledger_usable,
-                       load, neutral_names, now_iso, remove, run_dir, scratch, write_bytes,
+                       load, neutral_names, now_iso, remove, run_dir, scratch, uses_up, write_bytes,
                        write_text)
 from codex_errors import classify, login_problem  # noqa: E402
 from zoom_round import (class_lines, crop_box, dispute_points, enlargement, position_pads, question,  # noqa: E402
@@ -344,6 +342,9 @@ def copy_frames(run: str, images: list[str]) -> dict:
 
 def confirm_privacy(run: str) -> None:
     adopt_run_dir(run)
+    if os.path.lexists(os.path.join(run, "privacy.json")) or "privacy.json" in ledger(run):
+        # given once, by record or entry: a removed confirmation stays detected (round 13, J4)
+        raise Stop("target_invalid", "the privacy reminder is already confirmed for this run", record=False)
     dump(os.path.join(run, "privacy.json"), {"confirmed_at": now_iso()})
     print(json.dumps({"ok": True}))
 
@@ -404,7 +405,8 @@ def seal_answers(run: str, zoom: bool, files: Step) -> None:
     import contextlib, io
     with contextlib.redirect_stdout(io.StringIO()):
         sealing.seal(answers, record)   # through the write entry (round 12, H1)
-    files.adopt(os.path.basename(answers))   # Claude's answers become a record as they are sealed (round 12, G3)
+    sealed = load(record, {})   # entered with the digest the seal recorded (round 13, J7)
+    files.adopt(os.path.basename(answers), sealed.get("sha256") if isinstance(sealed, dict) else None)
     print(json.dumps(load(record, {}), ensure_ascii=False))
 
 
@@ -534,7 +536,9 @@ def call_codex(run: str, prompt: str, images: list[str], tag: str, argv: list[st
         raise Stop("runtime_unavailable", f"cannot write the prompt file: {reason}; nothing was sent")
     record_request(run, rnd, requested_at=now_iso(), requested_epoch=datetime.datetime.now().timestamp())
     files.expect(os.path.basename(output))   # codex-call's reply: entered only if it writes it (round 12, G3)
-    files.commit()   # the prompt and the request are entered before anything is sent (round 12, G3)
+    if "profile.json" not in ledger(run):   # a record from the first request on, as it was read (F6; H6)
+        files.adopt("profile.json", profile_digest)
+    files.commit()   # the prompt, the request and the profile, before codex-call starts (round 12, G3; round 13, I2, J2)
     cmd = [path, "--output", output, "--model", settings["model"],
            "--effort", settings["effort"], "--max-time", str(settings["max_time"]),
            "--instructions", INSTRUCTIONS, "--prompt-file", prompt_file]
@@ -543,26 +547,24 @@ def call_codex(run: str, prompt: str, images: list[str], tag: str, argv: list[st
     try:   # only starting the process can fail before anything is sent (round 7, Y6)
         proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, encoding="utf-8", errors="replace")
     except (OSError, ValueError, TypeError) as exc:
-        withdraw_request(run, rnd)   # the profile was not used, so it stays pending (round 12, H6)
+        withdraw_request(run, rnd)
+        files.release("profile.json")   # the profile was not used, so it is pending again (round 12, H6; round 13, J2)
         raise Stop("runtime_unavailable", f"cannot run codex-call: {failure(exc)}; nothing was sent")
-    if "profile.json" not in ledger(run):   # a record from the first request on, as it was read (round 11, F6; H6)
-        files.adopt("profile.json", profile_digest)
-        files.commit()
-    # It started: from here on nothing withdraws the record. Its output is read only now, and bytes that
-    # are not UTF-8 are replaced rather than raised, since a decoding error here once withdrew a call
-    # that had already run (round 8, Z1). Foreground; the hard timeout is codex-call's.
-    def terminated(signum: int, frame: Any) -> None:   # SIGTERM takes the path SIGINT takes (round 10, C4)
-        raise KeyboardInterrupt
-    previous = signal.signal(signal.SIGTERM, terminated)
+    # It started: from here on nothing withdraws the record, and nothing runs outside this guard, so an interrupt
+    # always stops codex-call too (round 9, B3; round 13, I2). SIGTERM takes the path SIGINT takes (main). Its
+    # output is read only now, and bytes that are not UTF-8 are replaced rather than raised, since a decoding error
+    # here once withdrew a call that had already run (round 8, Z1). Foreground; the hard timeout is codex-call's.
     try:
         _, stderr = proc.communicate()
-    except BaseException:   # interrupted: codex-call stops too, as it did under subprocess.run (round 9, B3)
+    except KeyboardInterrupt:
         proc.kill()
         proc.wait()   # what it wrote before it stopped is entered as the step ends (round 10, C4; round 12, G3)
         raise Stop("backend_error", "interrupted: codex-call was stopped; the request is counted as sent, so this "
                    "round is used up")
-    finally:
-        signal.signal(signal.SIGTERM, previous)
+    except BaseException:
+        proc.kill()
+        proc.wait()
+        raise
     if proc.returncode != 0:   # counted as sent, whatever the message says (round 5, V1)
         error, detail = classify(stderr, proc.returncode)   # codex-call's own text (round 9)
         raise Stop(error, f"{detail}; the request is counted as sent, so this round is used up", source="codex-call")
@@ -615,8 +617,12 @@ def before_request(run: str, rnd: str) -> None:
     if earlier:   # first: a done round is refused as done, not as whatever else has changed since (T6)
         raise Stop("target_invalid", f"round {rnd} was already requested at {earlier.get('requested_at')}; "
                    "a recorded answer is not replaced and requests are not retried", record=False)
-    initialised(run)   # round 12, G2
     entries = ledger(run)
+    if rnd == "zoom" and (load(os.path.join(run, "zoom_rejected.json")) or "zoom_rejected.json" in entries):
+        # done: refused before any other check (T6; round 13, J9)
+        raise Stop("target_invalid", "the zoom round is not used, because Claude's zoom answers failed the checks; "
+                   "nothing was sent", record=False)
+    initialised(run)   # round 12, G2
     if rnd == "zoom":   # what cannot be done yet keeps the run's own error (round 11, F8)
         for name, step in (("comparison.json", "compare"), ("zoom_plan.json", "crops")):
             if not os.path.exists(os.path.join(run, name)) and name not in entries:
@@ -625,9 +631,6 @@ def before_request(run: str, rnd: str) -> None:
         checked(run, ("zoom_plan.json",), then="nothing was sent")
         if not load(os.path.join(run, "zoom_plan.json"), {}):   # nothing to ask (round 12, H4)
             raise Stop("target_invalid", "the zoom plan holds no question; nothing was sent", record=False)
-    if rnd == "zoom" and (load(os.path.join(run, "zoom_rejected.json")) or "zoom_rejected.json" in entries):
-        raise Stop("target_invalid", "the zoom round is not used, because Claude's zoom answers failed the checks; "
-                   "nothing was sent", record=False)
     if not load(os.path.join(run, "privacy.json")):
         raise Stop("target_invalid", "the privacy reminder has not been confirmed for this run "
                    "(run `confirm-privacy` after the user agrees); nothing was sent")
@@ -942,7 +945,7 @@ def main(argv: list[str]) -> None:
         sys.exit(64)
     step = (f"ask --round {option(argv, '--round')}" if command == "ask"
             else "seal --zoom" if command == "seal" and "--zoom" in argv else command)
-    files = Step(run)   # the one entry to the ledger for this step (round 12, G3)
+    files = Step(run, enters=command != "result")   # the one entry to the ledger (round 12, G3); result: none (J1)
     def terminated(signum: int, frame: Any) -> None:   # every step stops on SIGTERM as on SIGINT (round 12, G2)
         raise KeyboardInterrupt
     signal.signal(signal.SIGTERM, terminated)
@@ -1022,6 +1025,8 @@ def stop_run(run: str, command: str, error: str, detail: str, record_error: bool
             if keeps_error(run) or not ledger_usable(run, "error.json"):
                 record["kept_run_error"] = True
             else:
+                if uses_up(run, command):   # decided now, and kept in the error (round 13, I1)
+                    record["used_up"] = True
                 try:   # the run's error is a record like the others (round 10, C2)
                     files = files or Step(run)   # before the write, which it notes
                     dump(os.path.join(run, "error.json"), record)

@@ -111,7 +111,11 @@ checks = {
     "four_refusal_groups": "只有下面四組，不得依性質相似類推" in body and "指令沒有指到一步" in body,
     "used_up_errors": "永遠解不開" in body and "從紀錄推出" in body,
     "bash_timeout_setting": "600000" in body and "SIGKILL" in body,
-    "interrupt_internal": "以外的步驟被 SIGINT 或 SIGTERM 中斷時也是這一類" in body,
+    "interrupt_internal": "步驟被 SIGINT 或 SIGTERM 中斷時也是這一類" in body and "codex-call 啟動之後被中斷是 `backend_error`" in body,
+    # round 13 (I1, J1, J3, J4): used up when recorded; result writes nothing into the run; privacy confirmed once
+    "used_up_when_recorded": "寫下錯誤的當下判定" in body and "`used_up`" in body,
+    "result_outside_run": "結果檔不寫進 run 目錄" in body,
+    "privacy_once": "再一次隱私確認" in body,
     "track_point": "track_point: tip" in body,
     "reencoded_copies": "重新編碼" in body,
     "resend_rule": "同一個 run 可以再送" in body,
@@ -2715,6 +2719,7 @@ for name in ("xval.py", "result_file.py", "media.py", "seal.py"):
         src = head + rest.split("if sys.version_info < (3, 10):", 1)[1]
     found += len(re.findall(r"(?<![\w.])enter\(|enter_written\(", src))
     found += len(re.findall(r"open\([^)]*['\"](?:w|a|wb|ab|x)['\"]", src))
+    found += len(re.findall(r"os\.(?:replace|rename|link|symlink)\(|shutil\.|\.write_(?:text|bytes)\(|os\.write\(", src))   # J9
 print(found)
 PY
 )" "no step enters or opens a file for writing outside the two entries (G3, H1)"
@@ -2838,13 +2843,113 @@ except SystemExit:
     pass
 PY
 assert_contains "$(cat "$WORK/r12t/errors.jsonl")" "nothing was sent" "codex-call that cannot start sends nothing"
+result9 "$WORK/r12t"
+refute_contains "$(cat "$WORK/r12t_result.md")" "not in the run's ledger" "a withdrawn request leaves the profile pending, not unentered (J2)"
 edit_json "$WORK/r12t/profile.json" 'd["model"] = "gpt-other"'
 ask_with "$WORK/codex_reply.md" "$WORK/r12t" 1
 assert_eq "0" "$RUN_STATUS" "a request withdrawn because codex-call could not start leaves the profile unentered (H6)"
+assert_no_file "$WORK/r12t/error.json" "and the error from before the request is cleared when the round completes (I1)"
 rm -rf "$WORK/r12u"; xval init --run "$WORK/r12u" --vocab "$WORK/vocab.json" "$WORK/nope.png" "$WORK/nope.png"
 assert_contains "$RUN_OUT" "images 1, 2 of 2" "the same file given twice is named by both positions (H8)"
 rm -rf "$WORK/r12v"; printf 'not an image' > "$WORK/e"; xval init --run "$WORK/r12v" --vocab "$WORK/vocab.json" "$WORK/e"
 refute_contains "$RUN_OUT" "image 1bP" "a file name that is a common substring does not garble the message (H8)"
+
+# Round 13 (I1): whether an error uses up the run or a round is decided when it is recorded, not later.
+rm -rf "$WORK/r13a"; SEQ= new_run "$WORK/r13a"
+RUN_OUT=$(HOME="$WORK/home" CFFIXED_USER_HOME="$WORK/nologin" MOCK_REPLY="$WORK/codex_reply.md" MOCK_LOG="$WORK/mock.log" \
+  MOCK_PROMPTS="$WORK/prompts.txt" PATH="$WORK/stubbin:$PATH" python3 "$SCRIPTS/xval.py" ask --run "$WORK/r13a" --round 1 2>&1)
+assert_contains "$RUN_OUT" '"error": "oauth_invalid"' "a round asked before logging in stops before sending"
+ask_with "$WORK/codex_reply.md" "$WORK/r13a" 1
+assert_eq "0" "$RUN_STATUS" "after logging in, the round is sent"
+assert_no_file "$WORK/r13a/error.json" "and the error from before the request is cleared (I1)"
+rm -rf "$WORK/r13b"; SEQ= new_run "$WORK/r13b"
+RUN_OUT=$(HOME="$WORK/home" CFFIXED_USER_HOME="$WORK/nologin" MOCK_REPLY="$WORK/codex_reply.md" MOCK_LOG="$WORK/mock.log" \
+  MOCK_PROMPTS="$WORK/prompts.txt" PATH="$WORK/stubbin:$PATH" python3 "$SCRIPTS/xval.py" ask --run "$WORK/r13b" --round 1 2>&1)
+RUN_OUT=$(HOME="$WORK/home" MOCK_STDERR="error: HTTP 429: too many requests" MOCK_STATUS=1 MOCK_LOG="$WORK/mock.log" \
+  MOCK_PROMPTS="$WORK/prompts.txt" PATH="$WORK/stubbin:$PATH" python3 "$SCRIPTS/xval.py" ask --run "$WORK/r13b" --round 1 2>&1)
+assert_eq "rate_limit" "$(json_get "$(cat "$WORK/r13b/error.json")" 'd["error"]')" \
+  "a real failure after sending replaces an error from before the request (I1)"
+assert_eq "True" "$(json_get "$(cat "$WORK/r13b/error.json")" 'd.get("used_up")')" "and is recorded as using up the round"
+if [ -x "$OLDPY" ] && "$OLDPY" -c 'import sys; sys.exit(0 if sys.version_info < (3, 10) else 1)' 2>/dev/null; then
+  rm -rf "$WORK/r13c"; mkdir -p "$WORK/r13c"; xval confirm-privacy --run "$WORK/r13c"
+  ( cd "$WORK" && HOME="$WORK/home" "$OLDPY" "$SCRIPTS/xval.py" init --run "$WORK/r13c" --vocab "$WORK/vocab.json" "$WORK"/imgs/*.png >/dev/null 2>&1 )
+  xval init --run "$WORK/r13c" --vocab "$WORK/vocab.json" "$WORK"/imgs/*.png
+  assert_no_file "$WORK/r13c/error.json" "an init error with no init attempt does not use up the run (I1)"
+  rm -rf "$WORK/r13g"; SEQ= new_run "$WORK/r13g"
+  ( cd "$WORK" && HOME="$WORK/home" "$OLDPY" "$SCRIPTS/xval.py" ask --run "$WORK/r13g" --round 1 >/dev/null 2>&1 )
+  assert_eq "ask --round 1" "$(json_get "$(cat "$WORK/r13g/error.json")" 'd["step"]')" "an old Python names the step with its round (J6)"
+else
+  skip "an init error with no init attempt does not use up the run" "no Python older than 3.10 at $OLDPY"
+  skip "an old Python names the step with its round" "no Python older than 3.10 at $OLDPY"
+fi
+
+# Round 13 (I2, J2): the profile is entered with the request, before codex-call starts; after it starts, an interrupt
+# stops it and the round is backend_error.
+rm -rf "$WORK/r13h"; SEQ= new_run "$WORK/r13h"
+assert_eq "entered killed backend_error" "$(printf '%s\n' "$(HOME="$WORK/home" python3 -B - "$WORK/r13h" "$SCRIPTS" "$WORK/stubbin/codex-call" <<'PY' 2>/dev/null
+import json, os, sys
+run, scripts, stub = sys.argv[1:4]; sys.path.insert(0, scripts)
+import xval, run_files
+seen = {}
+class Proc:
+    killed = False
+    def communicate(self):
+        raise KeyboardInterrupt
+    def kill(self):
+        Proc.killed = True
+    def wait(self):
+        pass
+def start(*a, **k):
+    seen["profile"] = "profile.json" in run_files.ledger(run)
+    return Proc()
+xval.runtime = lambda r: stub
+xval.subprocess.Popen = start
+try:   # main() prints its own answer first; the last line is this probe's
+    xval.main(["ask", "--run", run, "--round", "1"])
+except SystemExit:
+    pass
+error = json.load(open(os.path.join(run, "error.json"))).get("error")
+print(("entered" if seen.get("profile") else "pending"), ("killed" if Proc.killed else "running"), error)
+PY
+)" | tail -1)" "the profile is entered before codex-call starts, and an interrupt after it starts stops it (I2, J2)"
+
+# Round 13 (J1): the result step enters nothing and writes nothing into the run.
+rm -rf "$WORK/r13d"; SEQ= new_run "$WORK/r13d"
+RUN_OUT=$(HOME="$WORK/home" MOCK_STDERR="error: HTTP 429: too many requests" MOCK_STATUS=1 MOCK_LOG="$WORK/mock.log" \
+  MOCK_PROMPTS="$WORK/prompts.txt" PATH="$WORK/stubbin:$PATH" python3 "$SCRIPTS/xval.py" ask --run "$WORK/r13d" --round 1 2>&1)
+cp "$WORK/r13d/requests.json" "$WORK/r13d_requests.json"
+( cd "$WORK/project" && python3 "$SCRIPTS/xval.py" result --run "$WORK/r13d" --out "$WORK/r13d/requests.json" >/dev/null 2>&1 )
+assert_eq "same" "$(cmp -s "$WORK/r13d_requests.json" "$WORK/r13d/requests.json" && echo same || echo changed)" \
+  "the result file is not written over a record in the run (J1)"
+ask_with "$WORK/codex_reply.md" "$WORK/r13d" 1
+assert_contains "$RUN_OUT" "already requested" "so a used-up round cannot be sent again (J1)"
+rm -rf "$WORK/nonrun13"; mkdir -p "$WORK/nonrun13"; printf 'x\n' > "$WORK/nonrun13/README.md"
+( cd "$WORK/project" && python3 "$SCRIPTS/xval.py" result --run "$WORK/nonrun13" --out "$WORK/nonrun13/meta.json" >/dev/null 2>&1 )
+assert_no_file "$WORK/nonrun13/ledger.json" "result writes no ledger into a directory that is not a run (J1)"
+
+# Round 13 (J3): only the run's own directories must not be symbolic links; --out's folder is the user's.
+rm -rf "$WORK/r13realdir" "$WORK/r13linkdir"; mkdir -p "$WORK/r13realdir"; ln -s "$WORK/r13realdir" "$WORK/r13linkdir"
+( cd "$WORK/project" && python3 "$SCRIPTS/xval.py" result --run "$WORK/run6w" --out "$WORK/r13linkdir/r.md" >/dev/null 2>&1 )
+assert_file "$WORK/r13realdir/r.md" "a result file goes into a --out folder reached through a symbolic link (J3)"
+
+# Round 13 (J4): the privacy confirmation is given once.
+rm -rf "$WORK/r13e"; SEQ= new_run "$WORK/r13e"; ask_with "$WORK/codex_reply.md" "$WORK/r13e" 1
+rm -f "$WORK/r13e/privacy.json"; xval confirm-privacy --run "$WORK/r13e"
+assert_contains "$RUN_OUT" "already confirmed" "a second privacy confirmation is refused (J4)"
+assert_contains "$(ledger_changed "$WORK/r13e")" "privacy.json" "so a removed confirmation stays detected"
+
+# Round 13 (J5): a request record that does not match is not read as "no request".
+rm -rf "$WORK/r13f"; SEQ= new_run "$WORK/r13f"; ask_with "$WORK/codex_reply.md" "$WORK/r13f" 1
+edit_json "$WORK/r13f/requests.json" 'd["note"] = 1'; printf 'package_corruption\nerror=x\n' > "$WORK/r13f/runtime_error.txt"
+result9 "$WORK/r13f"
+assert_eq "target_invalid" "$(fm "$WORK/r13f_result.md" error)" "an unverified request record does not let the runtime error in (J5)"
+
+# Round 13 (J9): a zoom round already dropped is refused as done before anything else is checked.
+rm -rf "$WORK/r13i"; cp -R "$WORK/run6w" "$WORK/r13i"; rm -f "$WORK/r13i/zoom_claude.json"
+xval crops --run "$WORK/r13i"; xval seal --run "$WORK/r13i" --zoom
+edit_json "$WORK/r13i/zoom_plan.json" 'd["x"] = {}'
+ask_with "$WORK/zoom_reply.md" "$WORK/r13i" zoom
+assert_contains "$RUN_OUT" "the zoom round is not used" "a dropped zoom round is refused as done first (J9)"
 
 # Round 6 (Q1): the steps that write into a directory are a closed list.
 rm -rf "$WORK/typo"
