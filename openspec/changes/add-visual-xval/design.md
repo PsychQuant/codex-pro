@@ -212,17 +212,17 @@ Claude 的逐格答案先寫到 run 目錄 `.codex-pro/visual-xval-run-<timestam
   5. `sam_env.sh install` 建立 `~/.codex-pro/sam-env`。
 
   其他步驟遇到不是 run 的目錄就拒絕，不寫任何檔案。
-- **登入檢查看 codex-call 讀的那一份**（Q4）。codex-call 讀帳號本身家目錄的 `~/.codex/auth.json`，不看 `$HOME`；檢查原本跟著 `$HOME`，兩者可能不是同一個檔。refresh token 失效（久未使用）時檢查會通過、codex-call 在 refresh 時失敗，這一輪會用掉，圖片卻沒有送出：只寫進文件，請使用者重新登入、另開一個 run（Q5，使用者選擇，2026-10-07）。只看 access token 的到期時間分不出 refresh 會不會成功，擋下來會連 refresh 會成功的正常情況一起擋。
+- **登入檢查看 codex-call 讀的那一份**（Q4；第七輪改照 Foundation 的規則，見第七輪的段落）。codex-call 讀帳號本身家目錄的 `~/.codex/auth.json`，不看 `$HOME`；檢查原本跟著 `$HOME`，兩者可能不是同一個檔。refresh token 失效（久未使用）時檢查會通過、codex-call 在 refresh 時失敗，這一輪會用掉，圖片卻沒有送出：只寫進文件，請使用者重新登入、另開一個 run（Q5，使用者選擇，2026-10-07）。只看 access token 的到期時間分不出 refresh 會不會成功，擋下來會連 refresh 會成功的正常情況一起擋。
 - **送出前要就緒的東西，在記錄請求之前寫好**（Q6）。prompt 檔先寫，再記錄請求、啟動 codex-call；寫不進去就停在 `runtime_unavailable`，什麼都沒送出。
 - **`backend_error` 的意思是「codex-call 啟動之後失敗」**（Q3）。封閉列舉取消後，codex-call 自己的本機失敗（讀不到 prompt、鎖檔權限）也落在這一類；算作已送出是對的，但規格原本把它定義成「後端或連線出錯」，SKILL 也回報「Codex 後端出錯」。定義改成「codex-call 啟動之後失敗、沒有更具體的類別，算作已送出」。
-- **解不開的圖靠檔案結構判斷**（Q13）。sips 帶 `--matchTo` 時，IDAT 不是壓縮資料的 PNG 也回 exit 0，產出全黑的圖；截斷的 PNG、JPEG 則安靜地解出一部分。兩個模型在空白圖上的答案一致，一致率虛高。所以 init 在交給 sips 之前先核對檔案結構：PNG 每個 chunk 的 CRC、壓縮資料完整且長度不少於 IHDR 推算的值（Apple 的 CgBI PNG 是 raw deflate）；JPEG 在掃描資料之後要有 end-of-image；GIF 要有結尾位元組；WebP 的長度欄位不超過檔案。看不出來的是結構完整、但壓縮資料本身壞掉的 JPEG、GIF、WebP。這個檢查本身不能成為解壓炸彈（背景安全審查）：一次最多解壓 1 MB、只數到 IHDR 承諾的長度、不呼叫會一次解完剩餘資料的 `flush()`；IHDR 的寬高是傳送者寫的，所以超過 2.5 億像素的圖直接拒收，其他格式則以 `sips -g` 只讀標頭取得的尺寸，在 sips 解碼像素之前核對。
-- **上游 #89 改成要求 exit status**（Q11）。#89 原本要 codex-call 在訊息裡多寫送出的位元組數，但第五輪已經決定字樣不可信。改為要求「主請求一個位元組都沒送出」時用專屬的 exit status，後端的文字偽造不了；上游做到之後，xval 才把那個 exit status 判為沒送出。使用者選擇（2026-10-07）。
+- **解不開的圖靠檔案結構判斷**（Q13）。sips 帶 `--matchTo` 時，IDAT 不是壓縮資料的 PNG 也回 exit 0，產出全黑的圖；截斷的 PNG、JPEG 則安靜地解出一部分。兩個模型在空白圖上的答案一致，一致率虛高。所以 init 在交給 sips 之前先核對檔案結構：PNG 每個 chunk 的 CRC、壓縮資料完整且長度不少於 IHDR 推算的值（Apple 的 CgBI PNG 是 raw deflate；第七輪改為只看關鍵 chunk、並核對串流結尾，見第七輪的段落）；JPEG 在掃描資料之後要有 end-of-image；GIF 要有結尾位元組；WebP 的長度欄位不超過檔案。看不出來的是結構完整、但壓縮資料本身壞掉的 JPEG、GIF、WebP。這個檢查本身不能成為解壓炸彈（背景安全審查）：一次最多解壓 1 MB、只數到 IHDR 承諾的長度、不呼叫會一次解完剩餘資料的 `flush()`；IHDR 的寬高是傳送者寫的，所以超過 2.5 億像素的圖直接拒收，其他格式則以 `sips -g` 只讀標頭取得的尺寸，在 sips 解碼像素之前核對。
+- **上游 #89 改成要求 exit status**（Q11；第七輪收窄成「body 一個位元組都沒送出」，見第七輪的段落）。#89 原本要 codex-call 在訊息裡多寫送出的位元組數，但第五輪已經決定字樣不可信。改為要求「主請求一個位元組都沒送出」時用專屬的 exit status，後端的文字偽造不了；上游做到之後，xval 才把那個 exit status 判為沒送出。使用者選擇（2026-10-07）。
 
 ### 第七輪：檢查要做到文件說的程度
 
 第七輪的 MEDIUM 只剩兩組，都是「文件說的比程式做的多」。
 
-- **PNG 的壓縮串流要真的結束**（X1）。第六輪只確認解出的資料量夠，去掉 zlib 結尾的 Adler-32 照樣接受。改為解壓到串流結束並核對它的 checksum；超出 IHDR 承諾的資料最多再讀 1 MB，超過就拒收，所以仍然不是解壓炸彈。使用者選擇（2026-10-08）：讓程式做到文件說的程度，而不是把文件改小。同時只有關鍵 chunk（IHDR、PLTE、IDAT、IEND）的 CRC 不符才拒收，輔助 chunk 反正會被清掉；位元深度不合法也拒收，否則 IHDR 推算的長度可以放大約 16 倍（Y8）。
+- **PNG 的壓縮串流要真的結束**（X1）。第六輪只確認解出的資料量夠，去掉 zlib 結尾的 Adler-32 照樣接受。改為解壓到串流結束並核對它的 checksum；超出 IHDR 承諾的資料最多再讀 1 MB（第八輪起讀到剛好 1 MB 就停），超過就拒收，所以仍然不是解壓炸彈。使用者選擇（2026-10-08）：讓程式做到文件說的程度，而不是把文件改小。同時只有關鍵 chunk（IHDR、PLTE、IDAT、IEND）的 CRC 不符才拒收，輔助 chunk 反正會被清掉；位元深度不合法也拒收，否則 IHDR 推算的長度可以放大約 16 倍（Y8）。
 - **只保留 SAM 環境的固定位置**（X2）。第六輪保留整個 `~/.codex-pro/` 前綴，工作目錄是家目錄時，run 目錄本身就在它底下，目錄名照樣進結果檔。改為只保留完整的 `~/.codex-pro/sam-env`，後面再接路徑就照常縮短。
 - **路徑的邊界**（Y1）。替換家目錄時要求後面接 `/`，否則 `/Users/<user>n/…` 會變成 `~n/…` 而整串漏過。路徑不再停在單引號、括號：目錄名常有「Client (2024)」「Jane's」。路徑一路到最後一個 `/`，但不跨過雙引號、換行、`; ` 分隔與網址，所以 xval 自己的訊息與網址不會被吃掉。登入檢查的訊息不再帶路徑，只寫 `auth.json`。
 - **結果檔永遠寫得出來**（Y3）。紀錄型別不對時當成沒有，不再崩潰；result 自己失敗只記進錯誤歷史，不取代 run 原本的錯誤；不是 run 的目錄裡的 `error.json` 也不讀；雜湊只讀 run 之內的檔，指到 run 以外的路徑記成「outside」，不去打開它。
@@ -230,6 +230,13 @@ Claude 的逐格答案先寫到 run 目錄 `.codex-pro/visual-xval-run-<timestam
 - **送出邊界與登入檢查**（Y6、Y7）。`subprocess.run` 在啟動前丟出的任何例外都撤回紀錄；profile 的模型與 effort 不收控制字元。登入檢查照 Foundation 的規則找家目錄：`CFFIXED_USER_HOME` 有設、而且不是 set-id 程式時用它，否則用帳號家目錄。測試因此改設 `CFFIXED_USER_HOME`，正式程式碼不再有測試專用的入口。
 - **寫入目錄的清單補全**（Y5）。第六輪的清單漏了 SKILL Step 1 自己的 `mkdir`、init 建立的上層目錄、result 的暫存目錄，也沒有說被呼叫的工具（codex-call 的 token 檔、sips 的暫存檔、直譯器的快取）不在清單內。補上這些，並把工具的寫入另外點名。
 - **#89 的說法收窄**（Y10）。`countOfBytesSent` 只計 request body，header 可能已經送出；對 xval 而言，圖片在 body 裡，所以要求與 CHANGELOG 都改成「body（圖片）一個位元組都沒送出」。
+
+### 第八輪：送出邊界以「程式有沒有啟動」為準，結果檔核對每一份紀錄
+
+- **送出邊界**（Z1）。第七輪為了 Y6 把 `except` 放寬到 ValueError，但 `subprocess.run(..., text=True)` 要等 codex-call 結束才解碼輸出，解碼失敗的 UnicodeDecodeError 正是 ValueError，於是已經跑完的呼叫被撤回紀錄、還說沒有送出。這是第七輪修法造成的回歸。改為：只有建立程序（`Popen`）時的例外撤回紀錄；讀取輸出在那之後，輸出一律以 UTF-8 解碼、無法解碼的位元組以替代字元表示，不會再丟例外。`codex-call --help` 的探測也一樣，順帶修掉 Big5、SJIS locale 下探測本身就失敗的既有問題。
+- **結果檔不換掉 run 的錯誤**（Z2、K1）。結果檔的例外退路改為帶著 run 自己的錯誤寫出，`seal_broken` 寫 unknown；寫結果檔本身失敗時是 `target_invalid`，只記進錯誤歷史，3.9 與 3.10 以上一致；讀紀錄只讀一般檔案，FIFO 不會讓 result 卡住。
+- **每一份紀錄都要有它的雜湊，雜湊也要有它的紀錄**（Z3、Z4）。comparison 與 adjudication 改成對稱：紀錄在、雜湊不在，或雜湊在、紀錄不在，都算被改過。Codex 兩輪的答案檔與原始回覆，也與 `ask` 記下的雜湊核對，改過就寫進 frontmatter；原本只有 Claude 的答案在 frontmatter 有 `seal_broken`。
+- **寫入清單補全**（K2）。`sam_env.sh install` 建立 `~/.codex-pro`，uv 寫自己的快取、需要時安裝一份受管理的 Python；result 在紀錄無法呈現時也用暫存目錄。
 
 ### 放大輪不採用不是 run 的錯誤
 

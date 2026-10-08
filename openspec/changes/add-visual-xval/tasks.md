@@ -322,3 +322,20 @@
 - [x] 12.6 真實後端端到端（第七次）。
   - 驗證：紀錄寫進 e2e-checklist §F。
   - [after: 12.5]
+
+## 13. Verify 第八輪修正（#23 第八輪 report 的 Z1–Z4、K1–K10）
+
+- [x] 13.1 規格與 design 依第八輪更新（design「第八輪：送出邊界以「程式有沒有啟動」為準，結果檔核對每一份紀錄」；Blind Codex judgment 的送出邊界與 CFFIXED_USER_HOME、Structured result file 的紀錄核對、Privacy reminder before sending images 的寫入清單）。
+  - 驗證：`spectra validate` 與 `spectra analyze` 無 warning。
+- [ ] 13.2 送出邊界：只有建立程序的例外撤回紀錄、輸出以 UTF-8 取代解碼；CFFIXED_USER_HOME 的空值（Z1、K7）。
+  - [after: 13.1]
+- [ ] 13.3 結果檔：退路保留 run 的錯誤、寫入失敗的類別、只讀一般檔案、紀錄與雜湊對稱、Codex 答案與原始回覆的核對、frontmatter 的值、措辭（Z2、Z3、Z4、K1、K5、K10）。
+  - [after: 13.2]
+- [ ] 13.4 路徑過濾、3.9 路徑、eXIf、PNG 讀取上限（K4、K6、K8、K9）。
+  - [after: 13.3]
+- [ ] 13.5 文件：寫入清單、design 的指向、SKILL（K2、K3）。
+  - 驗證：`bash tests/run.sh` 只剩 #24。
+  - [after: 13.4]
+- [ ] 13.6 真實後端端到端（第八次）。
+  - 驗證：紀錄寫進 e2e-checklist §F。
+  - [after: 13.5]
