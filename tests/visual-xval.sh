@@ -910,6 +910,12 @@ xval() {   # xval <args...> — mock runtime, isolated HOME
   RUN_OUT=$(HOME="$WORK/home" MOCK_LOG="$WORK/mock.log" MOCK_PROMPTS="$WORK/prompts.txt" \
     PATH="$WORK/stubbin:$PATH" python3 "$SCRIPTS/xval.py" "$@" 2>&1) || RUN_STATUS=$?
 }
+enter_rec() {   # enter_rec <run> <name>... — a record written by hand, entered as the step that writes it would (round 10)
+  python3 -B - "$SCRIPTS" "$@" <<'PY'
+import sys; sys.path.insert(0, sys.argv[1]); import run_files
+run_files.enter(sys.argv[2], *sys.argv[3:])
+PY
+}
 profile_in() {   # profile_in <run> — the profile Step 4.1 records in the run directory
   printf '{"model": "gpt-test", "effort": "high", "max_time": 30, "profile_source": "default"}\n' > "$1/profile.json"
 }
@@ -1300,7 +1306,7 @@ for bad in 'meta.json:[1]' 'frames.json:1' 'frames.json:[{"a": 1}, {"b": 2}]' 'e
   assert_file "$WORK/run7r_result.md" "a result file is written when ${bad%%:*} holds ${bad#*:} (Y3)"
 done
 rm -rf "$WORK/run7e"; cp -R "$WORK/run7t" "$WORK/run7e"
-printf '{"error": "rate_limit", "detail": "limit", "step": "ask --round 1"}' > "$WORK/run7e/error.json"
+printf '{"error": "rate_limit", "detail": "limit", "step": "ask --round 1"}' > "$WORK/run7e/error.json"; enter_rec "$WORK/run7e" error.json
 ( cd "$WORK/project" && python3 "$SCRIPTS/xval.py" result --run "$WORK/run7e" --out "$WORK/no-such-dir/x.md" >/dev/null 2>&1 )
 assert_contains "$(cat "$WORK/run7e/error.json")" "rate_limit" "a failed result step does not replace the run's error (Y3)"
 ( cd "$WORK/project" && python3 "$SCRIPTS/xval.py" result --run "$WORK/run7e" --out "$WORK/run7e_result.md" >/dev/null 2>&1 )
@@ -1967,7 +1973,7 @@ assert_eq "target_invalid true" "$(fm "$WORK/run7s_result.md" error) $(fm "$WORK
 assert_eq "1" "$(grep -c 'changed after' "$WORK/run6r_result.md")" "and the change is reported once (K10)"
 # Round 8 (Z2): the run's own error is kept; round 9: a record of the wrong shape is no longer rendered at all.
 rm -rf "$WORK/run8f"; cp -R "$WORK/run6w" "$WORK/run8f"; xval adjudicate --run "$WORK/run8f"
-printf '{"error": "rate_limit", "detail": "limit", "step": "ask --round zoom"}' > "$WORK/run8f/error.json"
+printf '{"error": "rate_limit", "detail": "limit", "step": "ask --round zoom"}' > "$WORK/run8f/error.json"; enter_rec "$WORK/run8f" error.json
 edit_json "$WORK/run8f/adjudication.json" 'd["adjudications"] = None'
 ( cd "$WORK/project" && python3 "$SCRIPTS/xval.py" result --run "$WORK/run8f" --out "$WORK/run8f_result.md" >/dev/null 2>&1 )
 assert_eq "rate_limit" "$(fm "$WORK/run8f_result.md" error)" "a result with an edited record keeps the run's own error (Z2)"
@@ -2046,14 +2052,14 @@ else
 fi
 # K5: values copied into the frontmatter carry no control characters.
 rm -rf "$WORK/run8k"; cp -R "$WORK/run6w" "$WORK/run8k"
-printf '{"model": "gpt\\nerror: forged", "effort": "high", "max_time": 30, "profile_source": "default"}' > "$WORK/run8k/profile.json"
+printf '{"model": "gpt\\nerror: forged", "effort": "high", "max_time": 30, "profile_source": "default"}' > "$WORK/run8k/profile.json"; enter_rec "$WORK/run8k" profile.json
 ( cd "$WORK/project" && python3 "$SCRIPTS/xval.py" result --run "$WORK/run8k" --out "$WORK/run8k_result.md" >/dev/null 2>&1 )
 assert_eq "" "$(fm "$WORK/run8k_result.md" error)" "a line break in a profile value adds no frontmatter field (K5)"
 # Background security review after b8cef27: Unicode line breaks (NEL, LS, PS) are line breaks to
 # splitlines() and to YAML, so they must not survive into a frontmatter value either.
 for sep in '\u0085' ' ' ' '; do
   rm -rf "$WORK/run8l"; cp -R "$WORK/run6w" "$WORK/run8l"
-  printf '{"model": "gpt%serror: forged", "effort": "high", "max_time": 30, "profile_source": "default"}' "$sep" > "$WORK/run8l/profile.json"
+  printf '{"model": "gpt%serror: forged", "effort": "high", "max_time": 30, "profile_source": "default"}' "$sep" > "$WORK/run8l/profile.json"; enter_rec "$WORK/run8l" profile.json
   ( cd "$WORK/project" && python3 "$SCRIPTS/xval.py" result --run "$WORK/run8l" --out "$WORK/run8l_result.md" >/dev/null 2>&1 )
   assert_eq "" "$(fm "$WORK/run8l_result.md" error)" "a $sep line break in a profile value adds no frontmatter field (background review after b8cef27)"
 done
@@ -2205,14 +2211,14 @@ assert_contains "$(cat "$WORK/run9v_result.md")" "comparison.json changed after 
 # Each frontmatter field in its own form, otherwise `invalid`; the result is written whatever error.json holds.
 rm -rf "$WORK/run9k"; cp -R "$WORK/run6w" "$WORK/run9k"; xval adjudicate --run "$WORK/run9k"
 printf '{"model": "gpt test", "effort": "high;x", "max_time": 30, "profile_source": "elsewhere"}' > "$WORK/run9k/profile.json"
-printf '{"error": "rate_limit\\u2028seal_broken: false", "detail": 5, "step": "ask", "source": "xval"}' > "$WORK/run9k/error.json"
+printf '{"error": "rate_limit\\u2028seal_broken: false", "detail": 5, "step": "ask", "source": "xval"}' > "$WORK/run9k/error.json"; enter_rec "$WORK/run9k" profile.json error.json
 result9 "$WORK/run9k"
 assert_eq "invalid invalid invalid invalid" \
   "$(fm "$WORK/run9k_result.md" model) $(fm "$WORK/run9k_result.md" effort) $(fm "$WORK/run9k_result.md" profile_source) $(fm "$WORK/run9k_result.md" error)" \
   "a value not in its field's form is written as invalid (round 9)"
 rm -rf "$WORK/run9u"; cp -R "$WORK/run6w" "$WORK/run9u"; xval adjudicate --run "$WORK/run9u"
 printf '{"model": "\\ud800", "effort": "high", "max_time": 30, "profile_source": "default"}' > "$WORK/run9u/profile.json"
-printf '{"error": "rate_limit", "detail": "lone \\udc00 surrogate", "step": "ask --round zoom", "source": "xval"}' > "$WORK/run9u/error.json"
+printf '{"error": "rate_limit", "detail": "lone \\udc00 surrogate", "step": "ask --round zoom", "source": "xval"}' > "$WORK/run9u/error.json"; enter_rec "$WORK/run9u" profile.json error.json
 result9 "$WORK/run9u"
 assert_eq "invalid rate_limit" "$(fm "$WORK/run9u_result.md" model) $(fm "$WORK/run9u_result.md" error)" \
   "a lone surrogate neither stops the result file nor leaves an empty one (A1)"
@@ -2310,6 +2316,108 @@ print(" ".join(loose) or "none")
 PY
 )
 assert_eq "none" "$b3s" "no tool output is decoded by the locale (B3, B8)"
+
+# Round 10 (C1): "already done" is decided by a record or its ledger entry, so moving a record away and
+# back does not let a step be redone.
+rm -rf "$WORK/r10a"; SEQ= new_run "$WORK/r10a"; ask_with "$WORK/codex_reply.md" "$WORK/r10a" 1
+mkdir -p "$WORK/r10a_away"; mv "$WORK/r10a/seal.json" "$WORK/r10a/requests.json" "$WORK/r10a_away/"
+edit_json "$WORK/r10a/claude.json" 'd["claims"][0]["objects"] = {"INST": 9}'
+xval seal --run "$WORK/r10a"
+assert_contains "$RUN_OUT" "already sealed" "a seal moved away is still a seal: no second seal after Codex answered (C1)"
+assert_no_file "$WORK/r10a/seal.json" "and none is written"
+rm -rf "$WORK/r10i"; SEQ= new_run "$WORK/r10i"; rm -f "$WORK/r10i/frames.json" "$WORK/r10i/init_attempt.json"
+xval init --run "$WORK/r10i" --vocab "$WORK/vocab.json" "$WORK"/imgs/*.png
+assert_contains "$RUN_OUT" "already initialised" "a run cannot be initialised again once its ledger has records (C1)"
+assert_no_file "$WORK/r10i/frames.json" "and no new frame list is written"
+rm -rf "$WORK/r10p"; mkdir -p "$WORK/r10p"; xval confirm-privacy --run "$WORK/r10p"
+xval init --run "$WORK/r10p" --vocab "$WORK/vocab.json" "$WORK"/imgs/*.png
+assert_eq "0" "$RUN_STATUS" "init still follows confirm-privacy, as SKILL Step 2 and 3 do"
+rm -rf "$WORK/r10r"; SEQ= new_run "$WORK/r10r"; ask_with "$WORK/codex_reply.md" "$WORK/r10r" 1
+mv "$WORK/r10r/requests.json" "$WORK/r10a_away/requests_r10r.json"; rm -f "$WORK/mock.log"
+ask_with "$WORK/codex_reply.md" "$WORK/r10r" 1
+assert_contains "$RUN_OUT" "requests.json was removed" "a request record moved away stops a second request (C1)"
+assert_no_file "$WORK/mock.log" "and nothing is sent"
+# C2: the run's error and the profile ask used are in the ledger.
+rm -rf "$WORK/r10e"; new_run "$WORK/r10e"
+RUN_OUT=$(HOME="$WORK/home" MOCK_STDERR="error: HTTP 429: too many requests" MOCK_STATUS=1 MOCK_LOG="$WORK/mock.log" \
+  MOCK_PROMPTS="$WORK/prompts.txt" PATH="$WORK/stubbin:$PATH" python3 "$SCRIPTS/xval.py" ask --run "$WORK/r10e" --round 1 2>&1)
+assert_eq "error.json profile.json" "$(python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); print(" ".join(k for k in ("error.json", "profile.json") if k in d))' "$WORK/r10e/ledger.json")" \
+  "the run's error and the profile ask used are entered (C2)"
+rm "$WORK/r10e/error.json"
+result9 "$WORK/r10e"
+assert_eq "target_invalid" "$(fm "$WORK/r10e_result.md" error)" "a removed error.json does not make a failed run look clean (C2)"
+assert_contains "$(cat "$WORK/r10e_result.md")" "error.json was removed" "and it is named"
+rm -rf "$WORK/r10m"; SEQ= new_run "$WORK/r10m"; ask_with "$WORK/codex_reply.md" "$WORK/r10m" 1
+edit_json "$WORK/r10m/profile.json" 'd["model"] = "gpt-other"'
+result9 "$WORK/r10m"
+assert_eq "" "$(fm "$WORK/r10m_result.md" model)" "a profile changed after ask read it is not shown (C2)"
+assert_contains "$(cat "$WORK/r10m_result.md")" "profile.json changed after the step that wrote it" "and it is named"
+xval compare --run "$WORK/r10e"
+xval adjudicate --run "$WORK/r10e"
+assert_eq "0" "$RUN_STATUS" "a profile Step 4.1 wrote before any request is not a record yet (round 10)"
+# D7: a refusal for want of a comparison keeps the run's own error.
+rm -rf "$WORK/r10s"; SEQ=1 new_run "$WORK/r10s"
+RUN_OUT=$(HOME="$WORK/home" MOCK_STDERR="error: HTTP 429: too many requests" MOCK_STATUS=1 MOCK_LOG="$WORK/mock.log" \
+  MOCK_PROMPTS="$WORK/prompts.txt" PATH="$WORK/stubbin:$PATH" python3 "$SCRIPTS/xval.py" ask --run "$WORK/r10s" --round 1 2>&1)
+for cmd in crops sam; do
+  xval "$cmd" --run "$WORK/r10s"
+  assert_eq "rate_limit" "$(json_get "$(cat "$WORK/r10s/error.json")" 'd["error"]')" "$cmd without a comparison keeps the run's rate_limit (D7)"
+done
+# D2: a step that stops partway enters what it wrote.
+rm -rf "$WORK/r10n"; printf 'not an image' > "$WORK/notimg.png"
+xval init --run "$WORK/r10n" --vocab "$WORK/vocab.json" "$WORK/imgs/shot_2026-09-11_1001.png" "$WORK/notimg.png"
+result9 "$WORK/r10n"
+refute_contains "$(cat "$WORK/r10n_result.md")" "ledger" "a routine init failure raises no ledger alarm (D2)"
+mkdir -p "$WORK/sipsfail"; cat > "$WORK/sipsfail/sips" <<'STUB'
+#!/bin/sh
+n=$(( $(cat "$SIPS_COUNT" 2>/dev/null || echo 0) + 1 )); echo "$n" > "$SIPS_COUNT"
+[ "$n" = "$SIPS_FAIL_AT" ] && exit 13
+exec /usr/bin/sips "$@"
+STUB
+chmod +x "$WORK/sipsfail/sips"
+rm -rf "$WORK/r10c"; cp -R "$WORK/run6w" "$WORK/r10c"; rm -f "$WORK/r10c/error.json" "$WORK/sipscount"
+RUN_OUT=$(HOME="$WORK/home" SIPS_COUNT="$WORK/sipscount" SIPS_FAIL_AT=2 PATH="$WORK/sipsfail:$PATH" \
+  python3 "$SCRIPTS/xval.py" crops --run "$WORK/r10c" 2>&1)
+assert_contains "$RUN_OUT" "sips exited 13" "the stub makes the first crop's resize fail"
+xval adjudicate --run "$WORK/r10c"
+assert_eq "crops" "$(json_get "$(cat "$WORK/r10c/error.json")" 'd["step"]')" "after a crop failed, adjudicate does not replace the run's error (D2)"
+# D1: the zoom round checks the comparison its plan came from.
+rm -rf "$WORK/r10z"; cp -R "$WORK/run6w" "$WORK/r10z"; xval crops --run "$WORK/r10z"
+printf '{"answers": {"z01.png": {"value": false}}}\n' > "$WORK/r10z/zoom_claude.json"; xval seal --run "$WORK/r10z" --zoom
+edit_json "$WORK/r10z/comparison.json" 'd["agreement_rate"] = 0.5'; rm -f "$WORK/mock.log"
+ask_with "$WORK/zoom_reply.md" "$WORK/r10z" zoom
+assert_contains "$RUN_OUT" "comparison.json changed after the step that wrote it" "the zoom round checks the comparison too (D1)"
+assert_no_file "$WORK/mock.log" "and sends nothing"
+# D5: the writing side: a lone surrogate in a reply, and a ledger that is a FIFO.
+python3 - "$WORK" <<'PY'
+import json, sys
+w = sys.argv[1]
+x = json.loads(open(f"{w}/codex_reply.md").read().split("```json\n")[1].split("\n```")[0])
+x["claims"][0]["objects"]["other"] = 1
+x["claims"][0]["other_description"] = "PLACEHOLDER"
+text = json.dumps(x).replace("PLACEHOLDER", "\\ud800 mark")
+open(f"{w}/codex_reply_lone.md", "w").write("```json\n" + text + "\n```\n")
+PY
+rm -rf "$WORK/r10u"; SEQ= new_run "$WORK/r10u"; ask_with "$WORK/codex_reply_lone.md" "$WORK/r10u" 1
+assert_contains "$RUN_OUT" '"ok": true' "a lone surrogate in Codex's reply does not crash the step after sending (D5)"
+rm -rf "$WORK/r10f"; mkdir -p "$WORK/r10f"; xval confirm-privacy --run "$WORK/r10f"
+rm -f "$WORK/r10f/ledger.json"; mkfifo "$WORK/r10f/ledger.json"
+d5=$(python3 - "$SCRIPTS" "$WORK/r10f" <<'PY'
+import subprocess, sys
+try:
+    done = subprocess.run([sys.executable, f"{sys.argv[1]}/xval.py", "confirm-privacy", "--run", sys.argv[2]],
+                          capture_output=True, text=True, timeout=20)
+    print(done.stdout.strip()[:120])
+except subprocess.TimeoutExpired:
+    print("hung")
+PY
+)
+rm -f "$WORK/r10f/ledger.json"
+assert_contains "$d5" '"error": "target_invalid"' "a ledger that is a FIFO stops confirm-privacy instead of stalling it (D5)"
+# D6: the ledger's keys stay inside the run.
+rm -rf "$WORK/r10k"; cp -R "$WORK/run6w" "$WORK/r10k"; printf 'outside\n' > "$WORK/outside_r10k.txt"
+edit_json "$WORK/r10k/ledger.json" 'd["frames/../../outside_r10k.txt"] = "0" * 64'
+assert_eq "" "$(ledger_changed "$WORK/r10k")" "a ledger key that leads out of the run is not a record, and is not opened (D6)"
 
 # Round 6 (Q1): the steps that write into a directory are a closed list.
 rm -rf "$WORK/typo"

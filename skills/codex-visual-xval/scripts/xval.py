@@ -45,6 +45,22 @@ def _older_python(argv):
     if not run:
         print(__doc__, file=sys.stderr)
         sys.exit(64)
+    def enter_error(path):   # the run's error is in the ledger, as on the main path (round 10, C2)
+        import hashlib
+        ledger_path = os.path.join(path, "ledger.json")
+        if os.path.lexists(ledger_path) and not os.path.isfile(ledger_path):
+            return
+        try:
+            with open(ledger_path, encoding="utf-8") as fh:
+                entries = json.load(fh)
+        except (OSError, ValueError, RecursionError):
+            entries = {}
+        if not isinstance(entries, dict):
+            entries = {}
+        with open(os.path.join(path, "error.json"), "rb") as fh:
+            entries["error.json"] = hashlib.sha256(fh.read()).hexdigest()
+        with open(ledger_path, "w", encoding="utf-8") as fh:
+            json.dump(entries, fh, indent=1)
     def is_run(path):   # only a run directory is written into or read (round 5, V5; round 6, Q1); 3.9-compatible
         if not os.path.isfile(os.path.join(path, ".gitignore")):   # a FIFO would stall (round 9, B2)
             return False
@@ -58,6 +74,7 @@ def _older_python(argv):
             entry = {"error": "runtime_unavailable", "detail": detail, "step": command, "source": "xval"}
             with open(os.path.join(run, "error.json"), "w", encoding="utf-8") as fh:
                 json.dump(entry, fh)
+            enter_error(run)
             with open(os.path.join(run, "errors.jsonl"), "a", encoding="utf-8") as fh:   # the history (round 4, M10)
                 fh.write(json.dumps(entry) + "\n")
         print(json.dumps({"error": "runtime_unavailable", "detail": detail}))
@@ -165,7 +182,8 @@ def load_vocab(path: str) -> Any:
 
 
 def init(run: str, vocab_path: str, images: list[str], sequence: bool, first_side: str = "") -> None:
-    if any(os.path.exists(os.path.join(run, f)) for f in ("frames.json", "init_attempt.json")):
+    if any(os.path.exists(os.path.join(run, f)) for f in ("frames.json", "init_attempt.json")) \
+            or set(ledger(run)) - {"privacy.json"}:   # or their entries: moving them away is no reset (round 10, C1)
         # Once only, a failed attempt included: the privacy confirmation refers to one set of images
         # (round 3, L4; round 4, M4). Refused before anything else is checked (M1).
         raise Stop("target_invalid", "this run is already initialised, or an init attempt failed in it; "
@@ -195,6 +213,25 @@ def init(run: str, vocab_path: str, images: list[str], sequence: bool, first_sid
         # file names only: a local directory can name a person or a client (round 5, V4)
         raise Stop("target_invalid", f"not a readable file: {[os.path.basename(p) for p in missing]}")
     os.makedirs(os.path.join(run, "frames"), exist_ok=True)
+    try:
+        frames = copy_frames(run, images)
+    except Exception:
+        enter(run, "frames/", "hires/")   # what init wrote before it stopped is xval's own (round 10, D2)
+        raise
+    dump(os.path.join(run, "frames.json"), frames)
+    dump(os.path.join(run, "vocab.json"), vocab)
+    meta = {
+        "started_at": datetime.datetime.now().astimezone().isoformat(timespec="seconds"),
+        "sequence": sequence, "n_images": len(images), "order": list(frames),
+        # who gave the first side's answers: in the native Codex bundle it is the Codex host model (round 2, F1)
+        "first_side_model": first_side}
+    dump(os.path.join(run, "meta.json"), meta)   # its settings are part of the inputs (round 6, W2)
+    enter(run, *INPUTS)   # the inputs as init wrote them, checked by every later step (round 9)
+    print(json.dumps({"ok": True, "frames": sorted(frames)}))
+
+
+def copy_frames(run: str, images: list[str]) -> dict:
+    """The neutral copies, and full-resolution copies where an image is larger than the first round's."""
     frames = {}
     for n, src in enumerate(images, 1):
         try:
@@ -211,16 +248,7 @@ def init(run: str, vocab_path: str, images: list[str], sequence: bool, first_sid
             except (media.MediaError, OSError, subprocess.CalledProcessError, struct.error) as exc:
                 raise Stop("target_invalid", f"cannot prepare {os.path.basename(src)}: {failure(exc)}")
             frames[name]["hires"] = os.path.join("hires", hires)
-    dump(os.path.join(run, "frames.json"), frames)
-    dump(os.path.join(run, "vocab.json"), vocab)
-    meta = {
-        "started_at": datetime.datetime.now().astimezone().isoformat(timespec="seconds"),
-        "sequence": sequence, "n_images": len(images), "order": list(frames),
-        # who gave the first side's answers: in the native Codex bundle it is the Codex host model (round 2, F1)
-        "first_side_model": first_side}
-    dump(os.path.join(run, "meta.json"), meta)   # its settings are part of the inputs (round 6, W2)
-    enter(run, *INPUTS)   # the inputs as init wrote them, checked by every later step (round 9)
-    print(json.dumps({"ok": True, "frames": sorted(frames)}))
+    return frames
 
 
 def confirm_privacy(run: str) -> None:
@@ -241,12 +269,17 @@ def seal_answers(run: str, zoom: bool) -> None:
     # A seal is written once. Re-sealing, or sealing after Codex has answered, would make a
     # late seal look exactly like an early one (#23 verify B1). These refusals come first, so a
     # step that is already done is never reported as a new failure (round 3, T6).
+    # Each of these counts by its record or its ledger entry, whichever exists: moving a record away and back
+    # does not reset a step (round 10, C1). What they read is checked against the ledger first.
+    entries = ledger(run)
     previous = load(record)
-    if previous:
-        raise Stop("target_invalid", f"already sealed at {previous.get('sealed_at')}; a seal is not rewritten", record=False)
+    if previous or os.path.basename(record) in entries:
+        when = previous.get("sealed_at") if isinstance(previous, dict) else None
+        raise Stop("target_invalid", f"already sealed{f' at {when}' if when else ''}; a seal is not rewritten", record=False)
+    checked(run, ("requests.json",))
     if load(os.path.join(run, "requests.json"), {}).get("zoom" if zoom else "1"):
         raise Stop("target_invalid", "Codex has already been asked this round; answers sealed now prove nothing", record=False)
-    if zoom and load(os.path.join(run, "zoom_rejected.json")):
+    if zoom and (load(os.path.join(run, "zoom_rejected.json")) or "zoom_rejected.json" in entries):
         raise Stop("target_invalid", "Claude's zoom answers already failed the checks, so the zoom round is not used; "
                    "answers fixed afterwards are not sealed", record=False)
     if zoom:
@@ -365,6 +398,10 @@ def profile(run: str) -> dict:
             raise Stop("target_invalid", f"profile.json has no valid {', '.join(bad)}{where}; Step 4.1 kept the value as "
                        "given and the reason in profile.json; nothing was sent")
         raise Stop("target_invalid", "no resolved profile in the run directory (Step 4.1 writes profile.json); nothing was sent")
+    if "profile.json" in ledger(run):   # the profile the first request used (round 10, C2)
+        checked(run, ("profile.json",), then="nothing was sent")
+    else:
+        enter(run, "profile.json")
     return data
 
 
@@ -455,11 +492,12 @@ def map_source_names(run: str, answers: str) -> None:
 def before_request(run: str, rnd: str) -> None:
     """Everything a request waits for. Each of these used to be a sentence in SKILL.md that the
     program did not check, so a run that skipped it looked identical to one that did not."""
+    checked(run, ("requests.json",), then="nothing was sent")   # read below, so checked first (round 10, C1)
     earlier = load(os.path.join(run, "requests.json"), {}).get(rnd)
     if earlier:   # first: a done round is refused as done, not as whatever else has changed since (T6)
         raise Stop("target_invalid", f"round {rnd} was already requested at {earlier.get('requested_at')}; "
                    "a recorded answer is not replaced and requests are not retried", record=False)
-    if rnd == "zoom" and load(os.path.join(run, "zoom_rejected.json")):
+    if rnd == "zoom" and (load(os.path.join(run, "zoom_rejected.json")) or "zoom_rejected.json" in ledger(run)):
         raise Stop("target_invalid", "the zoom round is not used, because Claude's zoom answers failed the checks; "
                    "nothing was sent", record=False)
     if not load(os.path.join(run, "privacy.json")):
@@ -469,7 +507,7 @@ def before_request(run: str, rnd: str) -> None:
     if not os.path.isfile(os.path.join(run, seal)) and seal not in ledger(run):
         raise Stop("target_invalid", "Claude's answers are not sealed; nothing was sent")
     # what is sent is what was sealed, asked about the inputs as init wrote them (U6; round 9)
-    reads = (("zoom_plan.json", "zoom_prompt.md", "crops/") if rnd == "zoom" else INPUTS)
+    reads = (("zoom_plan.json", "zoom_prompt.md", "crops/", "comparison.json") if rnd == "zoom" else INPUTS)   # D1
     checked(run, (answers, seal, "privacy.json", "requests.json") + reads, then="nothing was sent")
     problem = login_problem()   # checked here, since a failed call counts as sent (round 5, V2)
     if problem:
@@ -577,7 +615,8 @@ def compare(run: str) -> None:
 
 
 def crops(run: str) -> None:
-    if load(os.path.join(run, "zoom_seal.json")) or load(os.path.join(run, "zoom_rejected.json")):
+    entries = ledger(run)
+    if any(load(os.path.join(run, n)) or n in entries for n in ("zoom_seal.json", "zoom_rejected.json")):   # C1
         raise Stop("target_invalid", "Claude's zoom answers are already sealed or dropped; the crops are not made again",
                    record=False)
     checked_inputs(run)   # V8
@@ -594,51 +633,55 @@ def crops(run: str) -> None:
                 os.path.realpath(os.path.join(run, info["hires"]))) == hires_dir):
             raise Stop("target_invalid", "a full-resolution copy lies outside the run's hires directory; nothing was cropped")
     os.makedirs(os.path.join(run, "crops"), exist_ok=True)
-    plan, shown, skipped = {}, [], []
-    n = 0
-    for item in comparison["disagreements"]:
-        points = dispute_points(item, claude, codex)
-        info = frames[item["frame"]]
-        aspect = info["height"] / info["width"] if info.get("width") and info.get("height") else 1.0
-        pads = position_pads(float(item.get("threshold_pct", 0)), aspect) if item["kind"] == "position" else (12.0, 12.0)
-        box = crop_box(points, *pads)
-        reason = "no key point to frame" if not points else zoom_skip_reason(item)
-        if reason:
-            skipped.append({"id": item["id"], "frame": item["frame"], "reason": reason})
-            continue
-        if box[2] - box[0] >= WHOLE_IMAGE_PCT and box[3] - box[1] >= WHOLE_IMAGE_PCT:
-            skipped.append({"id": item["id"], "frame": item["frame"], "reason": "the crop would cover the whole image"})
-            continue
-        n += 1
-        # the full-resolution copy when there is one, so the zoom round sees real detail (round 5, V7)
-        source = os.path.join(run, info["hires"]) if info.get("hires") else os.path.join(run, "frames", item["frame"])
-        w, h = (None, None) if info.get("hires") else (info.get("width"), info.get("height"))
-        if not w or not h:
-            w, h = image_size(source)
-        px = [round(box[0] / 100 * w), round(box[1] / 100 * h), round(box[2] / 100 * w), round(box[3] / 100 * h)]
-        crop = os.path.join("crops", f"z{n:02d}.png")
-        target = os.path.join(run, crop)
-        cw, ch = px[2] - px[0], px[3] - px[1]
-        try:
-            subprocess.run(["sips", "-s", "format", "png", "-c", str(ch), str(cw), "--cropOffset", str(px[1]), str(px[0]),
-                            source, "--out", target], capture_output=True, check=True)
-            scale = enlargement(cw, ch)
-            subprocess.run(["sips", "-Z", str(round(scale * max(cw, ch))), target, "--out", target],
-                           capture_output=True, check=True)
-            media.strip_file(target, "png")   # sips writes eXIf and XMP of its own (round 4, M5)
-        except (OSError, subprocess.CalledProcessError, media.MediaError, struct.error) as exc:
-            raise Stop("target_invalid", f"cannot crop {item['frame']}: {failure(exc)}")
-        if item["kind"] == "position":
-            item = {**item, "key_point": vocab.get("key_points", {}).get(item["class"], "its key point")}
-        elif item["kind"] == "relation":   # the subagent sees only the question file (round 3, T7)
-            item = {**item, "key_points": {c: vocab.get("key_points", {}).get(c, "its key point") for c in item["between"]}}
-        entry = {"crop": crop, "frame": item["frame"], "kind": item["kind"], "box_pct": box, "box_px": px,
-                 "scale": scale, "question": question(item, box, scale)}
-        for key in ("class", "relation", "definition", "between"):
-            if key in item:
-                entry[key] = item[key]
-        plan[item["id"]] = entry
-        shown.append({"id": item["id"], "crop": os.path.join(run, crop), "question": entry["question"]})
+    try:
+        plan, shown, skipped = {}, [], []
+        n = 0
+        for item in comparison["disagreements"]:
+            points = dispute_points(item, claude, codex)
+            info = frames[item["frame"]]
+            aspect = info["height"] / info["width"] if info.get("width") and info.get("height") else 1.0
+            pads = position_pads(float(item.get("threshold_pct", 0)), aspect) if item["kind"] == "position" else (12.0, 12.0)
+            box = crop_box(points, *pads)
+            reason = "no key point to frame" if not points else zoom_skip_reason(item)
+            if reason:
+                skipped.append({"id": item["id"], "frame": item["frame"], "reason": reason})
+                continue
+            if box[2] - box[0] >= WHOLE_IMAGE_PCT and box[3] - box[1] >= WHOLE_IMAGE_PCT:
+                skipped.append({"id": item["id"], "frame": item["frame"], "reason": "the crop would cover the whole image"})
+                continue
+            n += 1
+            # the full-resolution copy when there is one, so the zoom round sees real detail (round 5, V7)
+            source = os.path.join(run, info["hires"]) if info.get("hires") else os.path.join(run, "frames", item["frame"])
+            w, h = (None, None) if info.get("hires") else (info.get("width"), info.get("height"))
+            if not w or not h:
+                w, h = image_size(source)
+            px = [round(box[0] / 100 * w), round(box[1] / 100 * h), round(box[2] / 100 * w), round(box[3] / 100 * h)]
+            crop = os.path.join("crops", f"z{n:02d}.png")
+            target = os.path.join(run, crop)
+            cw, ch = px[2] - px[0], px[3] - px[1]
+            try:
+                subprocess.run(["sips", "-s", "format", "png", "-c", str(ch), str(cw), "--cropOffset", str(px[1]), str(px[0]),
+                                source, "--out", target], capture_output=True, check=True)
+                scale = enlargement(cw, ch)
+                subprocess.run(["sips", "-Z", str(round(scale * max(cw, ch))), target, "--out", target],
+                               capture_output=True, check=True)
+                media.strip_file(target, "png")   # sips writes eXIf and XMP of its own (round 4, M5)
+            except (OSError, subprocess.CalledProcessError, media.MediaError, struct.error) as exc:
+                raise Stop("target_invalid", f"cannot crop {item['frame']}: {failure(exc)}")
+            if item["kind"] == "position":
+                item = {**item, "key_point": vocab.get("key_points", {}).get(item["class"], "its key point")}
+            elif item["kind"] == "relation":   # the subagent sees only the question file (round 3, T7)
+                item = {**item, "key_points": {c: vocab.get("key_points", {}).get(c, "its key point") for c in item["between"]}}
+            entry = {"crop": crop, "frame": item["frame"], "kind": item["kind"], "box_pct": box, "box_px": px,
+                     "scale": scale, "question": question(item, box, scale)}
+            for key in ("class", "relation", "definition", "between"):
+                if key in item:
+                    entry[key] = item[key]
+            plan[item["id"]] = entry
+            shown.append({"id": item["id"], "crop": os.path.join(run, crop), "question": entry["question"]})
+    except Exception:
+        enter(run, "crops/")   # the crops written before the failure are xval's own (round 10, D2)
+        raise
     dump(os.path.join(run, "zoom_plan.json"), plan)
     dump(os.path.join(run, "zoom_skipped.json"), skipped)
     if plan:
@@ -822,11 +865,18 @@ def stop_run(run: str, command: str, error: str, detail: str, record_error: bool
             pass
     if is_run_dir(run):
         if record_error:
-            dump(os.path.join(run, "error.json"), record)
+            try:   # the run's error is a record like the others (round 10, C2)
+                dump(os.path.join(run, "error.json"), record)
+                enter(run, "error.json")
+            except (Stop, OSError):
+                pass   # the answer below still goes out
         elif refused if refused is not None else True:
             record["refused"] = True
-        with open(os.path.join(run, "errors.jsonl"), "a", encoding="utf-8") as fh:   # history survives clearing
-            fh.write(json.dumps(record, ensure_ascii=False) + "\n")
+        try:
+            with open(os.path.join(run, "errors.jsonl"), "a", encoding="utf-8") as fh:   # history survives clearing
+                fh.write(json.dumps(record) + "\n")   # ASCII escapes: a lone surrogate cannot stop it (D5)
+        except OSError:
+            pass
     print(json.dumps({"error": error, "detail": detail}, ensure_ascii=False))
     sys.exit(5)
 
@@ -839,6 +889,7 @@ def clear_error(run: str, command: str) -> None:
     current = load(os.path.join(run, "error.json"))
     if isinstance(current, dict) and current.get("step") == command:
         os.remove(os.path.join(run, "error.json"))
+        enter(run, "error.json")   # its entry goes with it (round 10, C2)
 
 
 if __name__ == "__main__":

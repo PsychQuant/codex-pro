@@ -38,8 +38,12 @@ def load(path: str, default: Any = None) -> Any:
 
 
 def dump(path: str, data: Any) -> None:
+    """Write a record. Only a regular file is written: opening a FIFO for writing would stall the step; and
+    non-ASCII is escaped, so a lone surrogate from a reply cannot stop the write halfway (#23 verify round 10, D5)."""
+    if os.path.lexists(path) and not os.path.isfile(path):
+        raise Stop("target_invalid", f"{os.path.basename(path)} is not a regular file; nothing was written to it")
     with open(path, "w", encoding="utf-8") as fh:
-        json.dump(data, fh, ensure_ascii=False, indent=1)
+        json.dump(data, fh, ensure_ascii=True, indent=1)
 
 
 RUN_MARK = "# copies of the images given to /codex-pro:codex-visual-xval"
@@ -127,14 +131,17 @@ def inside(run: str, sub: str, name: Any) -> bool:
 # against it by one rule: an entry must match its file, and a record that exists must have an entry
 # (#23 verify round 9, which replaced the pairwise records of earlier rounds). The list is closed.
 LEDGER = "ledger.json"
-TRACKED = ("vocab.json", "frames.json", "meta.json", "privacy.json", "claude.json", "seal.json", "zoom_claude.json",
+TRACKED = ("vocab.json", "frames.json", "meta.json", "privacy.json", "profile.json", "error.json", "claude.json",
+           "seal.json", "zoom_claude.json",
            "zoom_seal.json", "requests.json", "prompt_round1.md", "prompt_zoom.md", "codex_round1.md", "codex.json",
            "codex_zoom.md", "zoom_codex.json", "comparison.json", "zoom_plan.json", "zoom_prompt.md",
            "zoom_skipped.json", "zoom_rejected.json", "anchors.json", "sam_frames.json", "track.json", "sam.json",
            "adjudication.json")
 TRACKED_DIRS = ("frames/", "hires/", "crops/")
-# the only records that may exist without an entry: Claude's answers of a round not yet sealed
-UNSEALED = {"claude.json": "seal.json", "zoom_claude.json": "zoom_seal.json"}
+# The only records that may exist without an entry, each until the record named beside it exists: Claude's
+# answers of a round not yet sealed, and the profile Step 4.1 wrote, which becomes a record when `ask` reads it
+# (#23 verify round 10, C2). The files that are not records at all are listed in the spec and design.
+PENDING = {"claude.json": "seal.json", "zoom_claude.json": "zoom_seal.json", "profile.json": "requests.json"}
 INPUTS = ("vocab.json", "frames.json", "meta.json", "frames/", "hires/")
 ANSWERS = ("claude.json", "seal.json", "codex.json")
 
@@ -151,7 +158,11 @@ def expand(run: str, names: Any, entries: dict) -> list[str]:
         if name.endswith("/"):
             folder = os.path.join(run, name)
             on_disk = {name + f for f in os.listdir(folder) if not f.startswith(".")} if os.path.isdir(folder) else set()
-            out += sorted(on_disk | {k for k in entries if k.startswith(name)})
+            # a key is a record only when it names a file in that directory: `frames/../../x` would lead
+            # out of the run, so it is not one, and nothing outside the run is opened (round 10, D6)
+            entered = {k for k in entries if k.startswith(name) and inside(run, name, k[len(name):])
+                       and not k[len(name):].startswith(".")}
+            out += sorted(on_disk | entered)
         else:
             out.append(name)
     return list(dict.fromkeys(out))
@@ -181,8 +192,8 @@ def differences(run: str, names: Any = None) -> list[tuple[str, str]]:
         if expected == actual:
             continue
         if expected is None:
-            if name in UNSEALED and not os.path.exists(os.path.join(run, UNSEALED[name])):
-                continue   # Claude's answers before they are sealed
+            if name in PENDING and not os.path.exists(os.path.join(run, PENDING[name])):
+                continue   # not a record yet: see PENDING
             found.append((name, "not entered"))
         else:
             found.append((name, "removed" if actual is None else "changed"))
@@ -236,6 +247,7 @@ def checked_inputs(run: str) -> None:
 def checked_comparison(run: str) -> dict:
     """The comparison and both answer files as `compare` read and wrote them (L3; round 6, W2)."""
     if not os.path.exists(os.path.join(run, "comparison.json")) and "comparison.json" not in ledger(run):
-        raise Stop("target_invalid", "no comparison: run `compare` first")
+        # nothing to work on yet, which is no new failure of the run: its own error stays (round 10, D7)
+        raise Stop("target_invalid", "no comparison: run `compare` first", record=False)
     checked(run, ANSWERS + ("comparison.json",))
     return load(os.path.join(run, "comparison.json"))

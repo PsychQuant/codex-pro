@@ -361,7 +361,7 @@
 
 - [x] 15.1 規格與 design（design「第十輪：把帳本那條規則套用到還沒套用的地方」；Sealed Claude answers 的拒絕判斷、帳本範圍與不是紀錄的檔；Structured result file 的推導關係與第五個外來來源；中斷與原生 preflight）。
   - 驗證：`spectra validate` 與 `spectra analyze` 無 warning。
-- [ ] 15.2 帳本的範圍：拒絕檢查與 init 以帳本為準、error.json 與 profile.json 進帳本、失敗的步驟登記已寫出的紀錄、放大輪核對比對結果、帳本的鍵限制在 run 之內、寫入端（孤立代理字元、FIFO）（C1、C2、D1、D2、D5、D6 的鍵、D7）。
+- [x] 15.2 帳本的範圍：拒絕檢查與 init 以帳本為準、error.json 與 profile.json 進帳本、失敗的步驟登記已寫出的紀錄、放大輪核對比對結果、帳本的鍵限制在 run 之內、寫入端（孤立代理字元、FIFO）（C1、C2、D1、D2、D5、D6 的鍵、D7）。
   - [after: 15.1]
 - [ ] 15.3 結果檔：Claude 答案的文字不進結果檔、推導出來的紀錄只在來源也核對過時呈現、只印核對過或固定格式的檔名與雜湊、SAM 環境的位置（C3、D3、D4、D6 的文字、D8）。
   - [after: 15.2]

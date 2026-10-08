@@ -252,7 +252,7 @@ Claude 的逐格答案先寫到 run 目錄 `.codex-pro/visual-xval-run-<timestam
 - **一份帳本，一條規則**（A3–A5、B4 的根源）。每一步寫出的紀錄都把雜湊記進 `ledger.json`；之後讀它的步驟與結果檔用同一條規則核對：帳本上的每一筆都要在而且相符，該記錄的紀錄存在卻不在帳本上也算改過。唯一的例外是尚未封存的那一輪的 Claude 答案。這取代了原本各自成對的 comparison_record、adjudication_record、zoom_record、inputs_sha256、track_sha256、seal_check 與 requests 裡的答案雜湊。Claude 的答案在封存後被改，之後讀它的步驟就停下（不再「標 seal_broken 但照樣比對」）。
 - **結果檔只用帳本核對過的紀錄產生**（A1、A3 的根源）。沒通過核對的紀錄不呈現，只列名；frontmatter 每個欄位只接受它自己的格式（模型 ID、列舉值、時間、雜湊、數字），否則寫 `invalid`。內容因此只來自 xval 寫下且未被改動的紀錄，產生時不再需要從空目錄重來的退路。
 
-帳本的例外只有一類，不得類推：尚未封存的那一輪 Claude 答案（`claude.json` 在 `seal.json` 之前、`zoom_claude.json` 在 `zoom_seal.json` 之前；放大輪答案被拒收時，它就一直是這種狀態）。第九輪 B6 列出的另外兩種情況在帳本下已經不是例外：codex-call 失敗時留下的原始回覆照樣登記。`frames/`、`hires/`、`crops/` 裡以點開頭的檔案（Finder 的 `.DS_Store`）不是紀錄。一步停在帳本核對時，錯誤記下它停在哪些紀錄，結果檔不再重複列出（B4）；帳本本身不見時，訊息說帳本不見，而不是列出每一份紀錄。
+帳本的例外只有一類，不得類推（第十輪加上第二類：第一次請求之前的 `profile.json`，見第十輪的段落）：尚未封存的那一輪 Claude 答案（`claude.json` 在 `seal.json` 之前、`zoom_claude.json` 在 `zoom_seal.json` 之前；放大輪答案被拒收時，它就一直是這種狀態）。第九輪 B6 列出的另外兩種情況在帳本下已經不是例外：codex-call 失敗時留下的原始回覆照樣登記。`frames/`、`hires/`、`crops/` 裡以點開頭的檔案（Finder 的 `.DS_Store`）不是紀錄。一步停在帳本核對時，錯誤記下它停在哪些紀錄，結果檔不再重複列出（B4）；帳本本身不見時，訊息說帳本不見，而不是列出每一份紀錄。
 
 帳本本身也在 run 目錄裡，能改紀錄的人也能改帳本；這防的是誤改與事後的手動修改，不是能寫入 run 目錄的對手，與先前各自成對的雜湊相同。
 
@@ -262,8 +262,8 @@ Claude 的逐格答案先寫到 run 目錄 `.codex-pro/visual-xval-run-<timestam
 
 第十輪的 MEDIUM 不是第九輪改寫的回歸，而是那條規則還沒套用到的地方，加上兩個舊缺口。使用者選擇（2026-10-08）全修。修法一律是把同一條規則套用得更廣，不加新的成對規則：
 
-- **「已經做過」以帳本為準**（C1）。重封、同一輪再送、放大輪被拒後再封、重新 init 的拒絕判斷，原本只看檔案在不在；把檔案移開、做完再放回就繞過了，而且之後的核對全都通過。改為：檔案或它在帳本上的條目，任一存在就算已經做過；init 在帳本已有任何條目時一律拒絕。拒絕判斷讀的紀錄（`requests.json`、`seal.json` 等）先對帳本核對，不相符就停在 `target_invalid`。
-- **error.json 與 profile.json 進帳本**（C2）。run 的錯誤登記進帳本，清除錯誤時連條目一起移除；`profile.json` 在 `ask` 第一次讀它時登記，之後被改就列名。不是紀錄的檔列成封閉清單，只有這些，不得類推：`ledger.json` 本身、`.gitignore`、錯誤歷史 `errors.jsonl`、`init_attempt.json`、`claude_source.json`（使用者原本給的答案）、`runtime.txt` 與 `runtime_error.txt`（Step 4.2 的 runtime 解析寫的；結果檔只從後者讀錯誤類別），以及 `frames/`、`hires/`、`crops/` 裡以點開頭的檔。
+- **「已經做過」以帳本為準**（C1）。重封、同一輪再送、放大輪被拒後再封、重新 init 的拒絕判斷，原本只看檔案在不在；把檔案移開、做完再放回就繞過了，而且之後的核對全都通過。改為：檔案或它在帳本上的條目，任一存在就算已經做過；init 在帳本已有隱私確認以外的任何條目時一律拒絕（SKILL Step 2 的隱私確認在 init 之前）。拒絕判斷讀的紀錄（`requests.json`、`seal.json` 等）先對帳本核對，不相符就停在 `target_invalid`。
+- **error.json 與 profile.json 進帳本**（C2）。run 的錯誤登記進帳本，清除錯誤時連條目一起移除；`profile.json` 在 `ask` 第一次讀它時登記，之後被改就列名；在那之前它還不是紀錄，與尚未封存的答案同樣是帳本的例外。不是紀錄的檔列成封閉清單，只有這些，不得類推：`ledger.json` 本身、`.gitignore`、錯誤歷史 `errors.jsonl`、`init_attempt.json`、`claude_source.json`（使用者原本給的答案）、`runtime.txt` 與 `runtime_error.txt`（Step 4.2 的 runtime 解析寫的；結果檔只從後者讀錯誤類別），以及 `frames/`、`hires/`、`crops/` 裡以點開頭的檔。
 - **失敗的步驟登記它已寫出的紀錄**（D2、D7）。init 或 crops 中途失敗時，已寫出的複本與裁切圖照樣登記，錯誤照實記下；否則結果檔把 xval 自己的半成品報成「不在帳本上」，後面的步驟也因此取代 run 原本的錯誤。缺少比對結果時，crops 與 sam 的拒絕不取代 run 的錯誤。
 - **推導出來的紀錄要連來源一起核對**（D3、D1）。帳本只核對每份紀錄自己。比對結果由輸入與兩邊答案推導，裁決由所有紀錄推導；來源沒通過核對時，推導出來的紀錄也不呈現。放大輪送出前也核對比對結果（第九輪漏掉了）。
 - **Claude 答案的文字也是外來文字**（C3）。Claude 是看過圖片才寫答案的，答案檔裡的影格、類別、關係名稱與第五輪 N12 的 Codex 回覆同理。schema 錯誤改為只寫固定字句；原文留在 `error.json`，以來源 `claude-answers` 標記。外來來源的封閉清單因此是五個。詞彙表裡的名稱是使用者自己的輸入，不算外來文字。

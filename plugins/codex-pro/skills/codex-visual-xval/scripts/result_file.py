@@ -222,17 +222,19 @@ def last_resort(run: str) -> tuple[str, str]:
 
 
 def render(run: str, stopped: dict | None) -> tuple[str, str | None]:
-    error = stopped or load(os.path.join(run, "error.json"), {}) or None
-    if error and "error" not in error:
-        error = None
     # The ledger's one rule over every record, checked now (round 7, Y4; round 9). Only the records it verifies
-    # are read; the others are listed once and shown as not shown (A3).
+    # are read; the others are listed once and shown as not shown (A3). The run's error and the profile are
+    # records too (round 10, C2).
     found = differences(run) if not stopped else []
     bad = {name for name, _ in found}
     entries = ledger(run)
 
     def record(name: str, default: Any) -> Any:
         return default if name in bad else load(os.path.join(run, name), default)
+
+    error = stopped or record("error.json", {}) or None
+    if error and "error" not in error:
+        error = None
 
     comparison = record("comparison.json", {}) or None
     if comparison and not (isinstance(comparison.get("disagreements"), list)
@@ -244,7 +246,7 @@ def render(run: str, stopped: dict | None) -> tuple[str, str | None]:
     # The seal is checked now: one never checked is not reported as intact, a missing one counts as broken (A4)
     sealed_now = safe_digest(os.path.join(run, "claude.json"))
     seal_broken = not seal_record or sealed_now != seal_record.get("sha256") or bool(bad & {"claude.json", "seal.json"})
-    settings = load(os.path.join(run, "profile.json"), {})   # Step 4.1's, not a step's: each value is form-checked
+    settings = record("profile.json", {})   # each value is form-checked as well
     requests = record("requests.json", {})
     request = requests.get("1") if isinstance(requests.get("1"), dict) else {}
     sam_state = record("sam.json", {})
