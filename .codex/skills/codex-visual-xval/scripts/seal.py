@@ -11,6 +11,7 @@ Claude's answers were fixed before Codex's answers existed.
 import datetime
 import hashlib
 import json
+import os
 import sys
 
 
@@ -29,8 +30,11 @@ def seal(answers: str, seal_path: str) -> None:
         "sealed_at": datetime.datetime.now().astimezone().isoformat(timespec="seconds"),
         "sealed_epoch": datetime.datetime.now().timestamp(),   # orders the seal against the request
     }
+    # only a regular file is written: a FIFO would stall, a symlink would write elsewhere (#23 verify round 11, F1)
+    if os.path.lexists(seal_path) and (os.path.islink(seal_path) or not os.path.isfile(seal_path)):
+        raise OSError(f"{os.path.basename(seal_path)} is not a regular file; nothing was written to it")
     with open(seal_path, "w", encoding="utf-8") as fh:
-        json.dump(record, fh, ensure_ascii=False, indent=1)
+        json.dump(record, fh, ensure_ascii=True, indent=1)
     print(json.dumps(record, ensure_ascii=False))
 
 

@@ -12,7 +12,7 @@ import tempfile
 from typing import Any
 
 import compare_claims
-from run_files import Stop, differences, explain, is_run_dir, ledger, safe_digest
+from run_files import Stop, differences, explain, is_run_dir, ledger, regular_or_absent, safe_digest
 
 
 def load(path: str, default: Any = None) -> Any:
@@ -215,6 +215,8 @@ def emit(text: str, error: str | None, argv: list[str]) -> None:
             os.makedirs(".codex-pro", exist_ok=True)
             stamp = datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
             out = os.path.join(".codex-pro", f"visual-xval-{stamp}.md")
+        if not regular_or_absent(out):   # a FIFO would stall the step, a symlink write elsewhere (round 11, F1)
+            raise OSError(0, "not a regular file")
         with open(out, "wb") as fh:
             fh.write(data)
     except OSError as exc:   # the result step's own error, kept out of the run's (round 8, K1)

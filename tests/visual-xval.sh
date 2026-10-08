@@ -2572,6 +2572,48 @@ python3 -c 'import sys; open(sys.argv[1], "w").write("[" * 200000)' "$WORK/r11n/
 xval seal --run "$WORK/r11n" --zoom
 assert_file "$WORK/r11n/zoom_rejected.json" "zoom answers nested too deep are rejected (F9)"
 
+# Round 11 (F1): every write goes through one entry that writes only regular files.
+xval_t() {   # xval_t <python> <args...> — run xval.py with a 20 s limit; RUN_OUT is its stdout, or "hung"
+  local py="$1"; shift
+  RUN_OUT=$(HOME="$WORK/home" MOCK_LOG="$WORK/mock.log" MOCK_PROMPTS="$WORK/prompts.txt" MOCK_REPLY="$WORK/codex_reply.md" \
+    PATH="$WORK/stubbin:$PATH" python3 - "$py" "$SCRIPTS" "$@" <<'PY'
+import subprocess, sys
+try:
+    done = subprocess.run([sys.argv[1], f"{sys.argv[2]}/xval.py", *sys.argv[3:]], capture_output=True, text=True, timeout=20)
+    print(done.stdout.strip()[:300])
+except subprocess.TimeoutExpired:
+    print("hung")
+PY
+)
+}
+rm -rf "$WORK/r11h"; SEQ= new_run "$WORK/r11h"; rm -f "$WORK/r11h/errors.jsonl"; mkfifo "$WORK/r11h/errors.jsonl"
+xval_t python3 seal --run "$WORK/r11h"
+rm -f "$WORK/r11h/errors.jsonl"
+assert_contains "$RUN_OUT" "already sealed" "an error history that is a FIFO does not stall a refusal (F1)"
+rm -rf "$WORK/r11s"; xval init --run "$WORK/r11s" --vocab "$WORK/vocab.json" "$WORK"/imgs/*.png
+cp "$WORK/claude_marked.json" "$WORK/r11s/claude.json"; mkfifo "$WORK/r11s/seal.json"
+xval_t python3 seal --run "$WORK/r11s"
+rm -f "$WORK/r11s/seal.json"
+assert_contains "$RUN_OUT" "not a regular file" "a seal file that is a FIFO is refused, not waited on (F1)"
+rm -rf "$WORK/r11k"; SEQ= new_run "$WORK/r11k"; printf 'outside\n' > "$WORK/outside_prompt.txt"
+ln -s "$WORK/outside_prompt.txt" "$WORK/r11k/prompt_round1.md"; rm -f "$WORK/mock.log"
+ask_with "$WORK/codex_reply.md" "$WORK/r11k" 1
+assert_contains "$RUN_OUT" "not a regular file" "a prompt file that is a symlink is refused (F1)"
+assert_eq "outside" "$(cat "$WORK/outside_prompt.txt")" "and nothing is written through it"
+assert_no_file "$WORK/mock.log" "and nothing is sent"
+rm -rf "$WORK/r11o"; cp -R "$WORK/run6w" "$WORK/r11o"; mkfifo "$WORK/r11o_out.md"
+xval_t python3 result --run "$WORK/r11o" --out "$WORK/r11o_out.md"
+rm -f "$WORK/r11o_out.md"
+assert_contains "$RUN_OUT" '"error": "target_invalid"' "a result file target that is a FIFO is refused, not waited on (F1)"
+if [ -x "$OLDPY" ] && "$OLDPY" -c 'import sys; sys.exit(0 if sys.version_info < (3, 10) else 1)' 2>/dev/null; then
+  rm -rf "$WORK/r11g"; SEQ= new_run "$WORK/r11g"; rm -f "$WORK/r11g/errors.jsonl"; mkfifo "$WORK/r11g/errors.jsonl"
+  xval_t "$OLDPY" ask --run "$WORK/r11g" --round 1
+  rm -f "$WORK/r11g/errors.jsonl"
+  assert_contains "$RUN_OUT" '"error": "runtime_unavailable"' "an old Python does not stall on an error history that is a FIFO (F1)"
+else
+  skip "an old Python does not stall on an error history that is a FIFO" "no Python older than 3.10 at $OLDPY"
+fi
+
 # Round 6 (Q1): the steps that write into a directory are a closed list.
 rm -rf "$WORK/typo"
 xval confirm-privacy --run "$WORK/typo/deep/run"

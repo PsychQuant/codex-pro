@@ -38,13 +38,23 @@ def load(path: str, default: Any = None) -> Any:
         return default
 
 
-def dump(path: str, data: Any) -> None:
-    """Write a record. Only a regular file is written: opening a FIFO for writing would stall the step; and
-    non-ASCII is escaped, so a lone surrogate from a reply cannot stop the write halfway (#23 verify round 10, D5)."""
-    if os.path.lexists(path) and not os.path.isfile(path):
+def regular_or_absent(path: str) -> bool:
+    """Whether `path` may be written: absent, or a regular file that is not a symlink. A FIFO would stall the
+    step, and a symlink would write somewhere outside the run (#23 verify round 11, F1)."""
+    return not os.path.lexists(path) or (os.path.isfile(path) and not os.path.islink(path))
+
+
+def write_text(path: str, text: str, append: bool = False) -> None:
+    """The one way a record, a prompt or the error history is written (#23 verify round 10, D5; round 11, F1)."""
+    if not regular_or_absent(path):
         raise Stop("target_invalid", f"{os.path.basename(path)} is not a regular file; nothing was written to it")
-    with open(path, "w", encoding="utf-8") as fh:
-        json.dump(data, fh, ensure_ascii=True, indent=1)
+    with open(path, "a" if append else "w", encoding="utf-8") as fh:
+        fh.write(text)
+
+
+def dump(path: str, data: Any) -> None:
+    """Write a record, ASCII-escaped, so a lone surrogate from a reply cannot stop the write halfway (D5)."""
+    write_text(path, json.dumps(data, ensure_ascii=True, indent=1))
 
 
 RUN_MARK = "# copies of the images given to /codex-pro:codex-visual-xval"

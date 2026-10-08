@@ -380,7 +380,7 @@
   - 驗證：`spectra validate` 與 `spectra analyze` 無 warning。
 - [x] 16.2 帳本：清除錯誤前先核對、中途登記只登記這一步寫出的檔（含 JSON 與中斷）、帳本不見時不重建、profile 在記錄請求時登記、init 的拒絕不理 error.json、「還不能做」的拒絕不取代錯誤、讀取接住 RecursionError（E1、F2、F3、F6、F7、F8、F9）。
   - [after: 16.1]
-- [ ] 16.3 寫入：所有紀錄與錯誤歷史經同一個只寫一般檔案的入口，含 seal、prompt 與 Python 3.9 的路徑（F1）。
+- [x] 16.3 寫入：所有紀錄與錯誤歷史經同一個只寫一般檔案的入口，含 seal、prompt 與 Python 3.9 的路徑（F1）。
   - [after: 16.2]
 - [ ] 16.4 結果檔與訊息：請求那一行的封存狀態、錨點與「沒有比對」的區分、訊息以位置稱呼使用者的圖（F4、F5）。
   - [after: 16.3]

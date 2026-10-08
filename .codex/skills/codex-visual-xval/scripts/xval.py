@@ -46,11 +46,13 @@ def _older_python(argv):
     if not run:
         print(__doc__, file=sys.stderr)
         sys.exit(64)
+    def regular(path):   # absent, or a regular file that is not a symlink (round 11, F1); 3.9-compatible
+        return not os.path.lexists(path) or (os.path.isfile(path) and not os.path.islink(path))
     def enter_error(path):   # the run's error is in the ledger, as on the main path (round 10, C2)
         import hashlib
         ledger_path = os.path.join(path, "ledger.json")
-        if os.path.lexists(ledger_path) and not os.path.isfile(ledger_path):
-            return
+        if not os.path.isfile(ledger_path) or not regular(ledger_path):
+            return   # a missing ledger is not rebuilt here either (round 11, F3)
         try:
             with open(ledger_path, encoding="utf-8") as fh:
                 entries = json.load(fh)
@@ -73,11 +75,13 @@ def _older_python(argv):
     if command != "result":
         if is_run(run):
             entry = {"error": "runtime_unavailable", "detail": detail, "step": command, "source": "xval"}
-            with open(os.path.join(run, "error.json"), "w", encoding="utf-8") as fh:
-                json.dump(entry, fh)
-            enter_error(run)
-            with open(os.path.join(run, "errors.jsonl"), "a", encoding="utf-8") as fh:   # the history (round 4, M10)
-                fh.write(json.dumps(entry) + "\n")
+            if regular(os.path.join(run, "error.json")):
+                with open(os.path.join(run, "error.json"), "w", encoding="utf-8") as fh:
+                    json.dump(entry, fh)
+                enter_error(run)
+            if regular(os.path.join(run, "errors.jsonl")):   # the history (round 4, M10); not waited on (F1)
+                with open(os.path.join(run, "errors.jsonl"), "a", encoding="utf-8") as fh:
+                    fh.write(json.dumps(entry) + "\n")
         print(json.dumps({"error": "runtime_unavailable", "detail": detail}))
         sys.exit(5)
     def entered():   # the ledger, read the way run_files reads it; 3.9-compatible
@@ -141,13 +145,15 @@ def _older_python(argv):
         if out is None:   # .codex-pro is created only for the default location (round 6, Q1), inside the try (B5)
             os.makedirs(".codex-pro", exist_ok=True)
             out = os.path.join(".codex-pro", "visual-xval-%s.md" % now.astimezone(datetime.timezone.utc).strftime("%Y%m%dT%H%M%SZ"))
+        if not regular(out):   # a FIFO would stall, a symlink write elsewhere (round 11, F1)
+            raise OSError(0, "not a regular file")
         with open(out, "wb") as fh:
             fh.write(data)
     except OSError as exc:   # a structured answer, not a traceback (round 7, Y3), kept in the history (round 9, B5)
         entry = {"error": "target_invalid", "detail": "cannot write the result file %s: %s"
                  % (os.path.basename(out or ".codex-pro"), exc.strerror or type(exc).__name__),
                  "step": "result", "at": now.isoformat(timespec="seconds"), "source": "xval"}
-        if is_run(run):
+        if is_run(run) and regular(os.path.join(run, "errors.jsonl")):
             with open(os.path.join(run, "errors.jsonl"), "a", encoding="utf-8") as fh:
                 fh.write(json.dumps(entry) + "\n")
         print(json.dumps({"error": entry["error"], "detail": entry["detail"]}))
@@ -164,8 +170,8 @@ import compare_claims  # noqa: E402
 import media  # noqa: E402
 import result_file  # noqa: E402
 from run_files import (Stop, INPUTS, adopt_run_dir, checked, checked_comparison, checked_inputs, differences,  # noqa: E402
-                       dump, enter, enter_written, failure, is_run_dir, ledger, load, neutral_names, now_iso, run_dir,
-                       snapshot)
+                       dump, enter, enter_written, failure, is_run_dir, ledger, load, neutral_names, now_iso,
+                       regular_or_absent, run_dir, snapshot, write_text)
 from codex_errors import classify, login_problem  # noqa: E402
 from zoom_round import (class_lines, crop_box, dispute_points, enlargement, position_pads, question,  # noqa: E402
                         zoom_skip_reason,
@@ -344,6 +350,8 @@ def seal_answers(run: str, zoom: bool) -> None:
             raise Stop("target_invalid", f"Claude claims: {exc}", source="claude-answers")
         if sorted(claude) != neutral_names(run):
             raise Stop("target_invalid", "Claude claims must answer every image, by its neutral name")
+    if not regular_or_absent(record):   # F1
+        raise Stop("target_invalid", f"{os.path.basename(record)} is not a regular file; nothing was sealed")
     import contextlib, io
     with contextlib.redirect_stdout(io.StringIO()):
         sealing.seal(answers, record)
@@ -461,10 +469,10 @@ def call_codex(run: str, prompt: str, images: list[str], tag: str, argv: list[st
     prompt_file = os.path.join(run, f"prompt_{tag}.md")
     output = os.path.join(run, f"codex_{tag}.md")
     try:   # ready before the request is recorded: a failure here sends nothing (round 6, Q6)
-        with open(prompt_file, "w", encoding="utf-8") as fh:
-            fh.write(prompt)
-    except OSError as exc:
-        raise Stop("runtime_unavailable", f"cannot write the prompt file: {failure(exc)}; nothing was sent")
+        write_text(prompt_file, prompt)   # a FIFO or symlink is refused (round 11, F1)
+    except (OSError, Stop) as exc:
+        reason = exc.detail if isinstance(exc, Stop) else failure(exc)
+        raise Stop("runtime_unavailable", f"cannot write the prompt file: {reason}; nothing was sent")
     enter(run, os.path.basename(prompt_file))
     record_request(run, rnd, requested_at=now_iso(), requested_epoch=datetime.datetime.now().timestamp())
     if "profile.json" not in ledger(run):   # a record from the first recorded request on (round 11, F6)
@@ -746,8 +754,7 @@ def crops(run: str) -> None:
         dump(os.path.join(run, "zoom_plan.json"), plan)
         dump(os.path.join(run, "zoom_skipped.json"), skipped)
         if plan:
-            with open(os.path.join(run, "zoom_prompt.md"), "w", encoding="utf-8") as fh:
-                fh.write(zoom_prompt(plan, vocab))
+            write_text(os.path.join(run, "zoom_prompt.md"), zoom_prompt(plan, vocab))   # F1
     except BaseException:
         stopped_partway(run, before, *written_by_crops)
         raise
@@ -797,6 +804,8 @@ def sam(run: str) -> None:
         # xval's own words: the check prints a full path, and the result file must still say where SAM goes (D8)
         return record("not_installed", "SAM 2.1 is not installed; it goes to ~/.codex-pro/sam-env once the user "
                       "agrees to the download (sam_env.sh install)")
+    if not regular_or_absent(os.path.join(run, "track.json")):   # SAM writes it; a FIFO would stall it (F1)
+        raise Stop("target_invalid", "track.json is not a regular file; SAM was not run")
     dump(os.path.join(run, "sam_frames.json"), [os.path.join(run, "frames", n) for n in neutral_names(run)])
     enter(run, "sam_frames.json")
     env_dir = os.path.expanduser("~/.codex-pro/sam-env")
@@ -938,10 +947,9 @@ def stop_run(run: str, command: str, error: str, detail: str, record_error: bool
                 pass   # the answer below still goes out
         elif refused if refused is not None else True:
             record["refused"] = True
-        try:
-            with open(os.path.join(run, "errors.jsonl"), "a", encoding="utf-8") as fh:   # history survives clearing
-                fh.write(json.dumps(record) + "\n")   # ASCII escapes: a lone surrogate cannot stop it (D5)
-        except OSError:
+        try:   # history survives clearing; ASCII escapes (D5); not a regular file: skipped, not waited on (F1)
+            write_text(os.path.join(run, "errors.jsonl"), json.dumps(record) + "\n", append=True)
+        except (Stop, OSError):
             pass
     print(json.dumps({"error": error, "detail": detail}, ensure_ascii=False))
     sys.exit(5)
