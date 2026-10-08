@@ -373,3 +373,20 @@
 - [x] 15.6 真實後端端到端（第十次）。
   - 驗證：紀錄寫進 e2e-checklist §F。
   - [after: 15.5]
+
+## 16. Verify 第十一輪修正：xval 自己不抹掉帳本已偵測到的不符（#23 第十一輪 report 的 E1、F1–F10；F11 另開 #26）
+
+- [x] 16.1 規格與 design（design「第十一輪：xval 只登記自己剛寫的東西」；Sealed Claude answers 的清除錯誤與中途登記、兩類拒絕；Structured result file 的外來文字清單與檔名）。
+  - 驗證：`spectra validate` 與 `spectra analyze` 無 warning。
+- [ ] 16.2 帳本：清除錯誤前先核對、中途登記只登記這一步寫出的檔（含 JSON 與中斷）、帳本不見時不重建、profile 在記錄請求時登記、init 的拒絕不理 error.json、「還不能做」的拒絕不取代錯誤、讀取接住 RecursionError（E1、F2、F3、F6、F7、F8、F9）。
+  - [after: 16.1]
+- [ ] 16.3 寫入：所有紀錄與錯誤歷史經同一個只寫一般檔案的入口，含 seal、prompt 與 Python 3.9 的路徑（F1）。
+  - [after: 16.2]
+- [ ] 16.4 結果檔與訊息：請求那一行的封存狀態、錨點與「沒有比對」的區分、訊息以位置稱呼使用者的圖（F4、F5）。
+  - [after: 16.3]
+- [ ] 16.5 文件：SKILL、CHANGELOG、spec 的外來文字清單（Codex 回覆）與 runtime 措辭、design 的指向（F10）。
+  - 驗證：`bash tests/run.sh` 只剩 #24。
+  - [after: 16.4]
+- [ ] 16.6 真實後端端到端（第十一次）。
+  - 驗證：紀錄寫進 e2e-checklist §F。
+  - [after: 16.5]
