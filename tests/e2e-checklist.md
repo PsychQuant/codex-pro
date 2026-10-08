@@ -347,6 +347,13 @@ f01 是 PIL 寫出的 3000×1875 PNG，f02 是 PIL 寫出的 JPEG（品質 92）
 - 帳本登記 29 筆紀錄（比第十一次多了 `init_attempt.json`），跑完後一條規則核對沒有任何不符；run 目錄裡沒有留下 xval 的暫存檔，複本與裁切圖的權限照常是 0644。
 - 結果檔沒有 error、沒有 `invalid`、沒有「not shown」「never sealed」或外來文字，也沒有出現資料夾名稱、撇號或 `<!--`；複本與裁切圖都不含 EXIF、XMP 或文字區塊。
 
+第十三次紀錄：2026-10-08，codex-pro `b4c5c00`（第十三輪 verify 的修正：「用掉了沒有」在寫下錯誤的當下判定、profile 隨請求登記、codex-call 啟動後只剩中斷保護），
+同一個 runtime 與 profile、同一組 PIL 合成圖，資料夾名稱含撇號、括號與 `<!--`。跑了兩個 run：
+
+- 第一個 run 的放大輪遇到後端過載（codex-call exit 1，訊息是伺服器過載）：記為 `ask --round zoom` 的 `backend_error`，`error.json` 帶 `used_up: true`；之後 `adjudicate` 照常完成而沒有清除它（放大輪未採用，三筆分歧都無法裁決）；結果檔 `error: backend_error`，Detail 只說 codex-call 的訊息留在 `error.json`，沒有出現後端的原文；帳本 28 筆、沒有任何不符，沒有留下暫存檔。
+- 第二個 run 完整跑完：第一輪 8 秒、放大輪 7 秒，各一次請求；放大輪題目檔與 subagent 作答的那份逐字相同。這次 Codex 在放大輪把 d3 答成 false（先前幾次是 true），兩邊不一致，所以 d3 不採用：裁決為一筆 `resolved_codex`、兩筆無法裁決，是模型答案的差異，不是程式的改變。
+- 第二個 run 的帳本 29 筆，跑完後沒有任何不符、沒有 `error.json`、沒有暫存檔；複本與裁切圖 0644、不含 EXIF、XMP 或文字區塊；結果檔沒有 error、`invalid`、「not shown」「never sealed」、外來文字、資料夾名稱、撇號或 `<!--`。
+
 ## Post-test cleanup checklist
 
 - [ ] B 段使用的 disposable account／VM 沒有污染日常 Codex home
