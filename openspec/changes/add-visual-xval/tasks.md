@@ -387,6 +387,6 @@
 - [x] 16.5 文件：SKILL、CHANGELOG、spec 的外來文字清單（Codex 回覆）與 runtime 措辭、design 的指向（F10）。
   - 驗證：`bash tests/run.sh` 只剩 #24。
   - [after: 16.4]
-- [ ] 16.6 真實後端端到端（第十一次）。
+- [x] 16.6 真實後端端到端（第十一次）。
   - 驗證：紀錄寫進 e2e-checklist §F。
   - [after: 16.5]
