@@ -56,7 +56,7 @@ class MediaError(Exception):
 def image_size(path: str) -> tuple[int | None, int | None]:
     try:
         out = subprocess.run(["sips", "-g", "pixelWidth", "-g", "pixelHeight", path],
-                             capture_output=True, text=True, check=True).stdout
+                             capture_output=True, encoding="utf-8", errors="replace", check=True).stdout
         return int(re.search(r"pixelWidth: (\d+)", out).group(1)), int(re.search(r"pixelHeight: (\d+)", out).group(1))
     except (OSError, subprocess.CalledProcessError, AttributeError):
         return None, None

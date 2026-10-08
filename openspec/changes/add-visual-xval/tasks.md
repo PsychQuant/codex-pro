@@ -348,7 +348,7 @@
   - [after: 14.1]
 - [x] 14.3 結果檔：只用帳本核對過的紀錄、外來文字只標來源、frontmatter 欄位格式、最後一道退路只寫固定內容（A1、A2、A3、B5）。
   - [after: 14.2]
-- [ ] 14.4 其餘：使用者給的詞彙表不受一般檔案限制、Popen 中斷時終止 codex-call、回覆不是 UTF-8 時為 parse_failed、sam 與 sips 探測以 UTF-8 解碼、Python 3.9 路徑（B2、B3、B5、B8）。
+- [x] 14.4 其餘：使用者給的詞彙表不受一般檔案限制、Popen 中斷時終止 codex-call、回覆不是 UTF-8 時為 parse_failed、sam 與 sips 探測以 UTF-8 解碼、Python 3.9 路徑（B2、B3、B5、B8）。
   - [after: 14.3]
 - [ ] 14.5 文件：SKILL、CHANGELOG、design 的指向（B6）。
   - 驗證：`bash tests/run.sh` 只剩 #24。

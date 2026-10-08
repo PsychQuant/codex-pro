@@ -46,6 +46,8 @@ RUN_MARK = "# copies of the images given to /codex-pro:codex-visual-xval"
 
 
 def is_run_dir(run: str) -> bool:
+    if not os.path.isfile(os.path.join(run, ".gitignore")):   # a FIFO there would stall every step (round 9, B2)
+        return False
     try:
         with open(os.path.join(run, ".gitignore"), encoding="utf-8") as fh:
             return fh.readline().strip() == RUN_MARK

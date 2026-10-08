@@ -854,6 +854,8 @@ while [ $# -gt 0 ]; do
   esac
 done
 [ -n "$prompt" ] && cat "$prompt" >> "$MOCK_PROMPTS"
+# MOCK_SLEEP: a call still running when xval is interrupted; exec keeps the pid written to MOCK_PIDFILE
+[ -n "${MOCK_SLEEP:-}" ] && { printf '%s\n' "$$" > "$MOCK_PIDFILE"; exec sleep "$MOCK_SLEEP"; }
 [ -n "${MOCK_STDERR:-}" ] && printf '%s\n' "$MOCK_STDERR" >&2
 [ -n "${MOCK_REPLY:-}" ] && [ -n "$out" ] && cp "$MOCK_REPLY" "$out"
 exit "${MOCK_STATUS:-0}"
@@ -2018,6 +2020,20 @@ if [ -x "$OLDPY" ] && "$OLDPY" -c 'import sys; sys.exit(0 if sys.version_info < 
     *"$(dirname "$OLDPY")"*) fail "and names the interpreter without its directory (K6)" ;;
     *) pass "and names the interpreter without its directory (K6)" ;;
   esac
+  # Round 9 (B5): the old-Python result file keeps the same rules as the other.
+  rm -rf "$WORK/runold4"; cp -R "$WORK/run6w" "$WORK/runold4"
+  python3 -c 'import sys; open(sys.argv[1], "w").write("[" * 200000)' "$WORK/runold4/meta.json"
+  printf '{"model": "gpt test", "effort": "high", "max_time": 30, "profile_source": "elsewhere"}' > "$WORK/runold4/profile.json"
+  RUN_OUT=$(cd "$WORK/project" && "$OLDPY" "$SCRIPTS/xval.py" result --run "$WORK/runold4" --out "$WORK/runold4_result.md" 2>&1)
+  assert_contains "$RUN_OUT" '"result"' "a record nested too deep does not stop the old-Python result file (B5)"
+  assert_eq "invalid invalid" "$(fm "$WORK/runold4_result.md" model) $(fm "$WORK/runold4_result.md" profile_source)" \
+    "and its frontmatter fields are written in their own forms (B5)"
+  RUN_OUT=$(cd "$WORK/project" && "$OLDPY" "$SCRIPTS/xval.py" result --run "$WORK/runold4" --out "$WORK/no-such-dir/x.md" 2>&1)
+  assert_contains "$RUN_OUT" '"error": "target_invalid"' "an old-Python result file that cannot be written is target_invalid"
+  assert_contains "$(tail -1 "$WORK/runold4/errors.jsonl" 2>/dev/null)" "cannot write the result file" "and it is kept in the history (B5)"
+  rm -rf "$WORK/oldproj"; mkdir -p "$WORK/oldproj"; : > "$WORK/oldproj/.codex-pro"
+  RUN_OUT=$(cd "$WORK/oldproj" && "$OLDPY" "$SCRIPTS/xval.py" result --run "$WORK/runold4" 2>&1)
+  assert_contains "$RUN_OUT" '"error": "target_invalid"' "a default location that cannot be created gives a structured answer (B5)"
 else
   skip "an old Python writes the result file even when records have the wrong type" "no Python older than 3.10 at $OLDPY"
 fi
@@ -2225,6 +2241,68 @@ printf '{"model": "m", "effort": "high", "max_time": "value-marker-9p", "profile
 xval ask --run "$WORK/run9p" --round 1
 assert_contains "$RUN_OUT" "max_time" "an invalid profile is named by its field"
 refute_contains "$RUN_OUT" "value-marker-9p" "without the value from the profile file (round 9)"
+
+# Round 9 (B2, B3, B8): the user's own vocabulary may be a pipe; a FIFO in the run does not stall a step;
+# an interrupted ask stops codex-call; a reply that is not UTF-8 is parse_failed; tool output is UTF-8.
+rm -rf "$WORK/run9i"
+xval init --run "$WORK/run9i" --vocab <(cat "$WORK/vocab.json") --first-side claude-test "$WORK"/imgs/*.png
+assert_eq "0" "$RUN_STATUS" "a vocabulary given through a pipe is read (B2)"
+rm -rf "$WORK/run9o"; mkdir -p "$WORK/run9o"; mkfifo "$WORK/run9o/.gitignore"
+b2=$(python3 - "$SCRIPTS" "$WORK/run9o" <<'PY'
+import subprocess, sys
+try:
+    done = subprocess.run([sys.executable, f"{sys.argv[1]}/xval.py", "compare", "--run", sys.argv[2]],
+                          capture_output=True, text=True, timeout=20)
+    print(done.stdout.strip()[:120])
+except subprocess.TimeoutExpired:
+    print("hung")
+PY
+)
+rm -f "$WORK/run9o/.gitignore"
+assert_contains "$b2" "not a run directory" "a FIFO named .gitignore does not stall a step (B2)"
+new_run "$WORK/run9t"
+b3=$(HOME="$WORK/home" MOCK_SLEEP=60 MOCK_PIDFILE="$WORK/run9t.pid" MOCK_LOG="$WORK/mock.log" MOCK_PROMPTS="$WORK/prompts.txt" \
+  PATH="$WORK/stubbin:$PATH" python3 - "$SCRIPTS" "$WORK/run9t" "$WORK/run9t.pid" <<'PY'
+import os, signal, subprocess, sys, time
+proc = subprocess.Popen([sys.executable, f"{sys.argv[1]}/xval.py", "ask", "--run", sys.argv[2], "--round", "1"],
+                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+for _ in range(100):
+    if os.path.exists(sys.argv[3]) and open(sys.argv[3]).read().strip():
+        break
+    time.sleep(0.1)
+child = int(open(sys.argv[3]).read())
+proc.send_signal(signal.SIGINT)
+proc.wait(timeout=20)
+time.sleep(0.3)
+try:
+    os.kill(child, 0)
+    print("codex-call still running"); os.kill(child, signal.SIGKILL)
+except ProcessLookupError:
+    print("codex-call stopped")
+PY
+)
+assert_eq "codex-call stopped" "$b3" "an interrupted ask stops codex-call too (B3)"
+new_run "$WORK/run9b"; printf 'Here \377\376 are my answers.\n' > "$WORK/run9b_reply.md"
+ask_with "$WORK/run9b_reply.md" "$WORK/run9b" 1
+assert_contains "$RUN_OUT" '"error": "parse_failed"' "a reply that is not UTF-8 is parse_failed, not internal_error (B3)"
+mkdir -p "$WORK/imgs9"; cp "$WORK/imgs/shot_2026-09-11_1001.png" "$WORK/imgs9/測試圖.png"
+rm -rf "$WORK/run9e"
+RUN_OUT=$(LC_ALL=zh_TW.Big5 HOME="$WORK/home" python3 "$SCRIPTS/xval.py" init --run "$WORK/run9e" --vocab "$WORK/vocab.json" "$WORK/imgs9/測試圖.png" 2>&1)
+assert_contains "$RUN_OUT" '"ok": true' "an image with a CJK name is measured under a Big5 locale (B8)"
+b3s=$(python3 - "$SCRIPTS" <<'PY'
+import ast, sys
+loose = []
+for name in ("xval.py", "media.py"):
+    tree = ast.parse(open(f"{sys.argv[1]}/{name}", encoding="utf-8").read())
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Call) and getattr(node.func, "attr", "") in ("run", "Popen", "check_output"):
+            kw = {k.arg: k.value for k in node.keywords}
+            if "text" in kw or "universal_newlines" in kw:   # decoded by the locale
+                loose.append(f"{name}:{node.lineno}")
+print(" ".join(loose) or "none")
+PY
+)
+assert_eq "none" "$b3s" "no tool output is decoded by the locale (B3, B8)"
 
 # Round 6 (Q1): the steps that write into a directory are a closed list.
 rm -rf "$WORK/typo"

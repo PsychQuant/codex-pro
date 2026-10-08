@@ -46,6 +46,8 @@ def _older_python(argv):
         print(__doc__, file=sys.stderr)
         sys.exit(64)
     def is_run(path):   # only a run directory is written into or read (round 5, V5; round 6, Q1); 3.9-compatible
+        if not os.path.isfile(os.path.join(path, ".gitignore")):   # a FIFO would stall (round 9, B2)
+            return False
         try:
             with open(os.path.join(path, ".gitignore"), encoding="utf-8") as fh:
                 return fh.readline().strip() == "# copies of the images given to /codex-pro:codex-visual-xval"
@@ -67,19 +69,25 @@ def _older_python(argv):
         try:
             with open(path, encoding="utf-8") as fh:
                 value = json.load(fh)
-        except (OSError, ValueError):
+        except (OSError, ValueError, RecursionError):   # nested too deep is unreadable too (round 9, B5)
             return default
         return value if isinstance(value, type(default)) else default
     profile, frames, meta = read("profile.json", {}), read("frames.json", {}), read("meta.json", {})
-    def clean(value):   # one line: no control or Unicode line-break character reaches the frontmatter
-        return re.sub("[\x00-\x1f\x7f-\x9f\u2028\u2029]", " ", str(value))
+    model_id = r"[A-Za-z0-9][A-Za-z0-9._:/@+-]{0,99}"
+    def form(pattern, value):   # each field in its own form, otherwise `invalid`, as in result_file.py (round 9, B5)
+        if value is None or value == "":
+            return ""
+        if isinstance(value, bool) or not isinstance(value, (str, int, float)):
+            return "invalid"
+        return str(value) if re.fullmatch(pattern, str(value)) else "invalid"
     now = datetime.datetime.now().astimezone()
-    fm = [("skill", "visual-xval"), ("target", "%d images" % len(frames)), ("model", clean(profile.get("model", ""))),
-          ("effort", clean(profile.get("effort", ""))), ("profile_source", clean(profile.get("profile_source", ""))),
-          ("first_side_model", clean(meta.get("first_side_model", ""))), ("timestamp", now.isoformat(timespec="seconds")), ("n_images", len(frames)), ("n_claims", 0),
-          ("agreement_rate", ""), ("claude_answers_sha256", ""), ("sealed_at", ""), ("seal_broken", "true"),
-          ("codex_requested_at", ""), ("codex_reply_sha256", ""), ("sam_status", "not_run"),
-          ("error", "runtime_unavailable")]
+    fm = [("skill", "visual-xval"), ("target", "%d images" % len(frames)), ("model", form(model_id, profile.get("model"))),
+          ("effort", form(r"[a-z]{1,20}", profile.get("effort"))),
+          ("profile_source", form(r"default|global|project|mixed", profile.get("profile_source"))),
+          ("first_side_model", form(model_id, meta.get("first_side_model"))), ("timestamp", now.isoformat(timespec="seconds")),
+          ("n_images", len(frames)), ("n_claims", 0), ("agreement_rate", ""), ("claude_answers_sha256", ""),
+          ("sealed_at", ""), ("seal_broken", "true"), ("codex_requested_at", ""), ("codex_reply_sha256", ""),
+          ("sam_status", "not_run"), ("error", "runtime_unavailable")]
     lines = ["---"] + ["%s: %s" % kv for kv in fm] + ["---", "", "# Visual cross-validation — %d images" % len(frames), "",
              "Run stopped: `runtime_unavailable`. No retry.", "", "Runtime preflight detail: " + detail, "",
              "## Agreement", "", "No comparison was made.", "", "## Disagreements", "", "None.", "",
@@ -87,15 +95,21 @@ def _older_python(argv):
              "## Limitations", "", "- Agreement between the two models does not establish that either is correct; "
              "only a human reference can."]
     out = argv[argv.index("--out") + 1] if "--out" in argv and argv.index("--out") + 1 < len(argv) else None
-    if out is None:   # .codex-pro is created only for the default location (round 6, Q1)
-        os.makedirs(".codex-pro", exist_ok=True)
-        out = os.path.join(".codex-pro", "visual-xval-%s.md" % now.astimezone(datetime.timezone.utc).strftime("%Y%m%dT%H%M%SZ"))
+    data = ("\n".join(lines) + "\n").encode("utf-8", "replace")
     try:
-        with open(out, "w", encoding="utf-8") as fh:
-            fh.write("\n".join(lines) + "\n")
-    except OSError as exc:   # a structured answer, not a traceback (round 7, Y3)
-        print(json.dumps({"error": "target_invalid", "detail": "cannot write the result file %s: %s"
-                          % (os.path.basename(out), exc.strerror or type(exc).__name__)}))
+        if out is None:   # .codex-pro is created only for the default location (round 6, Q1), inside the try (B5)
+            os.makedirs(".codex-pro", exist_ok=True)
+            out = os.path.join(".codex-pro", "visual-xval-%s.md" % now.astimezone(datetime.timezone.utc).strftime("%Y%m%dT%H%M%SZ"))
+        with open(out, "wb") as fh:
+            fh.write(data)
+    except OSError as exc:   # a structured answer, not a traceback (round 7, Y3), kept in the history (round 9, B5)
+        entry = {"error": "target_invalid", "detail": "cannot write the result file %s: %s"
+                 % (os.path.basename(out or ".codex-pro"), exc.strerror or type(exc).__name__),
+                 "step": "result", "at": now.isoformat(timespec="seconds"), "source": "xval"}
+        if is_run(run):
+            with open(os.path.join(run, "errors.jsonl"), "a", encoding="utf-8") as fh:
+                fh.write(json.dumps(entry) + "\n")
+        print(json.dumps({"error": entry["error"], "detail": entry["detail"]}))
         sys.exit(5)
     print(json.dumps({"result": out, "error": "runtime_unavailable"}))
     sys.exit(0)
@@ -137,6 +151,19 @@ image_size = media.image_size
 FIRST_SIDE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:/@+-]{0,99}")
 
 
+def load_vocab(path: str) -> Any:
+    """The user's own vocabulary file: any readable path but a directory, so `--vocab <(...)` and a pipe
+    work. The run's records are read only when they are regular files; this file is the user's input,
+    named on the command line (round 9, B2)."""
+    if not path or os.path.isdir(path):
+        return None
+    try:
+        with open(path, encoding="utf-8") as fh:
+            return json.load(fh)
+    except (OSError, ValueError, RecursionError):
+        return None
+
+
 def init(run: str, vocab_path: str, images: list[str], sequence: bool, first_side: str = "") -> None:
     if any(os.path.exists(os.path.join(run, f)) for f in ("frames.json", "init_attempt.json")):
         # Once only, a failed attempt included: the privacy confirmation refers to one set of images
@@ -152,7 +179,7 @@ def init(run: str, vocab_path: str, images: list[str], sequence: bool, first_sid
     if first_side and not FIRST_SIDE.fullmatch(first_side):
         # it goes into the result file's frontmatter, where a line break would add keys (round 3, L1)
         raise Stop("target_invalid", "--first-side must be a model identifier on one line (letters, digits, . _ : / @ + -)")
-    vocab = load(vocab_path)
+    vocab = load_vocab(vocab_path)
     if vocab is None:
         raise Stop("target_invalid", f"vocabulary unreadable: {os.path.basename(vocab_path)}")   # W1
     problems = compare_claims.vocab_problems(vocab)
@@ -374,13 +401,21 @@ def call_codex(run: str, prompt: str, images: list[str], tag: str, argv: list[st
     # It started: from here on nothing withdraws the record. Its output is read only now, and bytes that
     # are not UTF-8 are replaced rather than raised, since a decoding error here once withdrew a call
     # that had already run (round 8, Z1). Foreground; the hard timeout is codex-call's.
-    _, stderr = proc.communicate()
+    try:
+        _, stderr = proc.communicate()
+    except BaseException:   # interrupted: codex-call stops too, as it did under subprocess.run (round 9, B3)
+        proc.kill()
+        proc.wait()
+        raise
     enter(run, os.path.basename(output))   # whatever it wrote, also on failure (round 9)
     if proc.returncode != 0:   # counted as sent, whatever the message says (round 5, V1)
         error, detail = classify(stderr, proc.returncode)   # codex-call's own text (round 9)
         raise Stop(error, f"{detail}; the request is counted as sent, so this round is used up", source="codex-call")
     try:
         reply = open(output, encoding="utf-8").read()
+    except UnicodeDecodeError:   # its own fault, not ours (round 9, B3)
+        raise Stop("parse_failed", f"Codex's reply is not UTF-8 text (it is kept as {os.path.basename(output)} "
+                   "in the run directory)")
     except OSError:
         raise Stop("parse_failed", "codex-call exited 0 but wrote no output")
     record_request(run, rnd, answered_at=now_iso())   # the reply's digest is in the ledger (round 9)
@@ -648,7 +683,9 @@ def sam(run: str) -> None:
     enter(run, "anchors.json")
     if not plan["anchors"]:
         return record("no_anchor", f"no agreeing frame has a {cls} to anchor on")
-    check = subprocess.run(["bash", os.path.join(HERE, "sam_env.sh"), "--check"], capture_output=True, text=True)
+    # decoded as UTF-8 whatever the locale (round 9, B3)
+    check = subprocess.run(["bash", os.path.join(HERE, "sam_env.sh"), "--check"], capture_output=True,
+                           encoding="utf-8", errors="replace")
     if check.returncode != 0:
         return record("not_installed", check.stdout.strip(), source="sam")
     dump(os.path.join(run, "sam_frames.json"), [os.path.join(run, "frames", n) for n in neutral_names(run)])
@@ -656,7 +693,7 @@ def sam(run: str) -> None:
     env_dir = os.path.expanduser("~/.codex-pro/sam-env")
     done = subprocess.run([os.path.join(env_dir, "bin", "python"), "-I", os.path.join(HERE, "sam_track.py"), "track",
                            "--frames", os.path.join(run, "sam_frames.json"), "--anchors", os.path.join(run, "anchors.json"),
-                           "--out", os.path.join(run, "track.json")], capture_output=True, text=True,
+                           "--out", os.path.join(run, "track.json")], capture_output=True, encoding="utf-8", errors="replace",
                           env={**os.environ, "HF_HOME": os.path.join(env_dir, "hf")})
     enter(run, "track.json")   # whatever SAM wrote, so the ledger's rule holds for it too (M6; round 9)
     if done.returncode != 0:
@@ -722,6 +759,8 @@ def result(run: str, argv: list[str]) -> None:
 
 # ── entry point ─────────────────────────────────────────────────
 def main(argv: list[str]) -> None:
+    # The skill reads this output as UTF-8; a Big5 or Shift-JIS terminal must not make a print fail (round 9, B8)
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     command, run = (argv[0] if argv else ""), option(argv, "--run")
     if not run:
         print(__doc__, file=sys.stderr)
