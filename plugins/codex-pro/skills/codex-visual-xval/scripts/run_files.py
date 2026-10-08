@@ -16,9 +16,15 @@ class Stop(Exception):
     """record=False is for refusing a command whose step was already done (a second seal, a second
     request in one round). That is about the command, not the run, so it must not replace the run's
     error: a completed run stays completed, a rate_limit stays a rate_limit (#23 verify round 2, R6)."""
-    def __init__(self, error: str, detail: str, record: bool = True):
+    def __init__(self, error: str, detail: str, record: bool = True, source: str = "xval",
+                 records: list[str] | None = None):
         super().__init__(detail)
-        self.error, self.detail, self.record = error, detail, record
+        # source: who wrote the detail. Only xval's own text reaches the result file; codex-call's
+        # messages, the runtime check's detail, Python's exception text and SAM's output stay in the
+        # run directory (#23 verify round 9). records: the ledger's records the step stopped on, so
+        # the result file does not name them a second time (B4).
+        self.error, self.detail, self.record, self.source = error, detail, record, source
+        self.records = records or []
 
 
 def load(path: str, default: Any = None) -> Any:
@@ -114,72 +120,120 @@ def inside(run: str, sub: str, name: Any) -> bool:
             and os.path.dirname(os.path.realpath(os.path.join(run, sub, name))) == os.path.realpath(os.path.join(run, sub)))
 
 
-def inputs_digest(run: str) -> str:
-    """One digest over the vocabulary, frames.json, every frame copy (#23 verify round 2, S2) and the
-    settings init recorded in meta.json, which decide whether SAM runs and in what order (round 6, W2).
-    A frames.json of another shape is hashed as it is, so it reads as a changed input, not a crash (Q8)."""
-    import hashlib
-    h = hashlib.sha256()
-    # Only the frames the run lists: a file Finder adds (.DS_Store) is not an input (round 3, L2).
-    frames = load(os.path.join(run, "frames.json"), {})
-    names = sorted(frames) if isinstance(frames, dict) and all(isinstance(k, str) for k in frames) else []
-    hires = [frames[n]["hires"] for n in names if isinstance(frames[n], dict) and isinstance(frames[n].get("hires"), str)]
-    entries = [(n, True) for n in ("vocab.json", "frames.json")]
-    entries += [(os.path.join("frames", n), inside(run, "frames", n)) for n in names]
-    entries += [(v, v == os.path.join("hires", os.path.basename(v)) and inside(run, "hires", os.path.basename(v))) for v in hires]
-    for name, ok in entries:   # a name pointing out of the run is not opened (round 7, Y3)
-        digest = (safe_digest(os.path.join(run, name)) or "missing") if ok else "outside"
-        h.update(name.encode() + b"\0" + digest.encode() + b"\n")
-    meta = load(os.path.join(run, "meta.json"))
-    settings = {k: v for k, v in meta.items() if k != "inputs_sha256"} if isinstance(meta, dict) else "missing"
-    h.update(b"meta\0" + json.dumps(settings, sort_keys=True).encode() + b"\n")
-    return h.hexdigest()
+# ── the ledger ──────────────────────────────────────────────────────
+# Every record a step writes is entered here with its SHA-256, and every later step checks what it reads
+# against it by one rule: an entry must match its file, and a record that exists must have an entry
+# (#23 verify round 9, which replaced the pairwise records of earlier rounds). The list is closed.
+LEDGER = "ledger.json"
+TRACKED = ("vocab.json", "frames.json", "meta.json", "privacy.json", "claude.json", "seal.json", "zoom_claude.json",
+           "zoom_seal.json", "requests.json", "prompt_round1.md", "prompt_zoom.md", "codex_round1.md", "codex.json",
+           "codex_zoom.md", "zoom_codex.json", "comparison.json", "zoom_plan.json", "zoom_prompt.md",
+           "zoom_skipped.json", "zoom_rejected.json", "anchors.json", "sam_frames.json", "track.json", "sam.json",
+           "adjudication.json")
+TRACKED_DIRS = ("frames/", "hires/", "crops/")
+# the only records that may exist without an entry: Claude's answers of a round not yet sealed
+UNSEALED = {"claude.json": "seal.json", "zoom_claude.json": "zoom_seal.json"}
+INPUTS = ("vocab.json", "frames.json", "meta.json", "frames/", "hires/")
+ANSWERS = ("claude.json", "seal.json", "codex.json")
+
+
+def ledger(run: str) -> dict:
+    data = load(os.path.join(run, LEDGER), {})
+    return {k: v for k, v in data.items() if isinstance(k, str) and isinstance(v, str)} if isinstance(data, dict) else {}
+
+
+def expand(run: str, names: Any, entries: dict) -> list[str]:
+    """Names with every file of a 'dir/' name, on disk or in the ledger (dot files are Finder's, not ours)."""
+    out = []
+    for name in names:
+        if name.endswith("/"):
+            folder = os.path.join(run, name)
+            on_disk = {name + f for f in os.listdir(folder) if not f.startswith(".")} if os.path.isdir(folder) else set()
+            out += sorted(on_disk | {k for k in entries if k.startswith(name)})
+        else:
+            out.append(name)
+    return list(dict.fromkeys(out))
+
+
+def enter(run: str, *names: str) -> None:
+    """Record the digests of what a step has just written."""
+    entries = ledger(run)
+    for name in expand(run, names, entries):
+        digest = safe_digest(os.path.join(run, name))
+        if digest:
+            entries[name] = digest
+        else:
+            entries.pop(name, None)
+    dump(os.path.join(run, LEDGER), entries)
+
+
+def differences(run: str, names: Any = None) -> list[tuple[str, str]]:
+    """(name, how) for every record that does not match the ledger: "changed" (another digest), "removed"
+    (entered, now gone) or "not entered" (there, without an entry). Each record is named once, with what is
+    actually the case: a file whose entry alone was removed is not called changed (#23 verify round 9, B4)."""
+    entries = ledger(run)
+    names = TRACKED + TRACKED_DIRS if names is None else names
+    found = []
+    for name in expand(run, names, entries):
+        expected, actual = entries.get(name), safe_digest(os.path.join(run, name))
+        if expected == actual:
+            continue
+        if expected is None:
+            if name in UNSEALED and not os.path.exists(os.path.join(run, UNSEALED[name])):
+                continue   # Claude's answers before they are sealed
+            found.append((name, "not entered"))
+        else:
+            found.append((name, "removed" if actual is None else "changed"))
+    return found
+
+
+def changed(run: str, names: Any = None) -> list[str]:
+    """The records that do not match the ledger, by name."""
+    return [name for name, _ in differences(run, names)]
+
+
+def describe_differences(found: list[tuple[str, str]]) -> str:
+    """One clause per kind, in the order the kinds were first met, each record named once."""
+    groups: dict[str, list[str]] = {}
+    for name, how in found:
+        groups.setdefault(how, []).append(name)
+    clauses = []
+    for how, group in groups.items():
+        names, many = ", ".join(group), len(group) > 1
+        if how == "not entered":
+            clauses.append(f"{names} {'are' if many else 'is'} not in the run's ledger")
+            continue
+        verb = "changed" if how == "changed" else "were removed" if many else "was removed"
+        clauses.append(f"{names} {verb} after the step that wrote {'them' if many else 'it'}")
+    return "; ".join(clauses)
+
+
+def explain(run: str, found: list[tuple[str, str]]) -> str:
+    """What is wrong, in words: a ledger that is gone or unreadable is said as such, not as every record
+    in the run being "not in the run's ledger"."""
+    if not isinstance(load(os.path.join(run, LEDGER)), dict):
+        return f"the run's ledger ({LEDGER}) is missing or unreadable, so none of its records can be checked"
+    return describe_differences(found)
+
+
+def checked(run: str, names: Any = None, then: str = "") -> None:
+    """Stop when any of `names` does not match the ledger (every tracked record when names is None);
+    `then` says what that means for this step, such as that nothing was sent."""
+    found = differences(run, names)
+    if found:
+        raise Stop("target_invalid", explain(run, found) + (f"; {then}" if then else ""),
+                   records=[name for name, _ in found])
 
 
 def checked_inputs(run: str) -> None:
-    """Every step after sealing reads the vocabulary and the frames as sealed: max_count, track_point
-    and sam_margin_pct decide verdicts (#23 verify round 5, V8)."""
-    sealed = (load(os.path.join(run, "seal.json"), {}) or {}).get("inputs_sha256")
-    if not sealed or sealed != inputs_digest(run):
-        raise Stop("target_invalid", "the vocabulary or the image copies changed after Claude's answers were sealed")
-
-
-def seal_intact(run: str, zoom: bool) -> bool:
-    record = load(os.path.join(run, "zoom_seal.json" if zoom else "seal.json"))
-    answers = os.path.join(run, "zoom_claude.json" if zoom else "claude.json")
-    return bool(record) and os.path.isfile(answers) and record.get("sha256") == sealing.digest(answers)
+    """The vocabulary, the frames and the run's settings as init wrote them: max_count, track_point,
+    sam_margin_pct, sequence and order decide verdicts (#23 verify round 5, V8; round 6, W2)."""
+    checked(run, INPUTS)
 
 
 def checked_comparison(run: str) -> dict:
-    """The comparison as `compare` wrote it; an edited one would change what is cropped and settled (L3).
-    Both answer files must still be the ones it read: crops frame their points and SAM anchors on
-    them, so an edited point would move the evidence (#23 verify round 6, W2)."""
-    path = os.path.join(run, "comparison.json")
-    comparison = load(path)
-    record = load(os.path.join(run, "comparison_record.json"), {})
-    if comparison is None and not record:
+    """The comparison and both answer files as `compare` read and wrote them (L3; round 6, W2)."""
+    if not os.path.exists(os.path.join(run, "comparison.json")) and "comparison.json" not in ledger(run):
         raise Stop("target_invalid", "no comparison: run `compare` first")
-    if not isinstance(record, dict) or record.get("sha256") != safe_digest(path):
-        raise Stop("target_invalid", "comparison.json changed after `compare` wrote it")
-    for name in ("claude.json", "codex.json"):
-        if record.get(name) != safe_digest(os.path.join(run, name)):
-            raise Stop("target_invalid", f"{name} changed after `compare` read it")
-    return comparison
-
-
-def answers_changed(run: str) -> list[str]:
-    """The answer files that no longer match what `compare` read; empty when nothing was compared."""
-    record = load(os.path.join(run, "comparison_record.json"), {})
-    if not isinstance(record, dict) or not record:
-        return []
-    return [n for n in ("claude.json", "codex.json") if record.get(n) != safe_digest(os.path.join(run, n))]
-
-
-def zoom_record_intact(run: str, plan: dict) -> bool:
-    """The plan, the question file, the crops and the comparison they came from, as `crops` wrote them."""
-    record = load(os.path.join(run, "zoom_record.json"), {})
-    crops = record.get("crops_sha256") or {}
-    return (record.get("plan_sha256") == safe_digest(os.path.join(run, "zoom_plan.json"))
-            and record.get("prompt_sha256") == safe_digest(os.path.join(run, "zoom_prompt.md"))
-            and record.get("comparison_sha256") == safe_digest(os.path.join(run, "comparison.json"))
-            and all(crops.get(e["crop"]) == safe_digest(os.path.join(run, e["crop"])) for e in plan.values()))
+    checked(run, ANSWERS + ("comparison.json",))
+    return load(os.path.join(run, "comparison.json"))

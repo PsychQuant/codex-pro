@@ -107,9 +107,8 @@ import adjudicate as adjudication  # noqa: E402
 import compare_claims  # noqa: E402
 import media  # noqa: E402
 import result_file  # noqa: E402
-from run_files import (Stop, RUN_MARK, adopt_run_dir, checked_comparison, checked_inputs, dump, failure, inputs_digest,  # noqa: E402
-                       is_run_dir, load,
-                       neutral_names, now_iso, run_dir, seal_intact, zoom_record_intact)
+from run_files import (Stop, INPUTS, adopt_run_dir, checked, checked_comparison, checked_inputs, dump, enter,  # noqa: E402
+                       failure, is_run_dir, ledger, load, neutral_names, now_iso, run_dir)
 from codex_errors import classify, login_problem  # noqa: E402
 from zoom_round import (class_lines, crop_box, dispute_points, enlargement, position_pads, question,  # noqa: E402
                         zoom_skip_reason,
@@ -192,14 +191,14 @@ def init(run: str, vocab_path: str, images: list[str], sequence: bool, first_sid
         # who gave the first side's answers: in the native Codex bundle it is the Codex host model (round 2, F1)
         "first_side_model": first_side}
     dump(os.path.join(run, "meta.json"), meta)   # its settings are part of the inputs (round 6, W2)
-    # the inputs as init wrote them, checked when the answers are sealed (round 5, N1)
-    dump(os.path.join(run, "meta.json"), {**meta, "inputs_sha256": inputs_digest(run)})
+    enter(run, *INPUTS)   # the inputs as init wrote them, checked by every later step (round 9)
     print(json.dumps({"ok": True, "frames": sorted(frames)}))
 
 
 def confirm_privacy(run: str) -> None:
     adopt_run_dir(run)
     dump(os.path.join(run, "privacy.json"), {"confirmed_at": now_iso()})
+    enter(run, "privacy.json")
     print(json.dumps({"ok": True}))
 
 
@@ -223,6 +222,7 @@ def seal_answers(run: str, zoom: bool) -> None:
         raise Stop("target_invalid", "Claude's zoom answers already failed the checks, so the zoom round is not used; "
                    "answers fixed afterwards are not sealed", record=False)
     if zoom:
+        checked(run, ("zoom_plan.json",))   # what the answers are checked against (round 9)
         try:
             if not os.path.isfile(answers):
                 raise Stop("target_invalid", f"Claude's zoom answers are missing: {os.path.basename(answers)}")
@@ -231,15 +231,12 @@ def seal_answers(run: str, zoom: bool) -> None:
             # The zoom round is dropped, not retried: fixing the answers and sealing again would let
             # Claude's side be redrawn until it suits (S5). The run itself goes on (round 3, T6).
             dump(os.path.join(run, "zoom_rejected.json"), {"at": now_iso(), "detail": stop.detail})
+            enter(run, "zoom_rejected.json")
             raise Stop(stop.error, f"{stop.detail}; the zoom round is not used and the run continues", record=False)
     elif not os.path.isfile(answers):
         raise Stop("target_invalid", f"Claude's answers are missing: {os.path.basename(answers)}")
-    meta = load(os.path.join(run, "meta.json"), {})
-    if not zoom and (meta.get("inputs_sha256") if isinstance(meta, dict) else None) != inputs_digest(run):
-        # init always records it, so a missing digest is a changed record, not a pass (N1; round 6, W2)
-        raise Stop("target_invalid", "the image copies, the vocabulary or the run's settings changed after init; "
-                   "start a new run")
-    if not zoom:
+    if not zoom:   # the answers are given against the inputs as init wrote them (N1; round 6, W2; round 9)
+        checked(run, INPUTS, then="start a new run")
         map_source_names(run, answers)
         vocab = load(os.path.join(run, "vocab.json"))
         try:
@@ -251,11 +248,8 @@ def seal_answers(run: str, zoom: bool) -> None:
     import contextlib, io
     with contextlib.redirect_stdout(io.StringIO()):
         sealing.seal(answers, record)
-    sealed = load(record, {})
-    if not zoom:   # the answers were given against these inputs; changing them later changes the question
-        sealed["inputs_sha256"] = inputs_digest(run)
-        dump(record, sealed)
-    print(json.dumps(sealed, ensure_ascii=False))
+    enter(run, os.path.basename(answers), os.path.basename(record))
+    print(json.dumps(load(record, {}), ensure_ascii=False))
 
 
 # ── ask ─────────────────────────────────────────────────────────
@@ -349,6 +343,7 @@ def withdraw_request(run: str, rnd: str) -> None:
     records = load(os.path.join(run, "requests.json"), {})
     records.pop(rnd, None)
     dump(os.path.join(run, "requests.json"), records)
+    enter(run, "requests.json")
 
 
 def call_codex(run: str, prompt: str, images: list[str], tag: str, argv: list[str]) -> str:
@@ -362,6 +357,7 @@ def call_codex(run: str, prompt: str, images: list[str], tag: str, argv: list[st
             fh.write(prompt)
     except OSError as exc:
         raise Stop("runtime_unavailable", f"cannot write the prompt file: {failure(exc)}; nothing was sent")
+    enter(run, os.path.basename(prompt_file))
     record_request(run, rnd, requested_at=now_iso(), requested_epoch=datetime.datetime.now().timestamp())
     cmd = [path, "--output", output, "--model", settings["model"],
            "--effort", settings["effort"], "--max-time", str(settings["max_time"]),
@@ -377,6 +373,7 @@ def call_codex(run: str, prompt: str, images: list[str], tag: str, argv: list[st
     # are not UTF-8 are replaced rather than raised, since a decoding error here once withdrew a call
     # that had already run (round 8, Z1). Foreground; the hard timeout is codex-call's.
     _, stderr = proc.communicate()
+    enter(run, os.path.basename(output))   # whatever it wrote, also on failure (round 9)
     if proc.returncode != 0:   # counted as sent, whatever the message says (round 5, V1)
         error, detail = classify(stderr, proc.returncode)
         raise Stop(error, f"{detail}; the request is counted as sent, so this round is used up")
@@ -384,7 +381,7 @@ def call_codex(run: str, prompt: str, images: list[str], tag: str, argv: list[st
         reply = open(output, encoding="utf-8").read()
     except OSError:
         raise Stop("parse_failed", "codex-call exited 0 but wrote no output")
-    record_request(run, rnd, reply_sha256=sealing.digest(output), answered_at=now_iso())
+    record_request(run, rnd, answered_at=now_iso())   # the reply's digest is in the ledger (round 9)
     return reply
 
 
@@ -431,16 +428,16 @@ def before_request(run: str, rnd: str) -> None:
     if not load(os.path.join(run, "privacy.json")):
         raise Stop("target_invalid", "the privacy reminder has not been confirmed for this run "
                    "(run `confirm-privacy` after the user agrees); nothing was sent")
-    if not seal_intact(run, zoom=(rnd == "zoom")):
-        raise Stop("target_invalid", "Claude's answers are not sealed, or changed after sealing; nothing was sent")
+    answers, seal = ("zoom_claude.json", "zoom_seal.json") if rnd == "zoom" else ("claude.json", "seal.json")
+    if not os.path.isfile(os.path.join(run, seal)) and seal not in ledger(run):
+        raise Stop("target_invalid", "Claude's answers are not sealed; nothing was sent")
+    # what is sent is what was sealed, asked about the inputs as init wrote them (U6; round 9)
+    reads = (("zoom_plan.json", "zoom_prompt.md", "crops/") if rnd == "zoom" else INPUTS)
+    checked(run, (answers, seal, "privacy.json", "requests.json") + reads, then="nothing was sent")
     problem = login_problem()   # checked here, since a failed call counts as sent (round 5, V2)
     if problem:
         raise Stop("oauth_invalid", f"{problem}; run /codex-pro:codex-setup to log in; nothing was sent")
-    if rnd == "1":   # what is sent is what was sealed, and it lies in the run (#23 verify round 4, U6)
-        # the digest first: it reads frames.json of any shape, the name check below does not (round 6, Q8)
-        if load(os.path.join(run, "seal.json"), {}).get("inputs_sha256") != inputs_digest(run):
-            raise Stop("target_invalid", "the vocabulary, the image copies or the run's settings changed after "
-                       "Claude's answers were sealed; nothing was sent")
+    if rnd == "1":   # every image sent lies in the run (#23 verify round 4, U6)
         frames_dir = os.path.realpath(os.path.join(run, "frames"))
         if any(os.path.basename(n) != n or os.path.dirname(os.path.realpath(os.path.join(run, "frames", n))) != frames_dir
                for n in neutral_names(run)):
@@ -452,6 +449,7 @@ def record_request(run: str, rnd: str, **fields: Any) -> None:
     records = load(path, {})
     records[rnd] = {**records.get(rnd, {}), **fields}
     dump(path, records)
+    enter(run, "requests.json")
 
 
 def ask(run: str, argv: list[str]) -> None:
@@ -474,27 +472,24 @@ def ask(run: str, argv: list[str]) -> None:
         if sorted(codex) != names:
             raise Stop("parse_failed", "Codex reply does not answer every image")
         dump(os.path.join(run, "codex.json"), data if isinstance(data, dict) else {"claims": data})
-        record_request(run, "1", answers_sha256=sealing.digest(os.path.join(run, "codex.json")))
+        enter(run, "codex.json")
         print(json.dumps({"ok": True, "round": "1", "frames_answered": len(codex)}))
         return
     if rnd == "zoom":
         plan = load(os.path.join(run, "zoom_plan.json"), {})
         if not plan:
             raise Stop("target_invalid", "no zoom plan: run `crops` first; nothing was sent")
-        # Codex gets exactly the text Claude's subagent answered from, and only crops inside the run.
-        record = load(os.path.join(run, "zoom_record.json"), {})
+        # Codex gets exactly the text Claude's subagent answered from (checked against the ledger by
+        # before_request), and only crops inside the run.
         crops_dir = os.path.realpath(os.path.join(run, "crops"))
         if any(os.path.dirname(os.path.realpath(os.path.join(run, e["crop"]))) != crops_dir for e in plan.values()):
             raise Stop("target_invalid", "a zoom crop lies outside the run's crops directory; nothing was sent")
-        if not zoom_record_intact(run, plan):
-            raise Stop("target_invalid", "the zoom plan, question file or crops changed after `crops` wrote them; "
-                       "nothing was sent")
         questions = open(os.path.join(run, "zoom_prompt.md"), encoding="utf-8").read()
         reply = call_codex(run, questions, [os.path.join(run, plan[d]["crop"]) for d in sorted(plan, key=lambda d: plan[d]["crop"])],
                            "zoom", argv)
         result = zoom_answers(plan, extract_json(reply), "parse_failed", "Codex zoom reply")
         dump(os.path.join(run, "zoom_codex.json"), result)
-        record_request(run, "zoom", answers_sha256=sealing.digest(os.path.join(run, "zoom_codex.json")))
+        enter(run, "zoom_codex.json")
         print(json.dumps({"ok": True, "round": "zoom", "crops_answered": len(result)}))
         return
     raise Stop("target_invalid", f"unknown round: {rnd} (use --round 1 or --round zoom)", record=False)   # M1
@@ -518,25 +513,14 @@ def zoom_answers(plan: dict, data: Any, error: str, who: str) -> dict:
 
 # ── compare / crops ─────────────────────────────────────────────
 def compare(run: str) -> None:
-    check = {}
-    if os.path.exists(os.path.join(run, "seal.json")):
-        import contextlib, io
-        buf = io.StringIO()
-        with contextlib.redirect_stdout(buf):
-            sealing.verify(os.path.join(run, "claude.json"), os.path.join(run, "seal.json"))
-        check = json.loads(buf.getvalue())
-    else:
-        check = {"seal_broken": True, "sha256_sealed": None, "sha256_now": None}
-    dump(os.path.join(run, "seal_check.json"), check)
-    if not load(os.path.join(run, "seal.json")):
+    entries = ledger(run)
+    if not os.path.exists(os.path.join(run, "seal.json")) and "seal.json" not in entries:
         raise Stop("target_invalid", "Claude's answers were never sealed")   # round 8, K1
-    sealed_inputs = load(os.path.join(run, "seal.json"), {}).get("inputs_sha256")
-    if sealed_inputs != inputs_digest(run):   # a seal without the digest is not a pass (round 7, Y4)
-        raise Stop("target_invalid", "the vocabulary or the image copies changed after Claude's answers were sealed")
-    recorded = load(os.path.join(run, "requests.json"), {}).get("1", {}).get("answers_sha256")
-    codex_path = os.path.join(run, "codex.json")
-    codex_broken = not recorded or not os.path.isfile(codex_path) or sealing.digest(codex_path) != recorded
-    dump(os.path.join(run, "codex_check.json"), {"codex_record_broken": codex_broken})
+    if not os.path.exists(os.path.join(run, "codex.json")) and "codex.json" not in entries:
+        # nothing to compare yet, which is no new failure of the run: a failed request keeps its error (B7)
+        raise Stop("target_invalid", "no Codex answer to compare: `ask --round 1` has not completed", record=False)
+    # Answers changed after sealing stop the run here, instead of being compared under a flag (A4)
+    checked(run, INPUTS + ("claude.json", "seal.json", "codex.json"))
     vocab = load(os.path.join(run, "vocab.json"))
     sides = {}
     for name in ("claude.json", "codex.json"):   # both passed the schema once, so a failure now is a change (round 8)
@@ -549,16 +533,10 @@ def compare(run: str) -> None:
     aspects = {n: f["height"] / f["width"] for n, f in frames.items() if f.get("width") and f.get("height")}
     result = compare_claims.compare(vocab, claude, codex, aspects)
     dump(os.path.join(run, "comparison.json"), result)
-    dump(os.path.join(run, "comparison_record.json"), {
-        "sha256": sealing.digest(os.path.join(run, "comparison.json")),
-        # the answer files it read, checked by every later step (round 6, W2)
-        "claude.json": sealing.digest(os.path.join(run, "claude.json")),
-        "codex.json": sealing.digest(os.path.join(run, "codex.json"))})
+    enter(run, "comparison.json")
     disputes = [{k: d[k] for k in ("id", "frame", "kind", "class", "relation") if k in d} for d in result["disagreements"]]
     print(json.dumps({"agreement_rate": result["agreement_rate"], "n_frames": result["n_frames"],
-                      "n_disagreements": len(disputes), "seal_broken": check["seal_broken"],
-                      "codex_record_broken": codex_broken, "disputes": disputes},
-                     ensure_ascii=False))
+                      "n_disagreements": len(disputes), "disputes": disputes}, ensure_ascii=False))
 
 
 def crops(run: str) -> None:
@@ -629,12 +607,8 @@ def crops(run: str) -> None:
     if plan:
         with open(os.path.join(run, "zoom_prompt.md"), "w", encoding="utf-8") as fh:
             fh.write(zoom_prompt(plan, vocab))
-        dump(os.path.join(run, "zoom_record.json"), {
-            "plan_sha256": sealing.digest(os.path.join(run, "zoom_plan.json")),
-            "prompt_sha256": sealing.digest(os.path.join(run, "zoom_prompt.md")),
-            # what the plan was made from, and what both sides see (round 4, M6)
-            "comparison_sha256": sealing.digest(os.path.join(run, "comparison.json")),
-            "crops_sha256": {e["crop"]: sealing.digest(os.path.join(run, e["crop"])) for e in plan.values()}})
+    # what both sides see, checked when the zoom round is asked and adjudicated (M6; round 9)
+    enter(run, "crops/", "zoom_plan.json", "zoom_skipped.json", "zoom_prompt.md")
     print(json.dumps({"crops": shown, "question_file": os.path.join(run, "zoom_prompt.md") if plan else None,
                       "no_zoom": skipped}, ensure_ascii=False))
 
@@ -643,6 +617,7 @@ def crops(run: str) -> None:
 def sam(run: str) -> None:
     def record(status: str, detail: str = "") -> None:
         dump(os.path.join(run, "sam.json"), {"sam_status": status, "detail": detail})
+        enter(run, "sam.json")
         print(json.dumps({"sam_status": status, "detail": detail}, ensure_ascii=False))
     checked_inputs(run)   # before anything is read from them, the settings in meta.json included (V8; round 6, W2)
     meta = load(os.path.join(run, "meta.json"), {})
@@ -667,41 +642,36 @@ def sam(run: str) -> None:
     plan = sam_track.anchors(comparison, load(os.path.join(run, "claude.json")),
                              load(os.path.join(run, "codex.json")), cls, order=frame_order(run), aspects=aspects)
     dump(os.path.join(run, "anchors.json"), plan)
+    enter(run, "anchors.json")
     if not plan["anchors"]:
         return record("no_anchor", f"no agreeing frame has a {cls} to anchor on")
     check = subprocess.run(["bash", os.path.join(HERE, "sam_env.sh"), "--check"], capture_output=True, text=True)
     if check.returncode != 0:
         return record("not_installed", check.stdout.strip())
     dump(os.path.join(run, "sam_frames.json"), [os.path.join(run, "frames", n) for n in neutral_names(run)])
+    enter(run, "sam_frames.json")
     env_dir = os.path.expanduser("~/.codex-pro/sam-env")
     done = subprocess.run([os.path.join(env_dir, "bin", "python"), "-I", os.path.join(HERE, "sam_track.py"), "track",
                            "--frames", os.path.join(run, "sam_frames.json"), "--anchors", os.path.join(run, "anchors.json"),
                            "--out", os.path.join(run, "track.json")], capture_output=True, text=True,
                           env={**os.environ, "HF_HOME": os.path.join(env_dir, "hf")})
+    enter(run, "track.json")   # whatever SAM wrote, so the ledger's rule holds for it too (M6; round 9)
     if done.returncode != 0:
         return record("failed", (done.stdout + done.stderr).strip()[-500:])
     track = load(os.path.join(run, "track.json"), {})
     record("ok", f"{len(track.get('frames', {}))} frames tracked, {len(track.get('invalid_frames', []))} collapsed")
-    state = load(os.path.join(run, "sam.json"), {})
-    dump(os.path.join(run, "sam.json"), {**state, "track_sha256": sealing.digest(os.path.join(run, "track.json"))})   # M6
 
 
 def zoom_evidence(run: str) -> tuple[dict, dict]:
-    """Zoom answers that may be used: Claude's still match their seal, Codex's still match the
-    digest recorded when they arrived. A zoom answer is decisive evidence, so an unchecked one
-    could be edited after the fact to settle a disagreement (#23 verify B2)."""
+    """Zoom answers that may be used. A zoom answer is decisive evidence, so an unchecked one could be
+    edited after the fact to settle a disagreement (#23 verify B2): adjudicate has checked every record
+    against the ledger before this runs, and Claude's side must have been sealed."""
     plan = load(os.path.join(run, "zoom_plan.json"), {})
     if not plan or not os.path.exists(os.path.join(run, "zoom_codex.json")):
         return {}, {"zoom_run": False}
-    recorded = load(os.path.join(run, "requests.json"), {}).get("zoom", {}).get("answers_sha256")
-    codex_ok = bool(recorded) and sealing.digest(os.path.join(run, "zoom_codex.json")) == recorded
-    claude_ok = seal_intact(run, zoom=True)
-    # the plan maps each answer to its frame; an edited plan, crop or comparison would move the evidence (L3, M6)
-    plan_ok = zoom_record_intact(run, plan)
-    status = {"zoom_run": True, "zoom_seal_broken": not claude_ok, "zoom_codex_record_broken": not codex_ok,
-              "zoom_plan_broken": not plan_ok}
-    if not (claude_ok and codex_ok and plan_ok):
-        return {}, status
+    status = {"zoom_run": True, "zoom_seal_broken": False}
+    if not os.path.isfile(os.path.join(run, "zoom_seal.json")):
+        return {}, {**status, "zoom_seal_broken": True}
     try:
         mine = zoom_answers(plan, load(os.path.join(run, "zoom_claude.json")), "target_invalid", "Claude's zoom answers")
     except Stop:
@@ -720,28 +690,25 @@ def zoom_evidence(run: str) -> tuple[dict, dict]:
 
 
 def adjudicate(run: str) -> None:
-    if not os.path.exists(os.path.join(run, "comparison.json")) and not os.path.exists(os.path.join(run, "comparison_record.json")):
-        # the run stopped before comparing: nothing to settle. Anything else is checked, so a missing
-        # vocabulary after a comparison is a changed input, not "no comparison" (round 6, W2)
+    if not os.path.exists(os.path.join(run, "comparison.json")) and "comparison.json" not in ledger(run):
+        # the run stopped before comparing: nothing to settle. A comparison that was entered and is gone
+        # is a removed record, not "no comparison" (round 6, W2; round 9)
         dump(os.path.join(run, "adjudication.json"), {"counts": {}, "adjudications": [], "note": "no comparison"})
-        dump(os.path.join(run, "adjudication_record.json"), {"sha256": sealing.digest(os.path.join(run, "adjudication.json"))})
+        enter(run, "adjudication.json")
         print(json.dumps({"counts": {}, "note": "no comparison"}))
         return
-    checked_inputs(run)   # V8
-    comparison = checked_comparison(run)
+    # Everything a verdict rests on, by the ledger's one rule: the inputs, both sides' answers and seals in
+    # either round, the comparison, the zoom plan and crops, and SAM's records (V8, L3, M6; round 9)
+    checked(run)
+    comparison = load(os.path.join(run, "comparison.json"))
     vocab = load(os.path.join(run, "vocab.json"))
     zoom, zoom_status = zoom_evidence(run)
     sam_state = load(os.path.join(run, "sam.json"), {})
     track = load(os.path.join(run, "track.json")) if sam_state.get("sam_status") == "ok" else None
-    sam_broken = track is not None and sam_state.get("track_sha256") != sealing.digest(os.path.join(run, "track.json"))
-    if sam_broken:   # SAM's output as the sam step recorded it, like the zoom answers (round 4, M6)
-        track = None
     result = adjudication.adjudicate(vocab, comparison, zoom, track)
     result.update(zoom_status)
-    result["sam_record_broken"] = sam_broken
     dump(os.path.join(run, "adjudication.json"), result)
-    # what the result file reports is checked against this (round 7, Y4)
-    dump(os.path.join(run, "adjudication_record.json"), {"sha256": sealing.digest(os.path.join(run, "adjudication.json"))})
+    enter(run, "adjudication.json")   # what the result file reports is checked against this (Y4)
     print(json.dumps({"counts": result["counts"]}))
 
 
@@ -788,17 +755,19 @@ def main(argv: list[str]) -> None:
             sys.exit(64)
     except Stop as stop:   # result's own failure goes to the history only: the run's error stays (round 7, Y3)
         stop_run(run, step, stop.error, stop.detail, stop.record and command != "result",
-                 refused=not stop.record)
+                 refused=not stop.record, records=stop.records)
     except Exception as exc:   # an unexpected failure still leaves a record and a result file
         stop_run(run, step, "internal_error", f"{type(exc).__name__}: {failure(exc)}", command != "result", refused=False)
     clear_error(run, step)
 
 
 def stop_run(run: str, command: str, error: str, detail: str, record_error: bool = True,
-             refused: bool | None = None) -> None:
+             refused: bool | None = None, records: list[str] | None = None) -> None:
     """refused marks a command whose step was already done; a result step's own failure is not one,
     though it does not replace the run's error either (round 8, K1)."""
     record = {"error": error, "detail": detail, "step": command, "at": now_iso()}
+    if records:   # the ledger's records it stopped on (round 9, B4)
+        record["records"] = records
     # A failed init still leaves its error, or the result file would show a failed run as one without
     # an error (round 3). No other step creates a directory, and nothing is written into a directory
     # that is not a run, such as a mistyped --run or a project root (round 4, U5).

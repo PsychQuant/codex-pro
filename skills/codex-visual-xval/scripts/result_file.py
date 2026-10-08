@@ -12,8 +12,7 @@ import tempfile
 from typing import Any
 
 import compare_claims
-import seal as sealing
-from run_files import Stop, failure, inputs_digest, is_run_dir, neutral_names, safe_digest
+from run_files import Stop, differences, explain, failure, is_run_dir, ledger, neutral_names, safe_digest
 
 
 def load(path: str, default: Any = None) -> Any:
@@ -34,16 +33,16 @@ def option(argv: list[str], name: str) -> str | None:
 
 
 def request_lines(run: str, rnd: str, label: str, reply_name: str, seal_record: dict) -> list[str]:
-    """One round's request record, re-checked now: both the raw reply and the parsed answers are
-    compared with the digests recorded when Codex answered (#23 verify round 2, S1, S9)."""
+    """One round's request record, with the raw reply's digest from the ledger, re-checked now (#23 verify
+    round 2, S1, S9). A mismatch is named once, in the list of changed records (round 9, B4)."""
     record = load(os.path.join(run, "requests.json"), {}).get(rnd)
     if not record or not isinstance(record, dict):
         return []
-    line = f"Codex {label}: requested at {record.get('requested_at')}; reply SHA-256 `{record.get('reply_sha256') or 'none'}`"
-    reply = os.path.join(run, reply_name)
-    if record.get("reply_sha256"):
-        same = os.path.isfile(reply) and sealing.digest(reply) == record["reply_sha256"]
-        line += "; the reply file still matches." if same else "; **the reply file no longer matches** its recorded digest."
+    entered = ledger(run).get(reply_name)
+    line = f"Codex {label}: requested at {record.get('requested_at')}; reply SHA-256 `{entered or 'none'}`"
+    if entered:
+        line += ("; the reply file still matches." if safe_digest(os.path.join(run, reply_name)) == entered
+                 else "; **it does not match the ledger**.")
     if not seal_record:
         line += " Claude's answers for this round were never sealed."
     elif (seal_record.get("sealed_epoch") or 0) < (record.get("requested_epoch") or 0):
@@ -148,36 +147,6 @@ def emit(text: str, error: str | None, argv: list[str]) -> None:
     print(json.dumps({"result": out, "error": error}))
 
 
-def records_changed(run: str, seal_record: dict) -> list[str]:
-    """Every record checked against the digest written beside it when the result is written: a record
-    without its digest, or a digest without its record, counts as changed too (round 7, Y4; round 8,
-    Z3, Z4). Claude's first-round answers are reported by seal_broken."""
-    changed = []
-    path = lambda name: os.path.join(run, name)
-    if seal_record and seal_record.get("inputs_sha256") != inputs_digest(run):
-        changed.append("the vocabulary, the image copies or the run's settings" if seal_record.get("inputs_sha256")
-                       else "the seal (it lacks the inputs' digest)")
-    comparison = load(path("comparison_record.json"), {})
-    if comparison or os.path.exists(path("comparison.json")):
-        for name, key in (("comparison.json", "sha256"), ("claude.json", "claude.json"), ("codex.json", "codex.json")):
-            if comparison.get(key) != safe_digest(path(name)):
-                changed.append(name)
-    verdicts = load(path("adjudication_record.json"), {})
-    if (verdicts or os.path.exists(path("adjudication.json"))) and verdicts.get("sha256") != safe_digest(path("adjudication.json")):
-        changed.append("adjudication.json")
-    requests = load(path("requests.json"), {})
-    for rnd, answers, reply in (("1", "codex.json", "codex_round1.md"), ("zoom", "zoom_codex.json", "codex_zoom.md")):
-        record = requests.get(rnd) if isinstance(requests.get(rnd), dict) else {}
-        if (record.get("answers_sha256") or os.path.exists(path(answers))) and record.get("answers_sha256") != safe_digest(path(answers)):
-            changed.append(answers)
-        if record.get("reply_sha256") and record["reply_sha256"] != safe_digest(path(reply)):
-            changed.append(reply)
-    zoom_seal = load(path("zoom_seal.json"), {})
-    if zoom_seal and zoom_seal.get("sha256") != safe_digest(path("zoom_claude.json")):
-        changed.append("zoom_claude.json")
-    return list(dict.fromkeys(changed))
-
-
 def render(run: str, stopped: dict | None, note: str = "", fallback: bool = False) -> tuple[str, str | None]:
     error = stopped or load(os.path.join(run, "error.json"), {}) or None
     if error and not isinstance(error.get("error"), str):
@@ -188,13 +157,12 @@ def render(run: str, stopped: dict | None, note: str = "", fallback: bool = Fals
         comparison = None
     adjudicated = load(os.path.join(run, "adjudication.json"), {})
     seal_record = load(os.path.join(run, "seal.json"), {})
-    seal_check = load(os.path.join(run, "seal_check.json"), {})
-    seal_when = "before comparison"
-    if not seal_check and seal_record:
-        # The run stopped before comparing; check the seal now rather than call it intact unchecked.
-        now_digest = sealing.digest(os.path.join(run, "claude.json")) if os.path.isfile(os.path.join(run, "claude.json")) else None
-        seal_check = {"sha256_now": now_digest, "seal_broken": now_digest != seal_record.get("sha256")}
-        seal_when = "when the result was written"
+    # The ledger's one rule over every record, checked now (round 7, Y4; round 9). The seal is checked
+    # now too: a seal that was never checked is not reported as intact, a missing one counts as broken (A4).
+    found = differences(run) if not stopped else []
+    sealed_now = safe_digest(os.path.join(run, "claude.json"))
+    seal_broken = (not seal_record or sealed_now != seal_record.get("sha256")
+                   or any(name in ("claude.json", "seal.json") for name, _ in found))
     settings = load(os.path.join(run, "profile.json"), {})
     request = load(os.path.join(run, "requests.json"), {}).get("1", {})
     request = request if isinstance(request, dict) else {}
@@ -221,17 +189,16 @@ def render(run: str, stopped: dict | None, note: str = "", fallback: bool = Fals
         "agreement_rate": comparison["agreement_rate"] if comparison else "",
         "claude_answers_sha256": seal_record.get("sha256", ""),
         "sealed_at": seal_record.get("sealed_at", ""),
-        "seal_broken": str(bool(seal_check.get("seal_broken", not seal_record))).lower(),
+        "seal_broken": str(bool(seal_broken)).lower(),
         "codex_requested_at": request.get("requested_at", ""),
-        "codex_reply_sha256": request.get("reply_sha256", ""),
+        "codex_reply_sha256": ledger(run).get("codex_round1.md", "") if request else "",
         "sam_status": sam_state.get("sam_status", "not_run"),
     }
     if fallback:   # nothing was read, so nothing is claimed about the seal (round 8, Z2)
         fm["seal_broken"] = "unknown"
-    changed = records_changed(run, seal_record) if not stopped else []
     if error:
         fm["error"] = error["error"]
-    elif changed:   # in the frontmatter, where codex-status reads (round 7, Y4)
+    elif found:   # in the frontmatter, where codex-status reads (round 7, Y4)
         fm["error"] = "target_invalid"
     # one line each, no control characters: a value copied from a record cannot add a field (round 8, K5)
     fm = {k: sanitize(v) if isinstance(v, str) else v for k, v in fm.items()}
@@ -239,9 +206,12 @@ def render(run: str, stopped: dict | None, note: str = "", fallback: bool = Fals
     if note:
         lines += [f"The result step could not read all of the run's records ({sanitize(note)}); the run's own error "
                   "is shown, and nothing else from the run is.", ""]
-    if changed:
-        lines += [f"Found when the result was written: {', '.join(changed)} changed after the step that wrote "
-                  f"{'them' if len(changed) > 1 else 'it'}, so the values below may not be the ones the steps produced.", ""]
+    # each record once, with what is actually the case: those the run already stopped on are in its error (B4)
+    named = set(error.get("records") or []) if error and isinstance(error.get("records"), list) else set()
+    unnamed = [(name, how) for name, how in found if name not in named]
+    if unnamed:
+        lines += [f"Found when the result was written: {explain(run, unnamed)}; so the values below may not "
+                  "be the ones the steps produced.", ""]
     if error:
         lines += [f"Run stopped at step `{error.get('step', '?')}`: `{error['error']}`. No retry.", ""]
         if error["error"] in NATIVE_PREFLIGHT:
@@ -255,11 +225,11 @@ def render(run: str, stopped: dict | None, note: str = "", fallback: bool = Fals
         lines += [f"Agreement rate {comparison['agreement_rate']} over {comparison['n_frames']} frames; "
                   f"{n_dis} disagreement(s): {counts.get('resolved_claude', 0)} resolved for Claude, "
                   f"{counts.get('resolved_codex', 0)} for Codex, {counts.get('unverifiable', n_dis)} unverifiable."]
-        if fm["seal_broken"] == "true":
-            lines += ["", "**The seal failed**: Claude's answer file changed after it was sealed, so it cannot be shown "
-                      "that Claude answered before seeing Codex's answers. The comparison below was still made."]
     else:
         lines += ["No comparison was made."]
+    if fm["seal_broken"] == "true":   # also when the run stopped before comparing (A4)
+        lines += ["", "**The seal failed**: Claude's answer file or its seal no longer matches what was sealed, so it "
+                  "cannot be shown that Claude answered before seeing Codex's answers."]
     lines += ["", "## Disagreements", ""]
     verdicts = {a["id"]: a for a in adjudicated.get("adjudications", []) if isinstance(a, dict) and "id" in a}
     no_zoom = {z["id"]: z.get("reason") for z in load(os.path.join(run, "zoom_skipped.json"), [])
@@ -276,21 +246,13 @@ def render(run: str, stopped: dict | None, note: str = "", fallback: bool = Fals
             lines.append(f"  - {a['note']}")
     if not (comparison or {}).get("disagreements"):
         lines.append("None.")
-    if adjudicated.get("zoom_seal_broken"):
+    if adjudicated.get("zoom_seal_broken") or any(name in ("zoom_claude.json", "zoom_seal.json") for name, _ in found):
         lines += ["", "**The zoom seal failed**: Claude's zoom answers changed after they were sealed, so no "
                   "disagreement was settled by the zoom round."]
     if load(os.path.join(run, "zoom_rejected.json")):
         rejected = load(os.path.join(run, "zoom_rejected.json"), {})
         lines += ["", f"**The zoom round was not used**: Claude's zoom answers failed the checks "
                   f"({sanitize(rejected.get('detail', ''))}), so no disagreement was settled by it."]
-    if adjudicated.get("zoom_plan_broken"):
-        lines += ["", "**The zoom plan, its crops or the comparison it came from changed after they were recorded**, "
-                  "so no disagreement was settled by the zoom round."]
-    if adjudicated.get("sam_record_broken"):
-        lines += ["", "**SAM's output does not match what the SAM step recorded**, so no disagreement was settled by SAM."]
-    if adjudicated.get("zoom_codex_record_broken"):
-        lines += ["", "**Codex's zoom answers changed after they were recorded**, so no disagreement was settled "
-                  "by the zoom round."]
     sam_detail = sanitize(sam_state.get("detail", ""))
     lines += ["", "## SAM evidence", "", f"Status: `{fm['sam_status']}`. {sam_detail}".rstrip()]
     if track:
@@ -299,7 +261,7 @@ def render(run: str, stopped: dict | None, note: str = "", fallback: bool = Fals
                      f"{len(track.get('invalid_frames', []))} — {', '.join(track.get('invalid_frames', [])) or 'none'}.")
     lines += ["", "## Seal", "",
               f"Claude's answers: SHA-256 `{fm['claude_answers_sha256'] or 'none'}`, sealed at {fm['sealed_at'] or 'never'}; "
-              f"recomputed {seal_when}: `{seal_check.get('sha256_now') or 'n/a'}` → "
+              f"recomputed when the result was written: `{sealed_now or 'n/a'}` → "
               + ("**broken**." if fm["seal_broken"] == "true" else "intact.")]
     for rnd, label, reply_name, seal_name in (("1", "round 1", "codex_round1.md", "seal.json"),
                                               ("zoom", "zoom round", "codex_zoom.md", "zoom_seal.json")):

@@ -344,7 +344,7 @@
 
 - [x] 14.1 規格與 design（design「第九輪：把兩個一直出問題的元件改成規則更少的結構」；Sealed Claude answers 的帳本、Structured result file 的外來文字與欄位格式）。
   - 驗證：`spectra validate` 與 `spectra analyze` 無 warning。
-- [ ] 14.2 帳本：run_files 的帳本與核對，所有步驟改用它；拿掉各自成對的雜湊紀錄（A4、A5、B4、B7）。
+- [x] 14.2 帳本：run_files 的帳本與核對，所有步驟改用它；拿掉各自成對的雜湊紀錄（A4、A5、B4、B7）。
   - [after: 14.1]
 - [ ] 14.3 結果檔：只用帳本核對過的紀錄、外來文字只標來源、frontmatter 欄位格式、最後一道退路只寫固定內容（A1、A2、A3、B5）。
   - [after: 14.2]

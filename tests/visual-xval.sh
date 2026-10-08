@@ -1533,8 +1533,10 @@ assert_contains "$RUN_OUT" '"error": "target_invalid"' "a second round-1 request
 assert_eq "1" "$(wc -l < "$WORK/mock.log" | tr -d ' ')" "the refused second request sends nothing"
 assert_eq "$codex_before" "$(cat "$WORK/run2/codex.json")" "Codex's recorded answer is unchanged"
 rec=$(cat "$WORK/run2/requests.json" 2>/dev/null)
-assert_eq "64 True" "$(json_get "$rec" '"%d %s" % (len(d["1"]["reply_sha256"]), "+" in d["1"]["requested_at"] or d["1"]["requested_at"].endswith("Z"))')" \
-  "the request time and the reply's SHA-256 are recorded"
+assert_eq "True" "$(json_get "$rec" '"+" in d["1"]["requested_at"] or d["1"]["requested_at"].endswith("Z")')" \
+  "the request time is recorded"
+assert_eq "64" "$(json_get "$(cat "$WORK/run2/ledger.json" 2>/dev/null)" 'len(d["codex_round1.md"])')" \
+  "and the reply's SHA-256, in the ledger (round 9)"
 rm -f "$WORK/run2/seal.json"
 xval seal --run "$WORK/run2"
 assert_eq "5" "$RUN_STATUS" "Claude's answers cannot be sealed after Codex has answered"
@@ -1663,14 +1665,13 @@ RUN_OUT=$(HOME="$WORK/home" MOCK_REPLY="$WORK/codex_reply.md" MOCK_LOG="$WORK/mo
   PATH="$WORK/stubbin:$PATH" python3 "$SCRIPTS/xval.py" ask --run "$WORK/run4c" --round 1 2>&1)
 xval compare --run "$WORK/run4c"
 # Every record crops reads is checked first (round 5, V8; round 6, W2), so the unexpected case is a
-# comparison whose record matches but whose content has the wrong shape.
-python3 - "$WORK/run4c" <<'PY'
-import hashlib, json, sys
-run = sys.argv[1]
+# comparison whose ledger entry matches but whose content has the wrong shape.
+python3 -B - "$WORK/run4c" "$SCRIPTS" <<'PY'
+import json, sys
+run = sys.argv[1]; sys.path.insert(0, sys.argv[2])
+import run_files
 json.dump({"disagreements": [{"id": "d1"}]}, open(f"{run}/comparison.json", "w"))
-record = json.load(open(f"{run}/comparison_record.json"))
-record["sha256"] = hashlib.sha256(open(f"{run}/comparison.json", "rb").read()).hexdigest()
-json.dump(record, open(f"{run}/comparison_record.json", "w"))
+run_files.enter(run, "comparison.json")   # its ledger entry redone too (round 9)
 PY
 xval crops --run "$WORK/run4c"
 assert_eq "5" "$RUN_STATUS" "an unexpected exception stops the run with exit 5, not a traceback"
@@ -1822,8 +1823,10 @@ assert_contains "$(cat "$WORK/run5_zoomlines.md" 2>/dev/null)" "Codex zoom round
 rm -rf "$WORK/run5e"; cp -R "$WORK/run5" "$WORK/run5e"
 printf 'edited\n' >> "$WORK/run5e/codex_round1.md"
 ( cd "$WORK/project" && python3 "$SCRIPTS/xval.py" result --run "$WORK/run5e" --out "$WORK/run5_replyedit.md" >/dev/null 2>&1 )
-assert_contains "$(cat "$WORK/run5_replyedit.md" 2>/dev/null)" "reply file no longer matches" \
+assert_contains "$(cat "$WORK/run5_replyedit.md" 2>/dev/null)" "codex_round1.md changed after the step that wrote it" \
   "an edited raw Codex reply is reported (#23 verify round 2, S1)"
+assert_contains "$(cat "$WORK/run5_replyedit.md" 2>/dev/null)" "it does not match the ledger" \
+  "and its request line says the reply no longer matches, without naming it again (round 9, B4)"
 
 # Round 3: a completed run stays complete, and what the adjudication reads is checked (T6, L2, L3).
 rm -rf "$WORK/run5k"; cp -R "$WORK/run5" "$WORK/run5k"; rm -f "$WORK/run5k/error.json"
@@ -1849,11 +1852,11 @@ python3 - "$WORK/run5p/zoom_plan.json" <<'PY'
 import json, sys
 p = json.load(open(sys.argv[1])); p["d1"]["box_pct"][0] += 1; json.dump(p, open(sys.argv[1], "w"))
 PY
+adj_before=$(cat "$WORK/run5p/adjudication.json")
 xval adjudicate --run "$WORK/run5p"
-assert_eq "unverifiable" "$(json_get "$(cat "$WORK/run5p/adjudication.json" 2>/dev/null)" 'd["adjudications"][0]["verdict"]')" \
-  "a zoom plan changed after it was recorded settles nothing"
-assert_eq "True" "$(json_get "$(cat "$WORK/run5p/adjudication.json" 2>/dev/null)" 'd.get("zoom_plan_broken")')" \
-  "the adjudication records that the zoom plan changed"
+assert_contains "$RUN_OUT" "zoom_plan.json changed after the step that wrote it" \
+  "a zoom plan changed after it was recorded stops the adjudication (round 9)"
+assert_eq "$adj_before" "$(cat "$WORK/run5p/adjudication.json")" "and settles nothing new"
 rm -rf "$WORK/run5s"; cp -R "$WORK/run5" "$WORK/run5s"
 python3 - "$WORK/run5s/vocab.json" <<'PY'
 import json, sys
@@ -1885,28 +1888,15 @@ assert_eq "node_modules/
 assert_eq ".gitignore" "$(ls -A "$WORK/userproj")" "and writes nothing into it"
 rm -rf "$WORK/run5m"; cp -R "$WORK/run5" "$WORK/run5m"; rm -f "$WORK/run5m/crops/z01.png"
 xval adjudicate --run "$WORK/run5m"
-assert_eq "True" "$(json_get "$(cat "$WORK/run5m/adjudication.json" 2>/dev/null)" 'd.get("zoom_plan_broken")')" \
-  "a missing crop is a broken zoom record, not an internal error (N2)"
+assert_contains "$RUN_OUT" "crops/z01.png was removed after the step that wrote it" \
+  "a missing crop is a removed record, not an internal error (N2)"
 
 # Round 4: the crops, the comparison the zoom plan was made from, and SAM's output are bound (M6).
 rm -rf "$WORK/run5q"; cp -R "$WORK/run5" "$WORK/run5q"; cp "$WORK/run5q/crops/z01.png" "$WORK/z01_saved.png"
 sips -r 90 "$WORK/run5q/crops/z01.png" --out "$WORK/run5q/crops/z01.png" >/dev/null 2>&1
 xval adjudicate --run "$WORK/run5q"
-assert_eq "True" "$(json_get "$(cat "$WORK/run5q/adjudication.json" 2>/dev/null)" 'd.get("zoom_plan_broken")')" \
-  "a crop replaced after the zoom round is recorded, so its answers are not used"
-rm -rf "$WORK/run5o"; cp -R "$WORK/run5" "$WORK/run5o"
-python3 - "$WORK/run5o" <<'PY'
-import hashlib, json, sys
-run = sys.argv[1]
-c = json.load(open(f"{run}/comparison.json")); c["disagreements"][0]["relation"] = "renamed"
-json.dump(c, open(f"{run}/comparison.json", "w"))
-digest = hashlib.sha256(open(f"{run}/comparison.json", "rb").read()).hexdigest()
-record = json.load(open(f"{run}/comparison_record.json")); record["sha256"] = digest
-json.dump(record, open(f"{run}/comparison_record.json", "w"))
-PY
-xval adjudicate --run "$WORK/run5o"
-assert_eq "True" "$(json_get "$(cat "$WORK/run5o/adjudication.json" 2>/dev/null)" 'd.get("zoom_plan_broken")')" \
-  "zoom answers made against another comparison are not used"
+assert_contains "$RUN_OUT" "crops/z01.png changed after the step that wrote it" \
+  "a crop replaced after the zoom round stops the adjudication, so its answers are not used"
 
 # Round 6 (W2): after the comparison, the answer files and the run's settings are still checked.
 SEQ=1 new_run "$WORK/run6w"   # a sequence, so sam reaches the answer files
@@ -1958,9 +1948,10 @@ for target in comparison adjudication; do
   assert_contains "$(cat "$WORK/run7${target}_result.md")" "$target.json changed after" "and named in the body"
 done
 rm -rf "$WORK/run7s"; cp -R "$WORK/run6w" "$WORK/run7s"; xval adjudicate --run "$WORK/run7s"
-edit_json "$WORK/run7s/seal.json" 'd.pop("inputs_sha256")'
+edit_json "$WORK/run7s/seal.json" 'd["sealed_at"] = "2020-01-01T00:00:00+08:00"'
 ( cd "$WORK/project" && python3 "$SCRIPTS/xval.py" result --run "$WORK/run7s" --out "$WORK/run7s_result.md" >/dev/null 2>&1 )
-assert_eq "target_invalid" "$(fm "$WORK/run7s_result.md" error)" "a seal without the input digest counts as changed (Y4)"
+assert_eq "target_invalid true" "$(fm "$WORK/run7s_result.md" error) $(fm "$WORK/run7s_result.md" seal_broken)" \
+  "a seal edited after sealing counts as changed and as a broken seal (Y4; round 9)"
 assert_eq "1" "$(grep -c 'changed after' "$WORK/run6r_result.md")" "and the change is reported once (K10)"
 # Round 8 (Z2): the fallback keeps the run's own error.
 rm -rf "$WORK/run8f"; cp -R "$WORK/run6w" "$WORK/run8f"; xval adjudicate --run "$WORK/run8f"
@@ -1970,7 +1961,7 @@ edit_json "$WORK/run8f/adjudication.json" 'd["adjudications"] = None'
 assert_eq "rate_limit" "$(fm "$WORK/run8f_result.md" error)" "a result written from the fallback keeps the run's own error (Z2)"
 assert_eq "unknown" "$(fm "$WORK/run8f_result.md" seal_broken)" "and does not claim the seal is broken"
 # Z3, K1: a record and its digest come in pairs.
-for gone in comparison_record.json adjudication.json; do
+for gone in comparison.json adjudication.json; do
   rm -rf "$WORK/run8g"; cp -R "$WORK/run6w" "$WORK/run8g"; xval adjudicate --run "$WORK/run8g"; rm "$WORK/run8g/$gone"
   ( cd "$WORK/project" && python3 "$SCRIPTS/xval.py" result --run "$WORK/run8g" --out "$WORK/run8g_result.md" >/dev/null 2>&1 )
   assert_eq "target_invalid" "$(fm "$WORK/run8g_result.md" error)" "a deleted $gone is reported as a change (Z3, K1)"
@@ -2041,10 +2032,11 @@ done
 # N1: a run whose init record lacks the input digest is not sealed.
 rm -rf "$WORK/run6n"
 xval init --run "$WORK/run6n" --vocab "$WORK/vocab.json" "$WORK"/imgs/*.png
-edit_json "$WORK/run6n/meta.json" 'd.pop("inputs_sha256")'
+edit_json "$WORK/run6n/meta.json" 'd["order"] = list(reversed(d["order"]))'
 cp "$WORK/claude_marked.json" "$WORK/run6n/claude.json"
 xval seal --run "$WORK/run6n"
-assert_contains "$RUN_OUT" '"error": "target_invalid"' "a run without the input digest from init is not sealed (N1)"
+assert_contains "$RUN_OUT" "meta.json changed after the step that wrote it; start a new run" \
+  "a run whose settings changed after init is not sealed (N1; round 9)"
 assert_no_file "$WORK/run6n/seal.json" "and no seal is written"
 # Q9: the full-resolution copy must lie in the run's hires directory, also when the digests were redone.
 rm -rf "$WORK/run6h"
@@ -2056,8 +2048,7 @@ run = sys.argv[1]; sys.path.insert(0, sys.argv[2])
 import run_files
 f = json.load(open(f"{run}/frames.json")); f["f08.png"]["hires"] = "../outside.png"
 json.dump(f, open(f"{run}/frames.json", "w"))
-m = json.load(open(f"{run}/meta.json")); m["inputs_sha256"] = run_files.inputs_digest(run)
-json.dump(m, open(f"{run}/meta.json", "w"))
+run_files.enter(run, "frames.json")   # the ledger redone too: only the location check is left
 PY
 xval confirm-privacy --run "$WORK/run6h"; profile_in "$WORK/run6h"
 cp "$WORK/claude_marked.json" "$WORK/run6h/claude.json"
@@ -2069,6 +2060,84 @@ xval crops --run "$WORK/run6h"
 assert_contains "$RUN_OUT" "outside the run's hires directory" "a full-resolution copy outside the run is not cropped (Q9)"
 assert_no_file "$WORK/run6h/zoom_plan.json" "and no zoom plan is written"
 assert_eq "0" "$(ls "$WORK/run6h/crops" 2>/dev/null | wc -l | tr -d ' ')" "and no crop is written before the check (round 7, Y8)"
+
+# Round 9 (A4, A5, B4, B7): one ledger, one rule. Every record a step writes is entered with its digest;
+# every later step checks what it reads against it, and a record without an entry counts too.
+ledger_changed() {   # ledger_changed <run> — what run_files.changed() finds, space-separated
+  python3 -B - "$SCRIPTS" "$1" <<'PY'
+import sys; sys.path.insert(0, sys.argv[1]); import run_files
+print(" ".join(run_files.changed(sys.argv[2])))
+PY
+}
+rm -rf "$WORK/run9l"; cp -R "$WORK/run6w" "$WORK/run9l"; xval adjudicate --run "$WORK/run9l"
+ledger9=" $(python3 -c 'import json,sys; print(" ".join(sorted(json.load(open(sys.argv[1])))))' "$WORK/run9l/ledger.json" 2>/dev/null) "
+for name in vocab.json frames.json meta.json frames/f01.png frames/f12.png privacy.json claude.json seal.json requests.json \
+            prompt_round1.md codex_round1.md codex.json comparison.json adjudication.json; do
+  assert_contains "$ledger9" " $name " "the ledger holds $name (round 9)"
+done
+assert_eq "" "$(ledger_changed "$WORK/run9l")" "a run nobody touched passes the ledger's one rule"
+for gone in comparison_record.json adjudication_record.json seal_check.json codex_check.json zoom_record.json; do
+  assert_no_file "$WORK/run9l/$gone" "no pairwise record $gone: the ledger replaces it"
+done
+assert_eq "False False False False" "$(python3 - "$WORK/run9l" <<'PY'
+import json, sys
+run = sys.argv[1]
+r = json.load(open(f"{run}/requests.json"))["1"]
+print("inputs_sha256" in json.load(open(f"{run}/meta.json")), "inputs_sha256" in json.load(open(f"{run}/seal.json")),
+      "reply_sha256" in r, "answers_sha256" in r)
+PY
+)" "meta, seal and requests carry no digests of their own any more"
+# A4: Claude's answers changed after sealing stop the next step that reads them.
+rm -rf "$WORK/run9a"; SEQ= new_run "$WORK/run9a"; ask_with "$WORK/codex_reply.md" "$WORK/run9a" 1
+edit_json "$WORK/run9a/claude.json" 'd["claims"][0]["objects"] = {"INST": 9}'
+xval compare --run "$WORK/run9a"
+assert_contains "$RUN_OUT" "claude.json changed after the step that wrote it" "compare stops when Claude's answers changed after sealing (A4)"
+assert_no_file "$WORK/run9a/comparison.json" "and compares nothing"
+( cd "$WORK/project" && python3 "$SCRIPTS/xval.py" result --run "$WORK/run9a" --out "$WORK/run9a_result.md" >/dev/null 2>&1 )
+assert_eq "true target_invalid" "$(fm "$WORK/run9a_result.md" seal_broken) $(fm "$WORK/run9a_result.md" error)" \
+  "the result file says the seal broke, and carries the error (A4)"
+# A4: a seal removed after the comparison is a removed record, not an intact seal.
+rm -rf "$WORK/run9s"; cp -R "$WORK/run6w" "$WORK/run9s"; rm "$WORK/run9s/seal.json"
+xval adjudicate --run "$WORK/run9s"
+assert_contains "$RUN_OUT" "seal.json was removed after the step that wrote it" "adjudicate stops when the seal was removed (A4)"
+assert_no_file "$WORK/run9s/adjudication.json" "and settles nothing"
+( cd "$WORK/project" && python3 "$SCRIPTS/xval.py" result --run "$WORK/run9s" --out "$WORK/run9s_result.md" >/dev/null 2>&1 )
+assert_eq "true target_invalid" "$(fm "$WORK/run9s_result.md" seal_broken) $(fm "$WORK/run9s_result.md" error)" \
+  "a removed seal is reported as broken, with the error (A4)"
+# A5: the zoom round's seal removed, or a raw reply's entry removed, is still caught.
+rm -rf "$WORK/run9z"; cp -R "$WORK/run5" "$WORK/run9z"; rm -f "$WORK/run9z/error.json" "$WORK/run9z/zoom_seal.json"
+xval adjudicate --run "$WORK/run9z"
+assert_contains "$RUN_OUT" "zoom_seal.json was removed" "adjudicate stops when the zoom seal was removed (A5)"
+rm -rf "$WORK/run9r"; cp -R "$WORK/run6w" "$WORK/run9r"; xval adjudicate --run "$WORK/run9r"
+edit_json "$WORK/run9r/ledger.json" 'd.pop("codex_round1.md")'
+assert_eq "codex_round1.md" "$(ledger_changed "$WORK/run9r")" "a raw reply whose entry was removed is still checked (A5)"
+# B4: a file whose entry is gone is named once, as not entered, not as changed.
+( cd "$WORK/project" && python3 "$SCRIPTS/xval.py" result --run "$WORK/run9r" --out "$WORK/run9r_result.md" >/dev/null 2>&1 )
+assert_contains "$(cat "$WORK/run9r_result.md" 2>/dev/null)" "codex_round1.md is not in the run's ledger" \
+  "a record whose entry was removed is reported as not entered (B4)"
+assert_eq "1" "$(grep -c 'codex_round1.md' "$WORK/run9r_result.md")" "and named once (B4)"
+# A file in a tracked directory that no step wrote counts too.
+rm -rf "$WORK/run9f"; cp -R "$WORK/run6w" "$WORK/run9f"; cp "$WORK/run9f/frames/f01.png" "$WORK/run9f/frames/f99.png"
+xval adjudicate --run "$WORK/run9f"
+assert_contains "$RUN_OUT" "frames/f99.png is not in the run's ledger" "an image no step wrote stops the step (round 9)"
+# A run whose ledger is gone says so, rather than listing every record as not entered.
+rm -rf "$WORK/run9g"; cp -R "$WORK/run6w" "$WORK/run9g"; rm "$WORK/run9g/ledger.json"
+xval adjudicate --run "$WORK/run9g"
+assert_contains "$RUN_OUT" "ledger (ledger.json) is missing or unreadable" "a run without its ledger stops and says why (round 9)"
+# B4: a change the run already stopped on is not named a second time by the result file.
+rm -rf "$WORK/run9d"; SEQ= new_run "$WORK/run9d"; ask_with "$WORK/codex_reply.md" "$WORK/run9d" 1
+edit_json "$WORK/run9d/codex.json" 'r = d["claims"][1]["relations"]; k = next(iter(r)); r[k] = not r[k]'
+xval compare --run "$WORK/run9d"
+assert_eq '["codex.json"]' "$(json_get "$(cat "$WORK/run9d/error.json")" 'json.dumps(d.get("records"))')" \
+  "the error names the records it stopped on (B4)"
+( cd "$WORK/project" && python3 "$SCRIPTS/xval.py" result --run "$WORK/run9d" --out "$WORK/run9d_result.md" >/dev/null 2>&1 )
+assert_eq "1" "$(grep -c 'codex.json changed after' "$WORK/run9d_result.md")" "and the result file names that change once (B4)"
+# B7: compare before Codex answered is refused, and the run's own error stays.
+rm -rf "$WORK/run9n"; SEQ= new_run "$WORK/run9n"
+printf '{"error": "rate_limit", "detail": "limit", "step": "ask --round 1"}' > "$WORK/run9n/error.json"
+xval compare --run "$WORK/run9n"
+assert_contains "$RUN_OUT" "no Codex answer" "compare before Codex answered says so (B7)"
+assert_eq "rate_limit" "$(json_get "$(cat "$WORK/run9n/error.json")" 'd["error"]')" "and the run's own error stays (B7)"
 
 # Round 6 (Q1): the steps that write into a directory are a closed list.
 rm -rf "$WORK/typo"
@@ -2381,24 +2450,22 @@ json.dump({"sam_status": "ok", "detail": "hand-written"}, open(f"{run}/sam.json"
 json.dump({"sam_status": "ok", "class": "INST", "frames": {}}, open(f"{run}/track.json", "w"))
 PY
 xval adjudicate --run "$WORK/run5t"
-assert_eq "True" "$(json_get "$(cat "$WORK/run5t/adjudication.json" 2>/dev/null)" 'd.get("sam_record_broken")')" \
-  "SAM output that the sam step did not record is not evidence"
+assert_contains "$RUN_OUT" "track.json is not in the run's ledger" \
+  "SAM output that the sam step did not write stops the adjudication, so it is not evidence (round 9)"
 
 # Zoom answers that change after they were sealed or recorded are not evidence (#23 verify B2).
 cp -R "$WORK/run5" "$WORK/run5b"
 printf '{"answers": {"z01.png": {"value": true}}}\n' > "$WORK/run5b/zoom_claude.json"
 xval adjudicate --run "$WORK/run5b"
-assert_eq "unverifiable" "$(json_get "$(cat "$WORK/run5b/adjudication.json")" 'd["adjudications"][0]["verdict"]')" \
-  "zoom answers edited after sealing do not settle anything"
-assert_eq "True" "$(json_get "$(cat "$WORK/run5b/adjudication.json")" 'd["zoom_seal_broken"]')" \
-  "the adjudication records that the zoom seal failed"
+assert_contains "$RUN_OUT" "zoom_claude.json changed after the step that wrote it" \
+  "zoom answers edited after sealing stop the adjudication, so they settle nothing (round 9)"
 ( mkdir -p "$WORK/project" && cd "$WORK/project" && python3 "$SCRIPTS/xval.py" result --run "$WORK/run5b" --out "$WORK/run5b_result.md" >/dev/null 2>&1 )
 assert_contains "$(cat "$WORK/run5b_result.md" 2>/dev/null)" "zoom seal failed" "the result file says the zoom seal failed"
 rm -rf "$WORK/run5b"; cp -R "$WORK/run5" "$WORK/run5b"
 printf '{"d1": true}\n' > "$WORK/run5b/zoom_codex.json"
 xval adjudicate --run "$WORK/run5b"
-assert_eq "unverifiable" "$(json_get "$(cat "$WORK/run5b/adjudication.json")" 'd["adjudications"][0]["verdict"]')" \
-  "Codex zoom answers edited after they were recorded do not settle anything"
+assert_contains "$RUN_OUT" "zoom_codex.json changed after the step that wrote it" \
+  "Codex zoom answers edited after they were recorded stop the adjudication (round 9)"
 
 # Count questions crop every key point of the class; a crop of the whole image is no zoom (#23 verify B8).
 python3 - "$WORK" <<'PY'
@@ -2597,11 +2664,12 @@ case "$(fm "$native_file" error)$(sed -n '/^---$/,/^---$/p' "$native_file")" in
   *) pass "the preflight detail stays out of the frontmatter" ;;
 esac
 
-# A broken seal is reported, and the comparison still happened.
+# A broken seal is reported, and the run stops at the comparison (round 9, A4).
 new_run "$WORK/run8"
 ask_with "$WORK/codex_reply.md" "$WORK/run8" 1
 printf ' ' >> "$WORK/run8/claude.json"
 xval compare --run "$WORK/run8"
+assert_contains "$RUN_OUT" "claude.json changed after the step that wrote it" "compare stops on answers changed after sealing"
 xval sam --run "$WORK/run8"
 xval adjudicate --run "$WORK/run8"
 sleep 1
@@ -2619,7 +2687,7 @@ d = json.load(open(sys.argv[1])); d["claims"][7]["relations"]["tips_together"] =
 json.dump(d, open(sys.argv[1], "w"))
 PY
 xval compare --run "$WORK/run8b"
-assert_eq "True" "$(json_get "$RUN_OUT" 'd["codex_record_broken"]')" "compare reports that Codex's answer no longer matches its record"
+assert_contains "$RUN_OUT" "codex.json changed after the step that wrote it" "compare stops when Codex's answer no longer matches the ledger"
 xval adjudicate --run "$WORK/run8b"
 sleep 1
 result_in "$WORK/run8b"
