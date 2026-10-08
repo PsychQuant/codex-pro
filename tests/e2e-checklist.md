@@ -307,6 +307,14 @@ f01 是 PIL 寫出的 3000×1875 PNG，f02 是 PIL 寫出的 JPEG（品質 92）
   「不近」不採用）。adjudicate 寫出 `adjudication_record.json`；結果檔重算所有紀錄，沒有誤報改動，error 為空。
 - 複本與裁切圖都不含 EXIF 或文字區塊；結果檔沒有出現原圖資料夾的名稱。
 
+第八次紀錄：2026-10-08，codex-pro `8231657`（第八輪 verify 的修正與兩次背景審查之後），同一個 runtime 與 profile。
+原圖（PIL 的 PNG 與 JPEG）放在名稱含括號的資料夾。
+
+- 第一輪 6.2 秒、放大輪 6.2 秒，各一次請求；codex-call 這次以 Popen 啟動、輸出以 UTF-8 解碼，行為與先前相同。
+- 裁決與第六、七次相同。結果檔現在核對每一份紀錄（兩輪的答案、Codex 的原始回覆、比對結果、裁決），
+  沒有誤報改動，error 為空；結果檔沒有出現資料夾名稱裡的「2024」。
+- 複本與裁切圖都不含 EXIF 或文字區塊。
+
 ## Post-test cleanup checklist
 
 - [ ] B 段使用的 disposable account／VM 沒有污染日常 Codex home
