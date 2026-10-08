@@ -53,10 +53,11 @@ def _older_python(argv):
             return False
     if command != "result":
         if is_run(run):
+            entry = {"error": "runtime_unavailable", "detail": detail, "step": command, "source": "xval"}
             with open(os.path.join(run, "error.json"), "w", encoding="utf-8") as fh:
-                json.dump({"error": "runtime_unavailable", "detail": detail, "step": command}, fh)
+                json.dump(entry, fh)
             with open(os.path.join(run, "errors.jsonl"), "a", encoding="utf-8") as fh:   # the history (round 4, M10)
-                fh.write(json.dumps({"error": "runtime_unavailable", "detail": detail, "step": command}) + "\n")
+                fh.write(json.dumps(entry) + "\n")
         print(json.dumps({"error": "runtime_unavailable", "detail": detail}))
         sys.exit(5)
     def read(name, default):   # a record of another type is read as missing (round 8, K1)
@@ -256,8 +257,8 @@ def seal_answers(run: str, zoom: bool) -> None:
 def runtime(run: str) -> str:
     lines = open(os.path.join(run, "runtime_error.txt"), encoding="utf-8").read().splitlines() \
         if os.path.exists(os.path.join(run, "runtime_error.txt")) else []
-    if lines and lines[0].strip():
-        raise Stop(lines[0].strip(), " ".join(lines[1:]).strip() or lines[0].strip())
+    if lines and lines[0].strip():   # the runtime check's own text: kept in the run, not in the result file (round 9)
+        raise Stop(lines[0].strip(), " ".join(lines[1:]).strip() or lines[0].strip(), source="runtime")
     path = open(os.path.join(run, "runtime.txt"), encoding="utf-8").read().strip() \
         if os.path.exists(os.path.join(run, "runtime.txt")) else ""
     if not path or not os.access(path, os.X_OK):
@@ -328,13 +329,14 @@ def profile(run: str) -> dict:
     ok = (isinstance(data, dict) and all(text(data.get(k)) for k in ("model", "effort"))
           and isinstance(data.get("max_time"), int) and not isinstance(data.get("max_time"), bool) and data["max_time"] > 0)
     if not ok:
-        if isinstance(data, dict) and data.get("invalid"):   # Step 4.1 found a value it would not replace (L6)
-            raise Stop("target_invalid", f"{data['invalid']}; nothing was sent")
-        if isinstance(data, dict):   # name the field (round 4, M10)
+        if isinstance(data, dict):   # the field by name; the value is the user's and stays in profile.json (M10, L6; round 9)
             bad = [k for k in ("model", "effort") if not text(data.get(k))]
             t = data.get("max_time")   # a bool is not a time (round 5, N7)
             bad += [] if isinstance(t, int) and not isinstance(t, bool) and t > 0 else ["max_time"]
-            raise Stop("target_invalid", f"profile.json has no valid {', '.join(bad)} (Step 4.1 writes it); nothing was sent")
+            where = data.get("profile_source")
+            where = f" (from the {where} profile)" if where in ("default", "global", "project", "mixed") else ""
+            raise Stop("target_invalid", f"profile.json has no valid {', '.join(bad)}{where}; Step 4.1 kept the value as "
+                       "given and the reason in profile.json; nothing was sent")
         raise Stop("target_invalid", "no resolved profile in the run directory (Step 4.1 writes profile.json); nothing was sent")
     return data
 
@@ -375,8 +377,8 @@ def call_codex(run: str, prompt: str, images: list[str], tag: str, argv: list[st
     _, stderr = proc.communicate()
     enter(run, os.path.basename(output))   # whatever it wrote, also on failure (round 9)
     if proc.returncode != 0:   # counted as sent, whatever the message says (round 5, V1)
-        error, detail = classify(stderr, proc.returncode)
-        raise Stop(error, f"{detail}; the request is counted as sent, so this round is used up")
+        error, detail = classify(stderr, proc.returncode)   # codex-call's own text (round 9)
+        raise Stop(error, f"{detail}; the request is counted as sent, so this round is used up", source="codex-call")
     try:
         reply = open(output, encoding="utf-8").read()
     except OSError:
@@ -615,8 +617,9 @@ def crops(run: str) -> None:
 
 # ── SAM / adjudication ──────────────────────────────────────────
 def sam(run: str) -> None:
-    def record(status: str, detail: str = "") -> None:
-        dump(os.path.join(run, "sam.json"), {"sam_status": status, "detail": detail})
+    def record(status: str, detail: str = "", source: str = "xval") -> None:
+        # SAM's own output stays in sam.json; the result file shows only xval's words (round 9)
+        dump(os.path.join(run, "sam.json"), {"sam_status": status, "detail": detail, "detail_source": source})
         enter(run, "sam.json")
         print(json.dumps({"sam_status": status, "detail": detail}, ensure_ascii=False))
     checked_inputs(run)   # before anything is read from them, the settings in meta.json included (V8; round 6, W2)
@@ -647,7 +650,7 @@ def sam(run: str) -> None:
         return record("no_anchor", f"no agreeing frame has a {cls} to anchor on")
     check = subprocess.run(["bash", os.path.join(HERE, "sam_env.sh"), "--check"], capture_output=True, text=True)
     if check.returncode != 0:
-        return record("not_installed", check.stdout.strip())
+        return record("not_installed", check.stdout.strip(), source="sam")
     dump(os.path.join(run, "sam_frames.json"), [os.path.join(run, "frames", n) for n in neutral_names(run)])
     enter(run, "sam_frames.json")
     env_dir = os.path.expanduser("~/.codex-pro/sam-env")
@@ -657,7 +660,7 @@ def sam(run: str) -> None:
                           env={**os.environ, "HF_HOME": os.path.join(env_dir, "hf")})
     enter(run, "track.json")   # whatever SAM wrote, so the ledger's rule holds for it too (M6; round 9)
     if done.returncode != 0:
-        return record("failed", (done.stdout + done.stderr).strip()[-500:])
+        return record("failed", (done.stdout + done.stderr).strip()[-500:], source="sam")
     track = load(os.path.join(run, "track.json"), {})
     record("ok", f"{len(track.get('frames', {}))} frames tracked, {len(track.get('invalid_frames', []))} collapsed")
 
@@ -755,17 +758,19 @@ def main(argv: list[str]) -> None:
             sys.exit(64)
     except Stop as stop:   # result's own failure goes to the history only: the run's error stays (round 7, Y3)
         stop_run(run, step, stop.error, stop.detail, stop.record and command != "result",
-                 refused=not stop.record, records=stop.records)
+                 refused=not stop.record, records=stop.records, source=stop.source)
     except Exception as exc:   # an unexpected failure still leaves a record and a result file
-        stop_run(run, step, "internal_error", f"{type(exc).__name__}: {failure(exc)}", command != "result", refused=False)
+        stop_run(run, step, "internal_error", f"{type(exc).__name__}: {failure(exc)}", command != "result", refused=False,
+                 source="python")
     clear_error(run, step)
 
 
 def stop_run(run: str, command: str, error: str, detail: str, record_error: bool = True,
-             refused: bool | None = None, records: list[str] | None = None) -> None:
+             refused: bool | None = None, records: list[str] | None = None, source: str = "xval") -> None:
     """refused marks a command whose step was already done; a result step's own failure is not one,
-    though it does not replace the run's error either (round 8, K1)."""
-    record = {"error": error, "detail": detail, "step": command, "at": now_iso()}
+    though it does not replace the run's error either (round 8, K1). source says who wrote the detail:
+    the result file shows it only when it is xval's own (round 9)."""
+    record = {"error": error, "detail": detail, "step": command, "at": now_iso(), "source": source}
     if records:   # the ledger's records it stopped on (round 9, B4)
         record["records"] = records
     # A failed init still leaves its error, or the result file would show a failed run as one without

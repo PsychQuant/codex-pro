@@ -1122,7 +1122,10 @@ new_run "$WORK/runurl"
 RUN_OUT=$(HOME="$WORK/home" MOCK_STDERR="error: HTTP 500: see https://status.openai.com/incidents/abc for details" MOCK_STATUS=1 \
   MOCK_LOG="$WORK/mock.log" MOCK_PROMPTS="$WORK/prompts.txt" PATH="$WORK/stubbin:$PATH" python3 "$SCRIPTS/xval.py" ask --run "$WORK/runurl" --round 1 2>&1)
 ( cd "$WORK/project" && HOME="$WORK/home" python3 "$SCRIPTS/xval.py" result --run "$WORK/runurl" --out "$WORK/runurl_result.md" >/dev/null 2>&1 )
-assert_contains "$(cat "$WORK/runurl_result.md" 2>/dev/null)" "https://status.openai.com/incidents/abc" "a URL in a backend message is left intact"
+assert_contains "$(cat "$WORK/runurl/error.json" 2>/dev/null)" "https://status.openai.com/incidents/abc" \
+  "a backend message, URL and all, is kept in the run directory"
+assert_contains "$(cat "$WORK/runurl_result.md" 2>/dev/null)" "kept in error.json in the run directory" \
+  "and the result file says where, without showing it (round 9)"
 rm -f "$WORK/mock.log" "$WORK/prompts.txt"
 
 # Round 4: the run directory never takes over someone else's files (U5); a failed init also uses up
@@ -1953,13 +1956,15 @@ edit_json "$WORK/run7s/seal.json" 'd["sealed_at"] = "2020-01-01T00:00:00+08:00"'
 assert_eq "target_invalid true" "$(fm "$WORK/run7s_result.md" error) $(fm "$WORK/run7s_result.md" seal_broken)" \
   "a seal edited after sealing counts as changed and as a broken seal (Y4; round 9)"
 assert_eq "1" "$(grep -c 'changed after' "$WORK/run6r_result.md")" "and the change is reported once (K10)"
-# Round 8 (Z2): the fallback keeps the run's own error.
+# Round 8 (Z2): the run's own error is kept; round 9: a record of the wrong shape is no longer rendered at all.
 rm -rf "$WORK/run8f"; cp -R "$WORK/run6w" "$WORK/run8f"; xval adjudicate --run "$WORK/run8f"
 printf '{"error": "rate_limit", "detail": "limit", "step": "ask --round zoom"}' > "$WORK/run8f/error.json"
 edit_json "$WORK/run8f/adjudication.json" 'd["adjudications"] = None'
 ( cd "$WORK/project" && python3 "$SCRIPTS/xval.py" result --run "$WORK/run8f" --out "$WORK/run8f_result.md" >/dev/null 2>&1 )
-assert_eq "rate_limit" "$(fm "$WORK/run8f_result.md" error)" "a result written from the fallback keeps the run's own error (Z2)"
-assert_eq "unknown" "$(fm "$WORK/run8f_result.md" seal_broken)" "and does not claim the seal is broken"
+assert_eq "rate_limit" "$(fm "$WORK/run8f_result.md" error)" "a result with an edited record keeps the run's own error (Z2)"
+assert_eq "false" "$(fm "$WORK/run8f_result.md" seal_broken)" "and reports the seal it checked, true or false only (B5)"
+assert_contains "$(cat "$WORK/run8f_result.md")" "adjudication.json changed after the step that wrote it" \
+  "and lists the edited record instead of rendering it (round 9)"
 # Z3, K1: a record and its digest come in pairs.
 for gone in comparison.json adjudication.json; do
   rm -rf "$WORK/run8g"; cp -R "$WORK/run6w" "$WORK/run8g"; xval adjudicate --run "$WORK/run8g"; rm "$WORK/run8g/$gone"
@@ -2104,6 +2109,7 @@ assert_no_file "$WORK/run9s/adjudication.json" "and settles nothing"
 ( cd "$WORK/project" && python3 "$SCRIPTS/xval.py" result --run "$WORK/run9s" --out "$WORK/run9s_result.md" >/dev/null 2>&1 )
 assert_eq "true target_invalid" "$(fm "$WORK/run9s_result.md" seal_broken) $(fm "$WORK/run9s_result.md" error)" \
   "a removed seal is reported as broken, with the error (A4)"
+assert_contains "$(cat "$WORK/run9s_result.md")" "The seal failed" "and the result file says the seal failed (A4)"
 # A5: the zoom round's seal removed, or a raw reply's entry removed, is still caught.
 rm -rf "$WORK/run9z"; cp -R "$WORK/run5" "$WORK/run9z"; rm -f "$WORK/run9z/error.json" "$WORK/run9z/zoom_seal.json"
 xval adjudicate --run "$WORK/run9z"
@@ -2138,6 +2144,87 @@ printf '{"error": "rate_limit", "detail": "limit", "step": "ask --round 1"}' > "
 xval compare --run "$WORK/run9n"
 assert_contains "$RUN_OUT" "no Codex answer" "compare before Codex answered says so (B7)"
 assert_eq "rate_limit" "$(json_get "$(cat "$WORK/run9n/error.json")" 'd["error"]')" "and the run's own error stays (B7)"
+
+# Round 9 (A1–A3, B1, B5): the result file carries no text from outside xval, shows only the records the
+# ledger verifies, writes each frontmatter field in its own form, and its last resort is fixed text.
+refute_contains() { case "$1" in *"$2"*) fail "$3" ;; *) pass "$3" ;; esac; }
+result9() {   # result9 <run> — write <run>_result.md from inside $WORK/project
+  ( cd "$WORK/project" && HOME="$WORK/home" python3 "$SCRIPTS/xval.py" result --run "$1" --out "$1_result.md" >/dev/null 2>&1 )
+}
+# The four outside sources, a closed list: codex-call's messages, the runtime check's detail, Python's
+# exception text and SAM's output stay in the run directory.
+new_run "$WORK/run9m"
+RUN_OUT=$(HOME="$WORK/home" MOCK_STDERR="error: HTTP 500: upstream-marker-9m at /opt/Client X/case" MOCK_STATUS=1 \
+  MOCK_LOG="$WORK/mock.log" MOCK_PROMPTS="$WORK/prompts.txt" PATH="$WORK/stubbin:$PATH" python3 "$SCRIPTS/xval.py" ask --run "$WORK/run9m" --round 1 2>&1)
+assert_eq "codex-call" "$(json_get "$(cat "$WORK/run9m/error.json")" 'd.get("source")')" "error.json marks codex-call's message as its own (round 9)"
+result9 "$WORK/run9m"
+refute_contains "$(cat "$WORK/run9m_result.md")" "upstream-marker-9m" "codex-call's message stays out of the result file (A1)"
+assert_contains "$(cat "$WORK/run9m_result.md")" "kept in error.json in the run directory" "and the result file says where it is"
+assert_eq "backend_error" "$(fm "$WORK/run9m_result.md" error)" "the error class is still in the frontmatter"
+rm -rf "$WORK/run9q"; cp -R "$WORK/run6w" "$WORK/run9q"; xval adjudicate --run "$WORK/run9q"
+python3 -B - "$WORK/run9q" "$SCRIPTS" <<'PY'
+import json, sys
+run = sys.argv[1]; sys.path.insert(0, sys.argv[2])
+import run_files
+json.dump({"sam_status": "failed", "detail": "sam-marker-9q /opt/x", "detail_source": "sam"}, open(f"{run}/sam.json", "w"))
+run_files.enter(run, "sam.json")
+PY
+result9 "$WORK/run9q"
+refute_contains "$(cat "$WORK/run9q_result.md")" "sam-marker-9q" "SAM's output stays out of the result file (A1)"
+assert_contains "$(cat "$WORK/run9q_result.md")" "SAM's output is kept in sam.json" "and the result file says where it is"
+# Only the records the ledger verifies are shown.
+rm -rf "$WORK/run9v"; cp -R "$WORK/run6w" "$WORK/run9v"; xval adjudicate --run "$WORK/run9v"
+edit_json "$WORK/run9v/comparison.json" 'd["agreement_rate"] = 0.123'
+result9 "$WORK/run9v"
+refute_contains "$(cat "$WORK/run9v_result.md")" "0.123" "an edited comparison is not shown (A3)"
+assert_eq "" "$(fm "$WORK/run9v_result.md" agreement_rate)" "nor is its value in the frontmatter"
+assert_contains "$(cat "$WORK/run9v_result.md")" "comparison.json changed after the step that wrote it" "it is listed instead"
+# Each frontmatter field in its own form, otherwise `invalid`; the result is written whatever error.json holds.
+rm -rf "$WORK/run9k"; cp -R "$WORK/run6w" "$WORK/run9k"; xval adjudicate --run "$WORK/run9k"
+printf '{"model": "gpt test", "effort": "high;x", "max_time": 30, "profile_source": "elsewhere"}' > "$WORK/run9k/profile.json"
+printf '{"error": "rate_limit\\u2028seal_broken: false", "detail": 5, "step": "ask", "source": "xval"}' > "$WORK/run9k/error.json"
+result9 "$WORK/run9k"
+assert_eq "invalid invalid invalid invalid" \
+  "$(fm "$WORK/run9k_result.md" model) $(fm "$WORK/run9k_result.md" effort) $(fm "$WORK/run9k_result.md" profile_source) $(fm "$WORK/run9k_result.md" error)" \
+  "a value not in its field's form is written as invalid (round 9)"
+rm -rf "$WORK/run9u"; cp -R "$WORK/run6w" "$WORK/run9u"; xval adjudicate --run "$WORK/run9u"
+printf '{"model": "\\ud800", "effort": "high", "max_time": 30, "profile_source": "default"}' > "$WORK/run9u/profile.json"
+printf '{"error": "rate_limit", "detail": "lone \\udc00 surrogate", "step": "ask --round zoom", "source": "xval"}' > "$WORK/run9u/error.json"
+result9 "$WORK/run9u"
+assert_eq "invalid rate_limit" "$(fm "$WORK/run9u_result.md" model) $(fm "$WORK/run9u_result.md" error)" \
+  "a lone surrogate neither stops the result file nor leaves an empty one (A1)"
+# The last resort: a record that passes the ledger but cannot be rendered gives fixed text only.
+rm -rf "$WORK/run9x"; cp -R "$WORK/run6w" "$WORK/run9x"; xval adjudicate --run "$WORK/run9x"
+python3 -B - "$WORK/run9x" "$SCRIPTS" <<'PY'
+import json, sys
+run = sys.argv[1]; sys.path.insert(0, sys.argv[2])
+import run_files
+json.dump({"disagreements": [{"id": "d1"}], "agreement_rate": 0.5, "n_frames": 1}, open(f"{run}/comparison.json", "w"))
+run_files.enter(run, "comparison.json")   # its ledger entry redone too
+PY
+printf '{"error": "rate_limit", "detail": "detail-marker-9x", "step": "ask --round zoom", "source": "xval"}' > "$WORK/run9x/error.json"
+RUN_OUT=$(cd "$WORK/project" && python3 "$SCRIPTS/xval.py" result --run "$WORK/run9x" --out "$WORK/run9x_result.md" 2>&1)
+assert_contains "$RUN_OUT" '"result"' "a record that cannot be rendered still gives a result file (A1)"
+assert_eq "rate_limit true" "$(fm "$WORK/run9x_result.md" error) $(fm "$WORK/run9x_result.md" seal_broken)" \
+  "with the run's own error, and a seal it did not check is not called intact (A3, B5)"
+assert_contains "$(cat "$WORK/run9x_result.md")" "could not render this run's records" "and says so in fixed words"
+refute_contains "$(cat "$WORK/run9x_result.md")" "detail-marker-9x" "nothing from the run's records or error detail is in it"
+# A2: a directory that merely starts like the home directory is cut like any other path.
+a2=$(HOME="$WORK/home" python3 -B - "$SCRIPTS" "$WORK/home" <<'PY'
+import sys
+sys.path.insert(0, sys.argv[1])
+import result_file
+home = sys.argv[2]
+print(result_file.sanitize(f"cannot read {home}.doe/Clients/scan.png") + " | " + result_file.sanitize(f"see {home}. Then"))
+PY
+)
+assert_eq "cannot read …/scan.png | see ~. Then" "$a2" "a sibling of the home directory is cut, and home before a full stop is still home (A2)"
+# The profile's own reason holds the user's value: the error names the field only.
+rm -rf "$WORK/run9p"; new_run "$WORK/run9p"
+printf '{"model": "m", "effort": "high", "max_time": "value-marker-9p", "profile_source": "project", "invalid": "profile max_time is not a positive integer (%s, project profile)"}' "'value-marker-9p'" > "$WORK/run9p/profile.json"
+xval ask --run "$WORK/run9p" --round 1
+assert_contains "$RUN_OUT" "max_time" "an invalid profile is named by its field"
+refute_contains "$RUN_OUT" "value-marker-9p" "without the value from the profile file (round 9)"
 
 # Round 6 (Q1): the steps that write into a directory are a closed list.
 rm -rf "$WORK/typo"
@@ -2658,7 +2745,9 @@ result_in "$WORK/run7"
 native_file=$(ls -t "$WORK"/project/.codex-pro/visual-xval-*.md | head -1)
 assert_eq "package_corruption" "$(fm "$native_file" error)" "a native preflight failure is recorded in frontmatter"
 detail_line=$(grep '^Runtime preflight detail:' "$native_file")
-assert_contains "$detail_line" "error=hash_mismatch expected=abc line" "the preflight detail is sanitized (no TAB or CR)"
+assert_contains "$detail_line" "kept in error.json in the run directory" "the preflight detail is kept in the run directory (round 9)"
+assert_contains "$(cat "$WORK/run7/error.json")" "hash_mismatch" "where it is whole"
+refute_contains "$(cat "$native_file")" "hash_mismatch" "and the result file does not show it"
 case "$(fm "$native_file" error)$(sed -n '/^---$/,/^---$/p' "$native_file")" in
   *hash_mismatch*) fail "the preflight detail stays out of the frontmatter" ;;
   *) pass "the preflight detail stays out of the frontmatter" ;;

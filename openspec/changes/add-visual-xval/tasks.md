@@ -346,7 +346,7 @@
   - 驗證：`spectra validate` 與 `spectra analyze` 無 warning。
 - [x] 14.2 帳本：run_files 的帳本與核對，所有步驟改用它；拿掉各自成對的雜湊紀錄（A4、A5、B4、B7）。
   - [after: 14.1]
-- [ ] 14.3 結果檔：只用帳本核對過的紀錄、外來文字只標來源、frontmatter 欄位格式、最後一道退路只寫固定內容（A1、A2、A3、B5）。
+- [x] 14.3 結果檔：只用帳本核對過的紀錄、外來文字只標來源、frontmatter 欄位格式、最後一道退路只寫固定內容（A1、A2、A3、B5）。
   - [after: 14.2]
 - [ ] 14.4 其餘：使用者給的詞彙表不受一般檔案限制、Popen 中斷時終止 codex-call、回覆不是 UTF-8 時為 parse_failed、sam 與 sips 探測以 UTF-8 解碼、Python 3.9 路徑（B2、B3、B5、B8）。
   - [after: 14.3]
