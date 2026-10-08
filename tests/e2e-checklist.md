@@ -315,6 +315,14 @@ f01 是 PIL 寫出的 3000×1875 PNG，f02 是 PIL 寫出的 JPEG（品質 92）
   沒有誤報改動，error 為空；結果檔沒有出現資料夾名稱裡的「2024」。
 - 複本與裁切圖都不含 EXIF 或文字區塊。
 
+第九次紀錄：2026-10-08，codex-pro `f7997f1`（第九輪 verify 的結構改寫：帳本與結果檔），同一個 runtime 與 profile。
+原圖（PIL 的 PNG 與 JPEG）放在名稱含中文的資料夾。
+
+- 第一輪 8.8 秒、放大輪 8.7 秒，各一次請求；Codex 收到的放大輪題目檔與 subagent 作答的那份逐字相同。
+- 植入與先前相同的兩個錯誤，分歧三筆全是植入的錯誤；裁決與第六到八次相同（兩筆 `resolved_codex`，「不近」不採用）。
+- 帳本登記 27 筆紀錄，跑完後一條規則核對沒有任何不符；各自成對的舊紀錄（comparison_record 等）都不再產生。
+- 結果檔沒有 error、沒有 `invalid` 欄位、沒有外來文字的轉述，也沒有出現資料夾名稱；複本與裁切圖都不含 EXIF 或文字區塊。
+
 ## Post-test cleanup checklist
 
 - [ ] B 段使用的 disposable account／VM 沒有污染日常 Codex home

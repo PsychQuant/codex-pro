@@ -353,6 +353,6 @@
 - [x] 14.5 文件：SKILL、CHANGELOG、design 的指向（B6）。
   - 驗證：`bash tests/run.sh` 只剩 #24。
   - [after: 14.4]
-- [ ] 14.6 真實後端端到端（第九次）。
+- [x] 14.6 真實後端端到端（第九次）。
   - 驗證：紀錄寫進 e2e-checklist §F。
   - [after: 14.5]
