@@ -2001,6 +2001,28 @@ assert_contains "$RUN_OUT" "nothing was sent" "and says nothing was sent"
 assert_eq "False" "$(python3 -c 'import json,sys; print("1" in json.load(open(sys.argv[1])))' "$WORK/run6p/requests.json" 2>/dev/null || echo False)" \
   "and the round is not recorded as sent"
 assert_no_file "$WORK/mock.log" "and codex-call is not run"
+# Round 8 (Z1): only a process that could not be started withdraws the record; output that cannot be
+# decoded, after codex-call ran, does not.
+new_run "$WORK/run8u"
+RUN_OUT=$(LC_ALL=en_US.UTF-8 HOME="$WORK/home" MOCK_STDERR=$'error: HTTP 500 \xff\xfe' MOCK_STATUS=1 MOCK_LOG="$WORK/mock.log" \
+  MOCK_PROMPTS="$WORK/prompts.txt" PATH="$WORK/stubbin:$PATH" python3 "$SCRIPTS/xval.py" ask --run "$WORK/run8u" --round 1 2>&1)
+assert_eq "kept" "$(python3 -c 'import json,sys; print("kept" if json.load(open(sys.argv[1])).get("1") else "withdrawn")' "$WORK/run8u/requests.json" 2>/dev/null)" \
+  "a codex-call that ran and printed bytes that are not UTF-8 keeps the record (Z1)"
+case "$RUN_OUT" in
+  *"nothing was sent"*) fail "and the run does not say nothing was sent" ;;
+  *) pass "and the run does not say nothing was sent" ;;
+esac
+new_run "$WORK/run8v"
+RUN_OUT=$(LC_ALL=en_US.UTF-8 HOME="$WORK/home" MOCK_STDERR=$'note \xff' MOCK_REPLY="$WORK/codex_reply.md" MOCK_LOG="$WORK/mock.log" \
+  MOCK_PROMPTS="$WORK/prompts.txt" PATH="$WORK/stubbin:$PATH" python3 "$SCRIPTS/xval.py" ask --run "$WORK/run8v" --round 1 2>&1)
+assert_contains "$RUN_OUT" '"ok": true' "a successful call whose log is not UTF-8 is still a success (Z1)"
+# K7: an empty CFFIXED_USER_HOME is the working directory to Foundation, and to the login check.
+k7=$(cd "$WORK" && CFFIXED_USER_HOME="" python3 -B -c '
+import os, sys
+sys.path.insert(0, sys.argv[1])
+import codex_errors
+print(codex_errors.token_store() == os.path.join(os.getcwd(), ".codex", "auth.json"))' "$SCRIPTS")
+assert_eq "True" "$k7" "an empty CFFIXED_USER_HOME means the working directory, as Foundation reads it (K7)"
 # Q7: a run directory that cannot be created is the user's input, not the skill's fault.
 printf 'x' > "$WORK/afile"
 xval init --run "$WORK/afile/run" --vocab "$WORK/vocab.json" "$WORK"/imgs/*.png

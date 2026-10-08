@@ -265,7 +265,9 @@ def runtime(run: str) -> str:
         raise Stop("runtime_unavailable", "codex-call not found or not executable"
                    + (f" ({os.path.basename(path)})" if path else "") + " remediation=install parallel-ai-agents or run codex-setup")
     try:
-        help_text = subprocess.run([path, "--help"], capture_output=True, text=True, timeout=120).stdout
+        # decoded as UTF-8 whatever the locale, so a Big5 or Shift-JIS terminal does not break the probe (round 8)
+        help_text = subprocess.run([path, "--help"], capture_output=True, encoding="utf-8", errors="replace",
+                                   timeout=120).stdout
     except (OSError, subprocess.TimeoutExpired) as exc:
         raise Stop("runtime_unavailable", f"codex-call --help failed: {failure(exc)}")
     if "--image" not in help_text:
@@ -361,13 +363,17 @@ def call_codex(run: str, prompt: str, images: list[str], tag: str, argv: list[st
            "--instructions", INSTRUCTIONS, "--prompt-file", prompt_file]
     for image in images:
         cmd += ["--image", image]
-    try:
-        done = subprocess.run(cmd, capture_output=True, text=True)   # foreground; the hard timeout is codex-call's
-    except (OSError, ValueError, TypeError) as exc:   # it never started, so nothing was sent (round 7, Y6)
+    try:   # only starting the process can fail before anything is sent (round 7, Y6)
+        proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, encoding="utf-8", errors="replace")
+    except (OSError, ValueError, TypeError) as exc:
         withdraw_request(run, rnd)
         raise Stop("runtime_unavailable", f"cannot run codex-call: {failure(exc)}; nothing was sent")
-    if done.returncode != 0:   # counted as sent, whatever the message says (round 5, V1)
-        error, detail = classify(done.stderr, done.returncode)
+    # It started: from here on nothing withdraws the record. Its output is read only now, and bytes that
+    # are not UTF-8 are replaced rather than raised, since a decoding error here once withdrew a call
+    # that had already run (round 8, Z1). Foreground; the hard timeout is codex-call's.
+    _, stderr = proc.communicate()
+    if proc.returncode != 0:   # counted as sent, whatever the message says (round 5, V1)
+        error, detail = classify(stderr, proc.returncode)
         raise Stop(error, f"{detail}; the request is counted as sent, so this round is used up")
     try:
         reply = open(output, encoding="utf-8").read()

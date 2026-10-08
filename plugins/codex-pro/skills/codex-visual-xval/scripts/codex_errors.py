@@ -42,9 +42,11 @@ def token_store() -> str:
     codex-call asks Foundation for the home directory (FileManager.homeDirectoryForCurrentUser), which
     ignores HOME but honours CFFIXED_USER_HOME when the process is not set-id; the same rule here
     (round 7, Y7). The test suite sets CFFIXED_USER_HOME too; there is no hook of its own."""
-    fixed = os.environ.get("CFFIXED_USER_HOME")
     set_id = os.getuid() != os.geteuid() or os.getgid() != os.getegid()
-    home = fixed if fixed and not set_id else pwd.getpwuid(os.getuid()).pw_dir
+    if "CFFIXED_USER_HOME" in os.environ and not set_id:   # set, even empty: then the working directory (round 8, K7)
+        home = os.path.abspath(os.environ["CFFIXED_USER_HOME"])
+    else:
+        home = pwd.getpwuid(os.getuid()).pw_dir
     return os.path.join(home, ".codex", "auth.json")
 
 
