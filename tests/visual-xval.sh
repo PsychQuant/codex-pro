@@ -2014,6 +2014,10 @@ if [ -x "$OLDPY" ] && "$OLDPY" -c 'import sys; sys.exit(0 if sys.version_info < 
   rm -rf "$WORK/runold2"; cp -R "$WORK/run6w" "$WORK/runold2"; printf '[1]' > "$WORK/runold2/profile.json"; printf '1' > "$WORK/runold2/frames.json"
   ( cd "$WORK/project" && "$OLDPY" "$SCRIPTS/xval.py" result --run "$WORK/runold2" --out "$WORK/runold2_result.md" >/dev/null 2>&1 )
   assert_file "$WORK/runold2_result.md" "an old Python writes the result file even when records have the wrong type (K1)"
+  rm -rf "$WORK/runold3"; cp -R "$WORK/run6w" "$WORK/runold3"
+  printf '{"model": "gpt\\u2028error: forged", "effort": "high", "max_time": 30, "profile_source": "default"}' > "$WORK/runold3/profile.json"
+  ( cd "$WORK/project" && "$OLDPY" "$SCRIPTS/xval.py" result --run "$WORK/runold3" --out "$WORK/runold3_result.md" >/dev/null 2>&1 )
+  assert_eq "runtime_unavailable" "$(fm "$WORK/runold3_result.md" error)" "the old-Python result file takes no forged frontmatter field either"
   case "$(cat "$WORK/runold2_result.md" 2>/dev/null)" in
     *"$(dirname "$OLDPY")"*) fail "and names the interpreter without its directory (K6)" ;;
     *) pass "and names the interpreter without its directory (K6)" ;;
@@ -2026,6 +2030,14 @@ rm -rf "$WORK/run8k"; cp -R "$WORK/run6w" "$WORK/run8k"
 printf '{"model": "gpt\\nerror: forged", "effort": "high", "max_time": 30, "profile_source": "default"}' > "$WORK/run8k/profile.json"
 ( cd "$WORK/project" && python3 "$SCRIPTS/xval.py" result --run "$WORK/run8k" --out "$WORK/run8k_result.md" >/dev/null 2>&1 )
 assert_eq "" "$(fm "$WORK/run8k_result.md" error)" "a line break in a profile value adds no frontmatter field (K5)"
+# Background security review after b8cef27: Unicode line breaks (NEL, LS, PS) are line breaks to
+# splitlines() and to YAML, so they must not survive into a frontmatter value either.
+for sep in '\u0085' ' ' ' '; do
+  rm -rf "$WORK/run8l"; cp -R "$WORK/run6w" "$WORK/run8l"
+  printf '{"model": "gpt%serror: forged", "effort": "high", "max_time": 30, "profile_source": "default"}' "$sep" > "$WORK/run8l/profile.json"
+  ( cd "$WORK/project" && python3 "$SCRIPTS/xval.py" result --run "$WORK/run8l" --out "$WORK/run8l_result.md" >/dev/null 2>&1 )
+  assert_eq "" "$(fm "$WORK/run8l_result.md" error)" "a $sep line break in a profile value adds no frontmatter field (background review after b8cef27)"
+done
 # N1: a run whose init record lacks the input digest is not sealed.
 rm -rf "$WORK/run6n"
 xval init --run "$WORK/run6n" --vocab "$WORK/vocab.json" "$WORK"/imgs/*.png

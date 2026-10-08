@@ -89,8 +89,11 @@ def sanitize(text: str) -> str:
     machine's roots are replaced only where a path continues after them, so a directory that merely
     starts like the home directory is not half-replaced (round 7, Y1). Each line, and each clause of
     it split at '; ' (how the skill joins its own messages), is cut on its own."""
-    text = text.replace("\r\n", "\n").replace("\r", "\n").replace("\t", " ")
-    text = re.sub(r"[\x00-\x09\x0b-\x1f\x7f]", "", text)
+    # Every line break splitlines() and YAML know ends a line here too: NEL, LS and PS included, or a
+    # value would read as one line here and as two to whoever parses the frontmatter (background
+    # security review after b8cef27). Other control characters, C1 included, are dropped.
+    text = re.sub(r"\r\n|[\r\x85\u2028\u2029]", "\n", text).replace("\t", " ")
+    text = re.sub(r"[\x00-\x09\x0b-\x1f\x7f-\x9f]", "", text)
     # Only a web URL is kept: file://, smb://, afp:// and the like name local or shared folders, so they
     # are cut like paths (round 8, K4; background review after e79ff81).
     text = re.sub(r"(?<![A-Za-z0-9+.-])(?!https?://)[A-Za-z][A-Za-z0-9+.-]*://", "/", text)

@@ -70,10 +70,12 @@ def _older_python(argv):
             return default
         return value if isinstance(value, type(default)) else default
     profile, frames, meta = read("profile.json", {}), read("frames.json", {}), read("meta.json", {})
+    def clean(value):   # one line: no control or Unicode line-break character reaches the frontmatter
+        return re.sub("[\x00-\x1f\x7f-\x9f\u2028\u2029]", " ", str(value))
     now = datetime.datetime.now().astimezone()
-    fm = [("skill", "visual-xval"), ("target", "%d images" % len(frames)), ("model", profile.get("model", "")),
-          ("effort", profile.get("effort", "")), ("profile_source", profile.get("profile_source", "")),
-          ("first_side_model", meta.get("first_side_model", "")), ("timestamp", now.isoformat(timespec="seconds")), ("n_images", len(frames)), ("n_claims", 0),
+    fm = [("skill", "visual-xval"), ("target", "%d images" % len(frames)), ("model", clean(profile.get("model", ""))),
+          ("effort", clean(profile.get("effort", ""))), ("profile_source", clean(profile.get("profile_source", ""))),
+          ("first_side_model", clean(meta.get("first_side_model", ""))), ("timestamp", now.isoformat(timespec="seconds")), ("n_images", len(frames)), ("n_claims", 0),
           ("agreement_rate", ""), ("claude_answers_sha256", ""), ("sealed_at", ""), ("seal_broken", "true"),
           ("codex_requested_at", ""), ("codex_reply_sha256", ""), ("sam_status", "not_run"),
           ("error", "runtime_unavailable")]
