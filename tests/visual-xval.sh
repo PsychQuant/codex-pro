@@ -1219,6 +1219,21 @@ assert_contains "$y1" "leaks=[] names=True" "directory names with parentheses, a
 assert_contains "$y1" "url=True" "a URL after a path is kept"
 assert_contains "$y1" "own=True" "xval's own message is not eaten"
 assert_contains "$y1" "timeout='codex-call timed out after 120 s'" "a timed-out tool reports its name and time only (Y2)"
+# Round 8 (K4): a path right after a colon or a CJK character, a file:// URL, the home directory before punctuation.
+k4=$(HOME="$WORK/JaneDoeHome" python3 -B - "$SCRIPTS" "$WORK/JaneDoeHome" <<'PY'
+import sys
+sys.path.insert(0, sys.argv[1])
+import result_file
+home = sys.argv[2]
+cases = ["error:/Volumes/Client Data/scan.png", "路徑/Volumes/Client Data/scan.png",
+         "see file:///Volumes/Client Data/scan.png", f"in {home}, then", f"({home})", f"at {home}."]
+out = [result_file.sanitize(c) for c in cases]
+print("leaks=" + str([o for o in out if "Client Data" in o or "JaneDoeHome" in o]))
+print("url=" + str(result_file.sanitize("see https://a.b/c/d and /Volumes/X Y/z.png") == "see https://a.b/c/d and …/z.png"))
+PY
+)
+assert_contains "$k4" "leaks=[]" "paths after a colon or CJK text, file:// URLs and the home directory before punctuation are cut (K4)"
+assert_contains "$k4" "url=True" "while a web URL is still kept"
 for login_msg in "$(grep -o '"Codex is not logged in[^"]*"' "$SCRIPTS/codex_errors.py")" "$(grep -o '"the Codex token store[^"]*"' "$SCRIPTS/codex_errors.py")"; do
   case "$login_msg" in
     *"~/"*|*"/."*) fail "the login check's messages carry no path ($login_msg)" ;;
@@ -2222,6 +2237,20 @@ assert_contains "$x1" "no_adler=False" "a PNG whose stream lacks its closing che
 assert_contains "$x1" "small_extra=True" "a little data beyond the header's promise is tolerated"
 assert_contains "$x1" "bad_ancillary_crc=True" "an ancillary chunk with a bad checksum does not refuse intact image data (Y8)"
 assert_contains "$x1" "bad_depth=False" "a bit depth the colour type does not allow is refused (Y8)"
+# Round 8 (K8): an eXIf chunk whose checksum fails is not trusted for the orientation either.
+k8=$(python3 -B - "$SCRIPTS" <<'PY'
+import struct, sys, zlib
+sys.path.insert(0, sys.argv[1])
+import media
+def chunk(t, d, good=True):
+    crc = zlib.crc32(t + d) & 0xffffffff
+    return struct.pack(">I", len(d)) + t + d + struct.pack(">I", crc if good else crc ^ 1)
+tiff = b"MM\x00*" + struct.pack(">I", 8) + struct.pack(">H", 1) + struct.pack(">HHII", 0x0112, 3, 1, 6 << 16) + b"\x00" * 4
+head = b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", 4, 4, 8, 2, 0, 0, 0))
+print(media.orientation(head + chunk(b"eXIf", tiff)), media.orientation(head + chunk(b"eXIf", tiff, good=False)))
+PY
+)
+assert_eq "6 1" "$k8" "an eXIf with a bad checksum gives no orientation, a good one does (K8)"
 # Background security review after c1ca2d6: the structure check must not itself be a decompression
 # bomb. flush() used to inflate everything after the cap at once, and IHDR's size is the sender's.
 bomb=$(python3 -B - "$SCRIPTS" "$WORK/plain.jpg" <<'PY'
@@ -2236,19 +2265,20 @@ body = z.compress(b"".join(b"\x00" + b"\x10" * 3000 for _ in range(1000)))
 for _ in range(50):
     body += z.compress(b"\x00" * (1 << 20))
 body += z.flush()
-largest, calls = [0], [0]
+largest, calls, inflated = [0], [0], [0]
 real = zlib.decompressobj
 class Watched:
     def __init__(self, *a):
         self.inner = real(*a); calls[0] += 1
     def decompress(self, data, limit=0):
-        out = self.inner.decompress(data, limit); largest[0] = max(largest[0], len(out)); return out
+        out = self.inner.decompress(data, limit); largest[0] = max(largest[0], len(out)); inflated[0] += len(out); return out
     def flush(self, *a):
         out = self.inner.flush(*a); largest[0] = max(largest[0], len(out)); return out
     def __getattr__(self, name):
         return getattr(self.inner, name)
 media.zlib.decompressobj = Watched
 extra = media.integrity_problem(sig + ihdr(1000, 1000) + chunk(b"IDAT", body) + chunk(b"IEND", b""), "png")
+beyond = inflated[0] - 1000 * (1 + 3000)
 calls[0] = 0
 huge = media.integrity_problem(sig + ihdr(30000, 30000) + chunk(b"IDAT", body) + chunk(b"IEND", b""), "png")
 media.zlib.decompressobj = real
@@ -2258,12 +2288,13 @@ try:
     jpeg = "accepted"
 except media.MediaError as exc:
     jpeg = str(exc)
-print(f"largest={largest[0]} extra={extra} huge_inflated={calls[0]} huge={huge!r} jpeg={jpeg!r}")
+print(f"largest={largest[0]} beyond_ok={beyond <= media.EXTRA_LIMIT + 1} extra={extra} huge_inflated={calls[0]} huge={huge!r} jpeg={jpeg!r}")
 PY
 )
 assert_contains "$bomb" "extra=more image data than" "image data far beyond what IHDR promises is refused, naming the excess (round 7, X1)"
 assert_eq "True" "$(python3 -c 'import re,sys; print(int(re.search(r"largest=(\d+)", sys.argv[1]).group(1)) <= 1 << 20)' "$bomb")" \
   "the structure check never inflates more than 1 MB at a time (background review)"
+assert_contains "$bomb" "beyond_ok=True" "and reads no more than 1 MB beyond what IHDR promises (K9)"
 assert_contains "$bomb" "huge_inflated=0" "an IHDR beyond the pixel limit is refused without inflating anything"
 assert_contains "$bomb" "larger than" "and says why"
 assert_contains "$bomb" "jpeg='" "any format beyond the pixel limit is refused before sips decodes it"

@@ -67,7 +67,10 @@ def local_roots() -> list[tuple[str, str]]:
 # The skill's own fixed location, which tells the user where SAM goes. Only the place itself is kept:
 # anything below it is cut like any other path (#23 verify round 7, X2).
 OWN_PLACE = re.compile(r"~/\.codex-pro/sam-env(?![\w./-])")
-PATH = re.compile(r"(?<![\w.:/$~\\])(?:~|\$TMPDIR)?/(?:(?!://)[^\"\x00])*/")
+# A path starts at a root: '~/' or '$TMPDIR/' (any number of slashes after them), or a single '/' not
+# preceded by an ASCII letter, digit or one of '_.-/$~\'. A colon or a CJK character may come before it
+# (round 8, K4); a URL's '//' never starts one, since the first of its slashes is followed by another.
+PATH = re.compile(r"(?<![A-Za-z0-9_.\-/$~\\])(?:(?:~|\$TMPDIR)/+|/(?!/))(?:(?!://)[^\"\x00])*/")
 
 
 def cut_paths(clause: str) -> str:
@@ -86,8 +89,9 @@ def sanitize(text: str) -> str:
     it split at '; ' (how the skill joins its own messages), is cut on its own."""
     text = text.replace("\r\n", "\n").replace("\r", "\n").replace("\t", " ")
     text = re.sub(r"[\x00-\x09\x0b-\x1f\x7f]", "", text)
-    for root, name in local_roots():
-        text = re.sub(re.escape(root) + r"(?=/|$|[\s'\"])", name, text, flags=re.MULTILINE)
+    text = re.sub(r"file://(?=/)", "", text)   # a file URL is a local path (round 8, K4)
+    for root, name in local_roots():   # also before punctuation, which ends a path (round 8, K4)
+        text = re.sub(re.escape(root) + r"(?=/|$|[\s'\",.;:)\]])", name, text, flags=re.MULTILINE)
     text = OWN_PLACE.sub("\x00", text)
     lines = ["; ".join(cut_paths(c) for c in line.split("; ")) for line in text.split("\n")]
     return " ".join(lines).replace("\x00", "~/.codex-pro/sam-env")[:500]

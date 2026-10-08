@@ -166,7 +166,8 @@ def _png_problem(data: bytes) -> str | None:
         # INFLATE_STEP at a time and never past EXTRA_LIMIT beyond what IHDR promises; flush() is never
         # called, since it would inflate all the rest at once (background security review after c1ca2d6).
         while not inflate.eof:
-            out = inflate.decompress(pending, INFLATE_STEP)
+            # never past the limit: at most one byte beyond it, which is what refuses (round 8, K9)
+            out = inflate.decompress(pending, min(INFLATE_STEP, expected + EXTRA_LIMIT + 1 - total))
             pending = inflate.unconsumed_tail
             total += len(out)
             if total > expected + EXTRA_LIMIT:
@@ -252,7 +253,10 @@ def orientation(data: bytes) -> int:
         while pos + 8 <= len(data):
             length, chunk = struct.unpack(">I", data[pos:pos + 4])[0], data[pos + 4:pos + 8]
             if chunk == b"eXIf":
-                return tiff_orientation(data[pos + 8:pos + 8 + length])
+                body, crc = data[pos + 8:pos + 8 + length], data[pos + 8 + length:pos + 12 + length]
+                if len(crc) < 4 or struct.unpack(">I", crc)[0] != zlib.crc32(chunk + body) & 0xFFFFFFFF:
+                    return 1   # a damaged ancillary chunk is not trusted for the pixels either (round 8, K8)
+                return tiff_orientation(body)
             if chunk == b"IEND":
                 break
             pos += 12 + length
