@@ -55,7 +55,12 @@ Issue: [#23](https://github.com/PsychQuant/codex-pro/issues/23)
   `error.json`），帳本不見時不重建。所有寫入只寫一般檔案（FIFO、symlink 一律拒絕）。
 - 被拒絕而不取代 run 錯誤的指令只有兩類：已經做過，與還不能做（沒有比對結果、沒有放大計畫）。
 - 訊息以位置稱呼使用者給的圖，`--run`、`--vocab`、`--out` 以角色稱呼；外來文字的封閉清單是六種（加上 Codex 的回覆）。
-- 在 Claude Code 裡，Bash 工具的逾時上限等於預設的 `max_time`，`timeout` 類別出不來（#26 追蹤）。
+- 在 Claude Code 裡呼叫 `ask` 時 Bash 工具的 timeout 要設成 600000；它的上限等於預設的 `max_time`，`timeout` 類別出不來，
+  SIGKILL 時結果檔從請求紀錄推出 `backend_error`（#26 追蹤）。
+- 登記與寫入各只有一個入口：每一步經同一個 `Step` 登記它自己寫的檔（含 codex-call、SAM 為它寫的那一個），所有寫入
+  （含影格複本、裁切圖、封存檔）先寫暫存檔再以 `os.replace` 換上，硬連結與 symlink 都不會被寫穿。
+- init 的嘗試是紀錄，init 之後的步驟要求 init 完成；用掉的 run 或一輪的錯誤不會被取代或清除，結果檔也會從紀錄推出它；
+  `ask` 以外的步驟被中斷時記成 `internal_error`。不取代 run 錯誤的拒絕列成四組的封閉清單。
 - 結果檔的路徑過濾只保留 http、https 網址；`file://`、`smb://` 等其他網址與本機路徑一樣縮成最後一段。
 - 兩個模型一致不代表正確；準度要靠人工標準答案。
 - `tests/codex-plugin.sh` 的 plugin-creator validator 檢查在 Codex CLI 0.160.1 下必定失敗（#24），與本版無關。

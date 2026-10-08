@@ -262,10 +262,21 @@ def track(frames_path: str, anchors_path: str, out_path: str) -> None:
             distance = round(min(math.hypot(a[0] - b[0], (a[1] - b[1]) * height / width) for a, b in pairs), 2) if pairs else None
             results[name] = {"anchor": anchor["frame"], "invalid": iou > COLLAPSE_IOU, "max_iou": round(iou, 3),
                              "objects": objects, "distance_pct": distance}
-    with open(out_path, "w", encoding="utf-8") as fh:
-        json.dump({"sam_status": "ok", "model": MODEL_ID, "revision": MODEL_REVISION, "class": plan["class"],
-                   "device": device, "frames": results,
-                   "invalid_frames": sorted(f for f, r in results.items() if r["invalid"])}, fh, indent=1)
+    # Written to a new temporary file and moved over the name, as xval writes its records, so a link at the
+    # name is replaced and never written through (#23 verify round 12, H1). This runs in SAM's own Python,
+    # which does not load xval's modules.
+    import tempfile
+    fd, tmp = tempfile.mkstemp(dir=os.path.dirname(os.path.abspath(out_path)), prefix=".xval-", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            json.dump({"sam_status": "ok", "model": MODEL_ID, "revision": MODEL_REVISION, "class": plan["class"],
+                       "device": device, "frames": results,
+                       "invalid_frames": sorted(f for f, r in results.items() if r["invalid"])}, fh, indent=1)
+        os.replace(tmp, out_path)
+    except BaseException:
+        if os.path.lexists(tmp):
+            os.remove(tmp)
+        raise
     print(json.dumps({"sam_status": "ok", "frames": len(results)}))
 
 

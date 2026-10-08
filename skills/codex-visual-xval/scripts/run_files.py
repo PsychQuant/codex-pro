@@ -8,6 +8,7 @@ import os
 import re
 import struct
 import subprocess
+import tempfile
 from typing import Any
 
 import seal as sealing
@@ -18,14 +19,15 @@ class Stop(Exception):
     request in one round). That is about the command, not the run, so it must not replace the run's
     error: a completed run stays completed, a rate_limit stays a rate_limit (#23 verify round 2, R6)."""
     def __init__(self, error: str, detail: str, record: bool = True, source: str = "xval",
-                 records: list[str] | None = None):
+                 records: list[str] | None = None, step: str | None = None):
         super().__init__(detail)
         # source: who wrote the detail. Only xval's own text reaches the result file; codex-call's
         # messages, the runtime check's detail, Python's exception text and SAM's output stay in the
         # run directory (#23 verify round 9). records: the ledger's records the step stopped on, so
-        # the result file does not name them a second time (B4).
+        # the result file does not name them a second time (B4). step: the step the error belongs to
+        # when it is not the command's own, as for an init that did not complete (round 12, G2).
         self.error, self.detail, self.record, self.source = error, detail, record, source
-        self.records = records or []
+        self.records, self.step = records or [], step
 
 
 def load(path: str, default: Any = None) -> Any:
@@ -38,18 +40,80 @@ def load(path: str, default: Any = None) -> Any:
         return default
 
 
-def regular_or_absent(path: str) -> bool:
-    """Whether `path` may be written: absent, or a regular file that is not a symlink. A FIFO would stall the
-    step, and a symlink would write somewhere outside the run (#23 verify round 11, F1)."""
-    return not os.path.lexists(path) or (os.path.isfile(path) and not os.path.islink(path))
+# ── the one write entry ─────────────────────────────────────────────
+# Every file xval writes goes through write_bytes (#23 verify round 12, H1). The paths it wrote during the
+# current step are noted here, so the step enters exactly those (G3); None outside a step.
+_written: list[str] | None = None
+_UMASK = os.umask(0)
+os.umask(_UMASK)
 
 
-def write_text(path: str, text: str, append: bool = False) -> None:
-    """The one way a record, a prompt or the error history is written (#23 verify round 10, D5; round 11, F1)."""
-    if not regular_or_absent(path):
-        raise Stop("target_invalid", f"{os.path.basename(path)} is not a regular file; nothing was written to it")
-    with open(path, "a" if append else "w", encoding="utf-8") as fh:
-        fh.write(text)
+def _where(folder: str) -> str:
+    """A directory by role: one of the run's own by name, any other as 'the directory' (round 11, F5)."""
+    name = os.path.basename(folder.rstrip("/"))
+    return f"{name}/" if name in ("frames", "hires", "crops") else "the directory"
+
+
+def write_bytes(path: str, data: bytes, refuse_links: bool = False) -> None:
+    """The one way xval writes a file: to a new temporary file in the same directory, then moved over the name.
+    A symbolic link, a hard link or a FIFO at the name is replaced and never written through, and no check is made
+    before an open that could change in between. A directory that is itself a symbolic link is not written into
+    (#23 verify round 12, H1). `refuse_links` is for the result file at --out, the user's own path: a link or
+    anything but a regular file there is refused rather than replaced."""
+    folder = os.path.dirname(os.path.abspath(path))
+    if os.path.islink(folder):
+        raise Stop("target_invalid", f"{_where(folder)} is a symbolic link; nothing was written into it")
+    if refuse_links and os.path.lexists(path) and (os.path.islink(path) or not os.path.isfile(path)):
+        raise OSError(0, "not a regular file")
+    if os.path.isdir(path) and not os.path.islink(path):
+        raise Stop("target_invalid", f"{os.path.basename(path)} is a directory; nothing was written to it")
+    fd, tmp = tempfile.mkstemp(dir=folder, prefix=".xval-", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "wb") as fh:
+            fh.write(data)
+        os.chmod(tmp, 0o666 & ~_UMASK)
+        os.replace(tmp, path)
+    except BaseException:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
+    if _written is not None:
+        _written.append(os.path.abspath(path))
+
+
+def scratch(folder: str, suffix: str) -> str:
+    """A new, empty temporary file in `folder` for a tool such as sips to write into; the caller removes it. Its
+    name begins with a dot, so it is never a record (round 12, H1)."""
+    if os.path.islink(folder):
+        raise Stop("target_invalid", f"{_where(folder)} is a symbolic link; nothing was written into it")
+    fd, tmp = tempfile.mkstemp(dir=folder, prefix=".xval-", suffix=suffix)
+    os.close(fd)
+    return tmp
+
+
+def write_text(path: str, text: str) -> None:
+    write_bytes(path, text.encode("utf-8", "replace"))
+
+
+def append_text(path: str, text: str) -> None:
+    """The error history: rewritten whole with the new line, so a hard link out of the run is detached, not written
+    through. A history that is not a regular file is skipped, not waited on (round 11, F1; round 12, H1)."""
+    if os.path.lexists(path) and (os.path.islink(path) or not os.path.isfile(path)):
+        return
+    old = b""
+    if os.path.isfile(path):
+        with open(path, "rb") as fh:
+            old = fh.read()
+    write_bytes(path, old + text.encode("utf-8", "replace"))
+
+
+def remove(path: str) -> None:
+    """Remove a record xval wrote, noted like a write, so the step takes its entry out too (round 12, G3)."""
+    os.remove(path)
+    if _written is not None:
+        _written.append(os.path.abspath(path))
 
 
 def dump(path: str, data: Any) -> None:
@@ -79,9 +143,8 @@ def run_dir(run: str) -> None:
         raise Stop("target_invalid", "the --run directory is not a run directory: it already holds other files; use a "
                    "new directory such as .codex-pro/visual-xval-run-<timestamp>", record=False)   # F5: by role
     os.makedirs(run, exist_ok=True)
-    if not os.path.exists(os.path.join(run, ".gitignore")):
-        with open(os.path.join(run, ".gitignore"), "w", encoding="utf-8") as fh:
-            fh.write(RUN_MARK + "\n*\n")
+    if not os.path.lexists(os.path.join(run, ".gitignore")):
+        write_text(os.path.join(run, ".gitignore"), RUN_MARK + "\n*\n")
 
 
 def adopt_run_dir(run: str) -> None:
@@ -142,7 +205,8 @@ def inside(run: str, sub: str, name: Any) -> bool:
 # against it by one rule: an entry must match its file, and a record that exists must have an entry
 # (#23 verify round 9, which replaced the pairwise records of earlier rounds). The list is closed.
 LEDGER = "ledger.json"
-TRACKED = ("vocab.json", "frames.json", "meta.json", "privacy.json", "profile.json", "error.json", "claude.json",
+TRACKED = ("vocab.json", "frames.json", "meta.json", "init_attempt.json", "privacy.json", "profile.json", "error.json",
+           "claude.json",
            "seal.json", "zoom_claude.json",
            "zoom_seal.json", "requests.json", "prompt_round1.md", "prompt_zoom.md", "codex_round1.md", "codex.json",
            "codex_zoom.md", "zoom_codex.json", "comparison.json", "zoom_plan.json", "zoom_prompt.md",
@@ -150,8 +214,8 @@ TRACKED = ("vocab.json", "frames.json", "meta.json", "privacy.json", "profile.js
            "adjudication.json")
 TRACKED_DIRS = ("frames/", "hires/", "crops/")
 # The only records that may exist without an entry, each until the record named beside it exists: Claude's
-# answers of a round not yet sealed, and the profile Step 4.1 wrote, which becomes a record when `ask` reads it
-# (#23 verify round 10, C2). The files that are not records at all are listed in the spec and design.
+# answers of a round not yet sealed, and the profile Step 4.1 wrote, which becomes a record when the first request
+# is recorded (#23 verify round 10, C2; round 11, F6). The files that are not records are listed in the spec.
 PENDING = {"claude.json": "seal.json", "zoom_claude.json": "zoom_seal.json", "profile.json": "requests.json"}
 INPUTS = ("vocab.json", "frames.json", "meta.json", "frames/", "hires/")
 ANSWERS = ("claude.json", "seal.json", "codex.json")
@@ -179,20 +243,26 @@ def expand(run: str, names: Any, entries: dict) -> list[str]:
     return list(dict.fromkeys(out))
 
 
-def enter(run: str, *names: str) -> None:
-    """Record the digests of what a step has just written. When the ledger is missing or unreadable while the run
-    holds other records, no new ledger is written over them: the next step would read the new one as the whole
-    truth, and the evidence that it was gone would be lost (#23 verify round 11, F3)."""
-    if not isinstance(load(os.path.join(run, LEDGER)), dict):
-        listed = set(expand(run, names, {}))
-        others = [n for n in expand(run, TRACKED + TRACKED_DIRS, {})
-                  if n not in listed and safe_digest(os.path.join(run, n)) is not None]
-        if others:
-            raise Stop("target_invalid", f"the run's ledger ({LEDGER}) is missing or unreadable, so none of its records "
-                       "can be checked; no new one is written over them")
+def ledger_usable(run: str, *writing: str) -> bool:
+    """Whether the ledger can take entries: it is readable, or the run holds no record but `writing`. A ledger
+    that is missing or unreadable while the run holds other records is not written over: the next step would read
+    the new one as the whole truth, and the evidence that it was gone would be lost (#23 verify round 11, F3)."""
+    if isinstance(load(os.path.join(run, LEDGER)), dict):
+        return True
+    listed = set(expand(run, writing, {}))
+    return not [n for n in expand(run, TRACKED + TRACKED_DIRS, {})
+                if n not in listed and safe_digest(os.path.join(run, n)) is not None]
+
+
+def enter(run: str, *names: str, digests: dict | None = None) -> None:
+    """Record the digests of what a step has just written; a name whose file is gone loses its entry. Only Step
+    calls this, and tests that write a record by hand (#23 verify round 12, G3)."""
+    if not ledger_usable(run, *names):
+        raise Stop("target_invalid", f"the run's ledger ({LEDGER}) is missing or unreadable, so none of its records "
+                   "can be checked; no new one is written over them")
     entries = ledger(run)
     for name in expand(run, names, entries):
-        digest = safe_digest(os.path.join(run, name))
+        digest = (digests or {}).get(name) or safe_digest(os.path.join(run, name))
         if digest:
             entries[name] = digest
         else:
@@ -200,22 +270,60 @@ def enter(run: str, *names: str) -> None:
     dump(os.path.join(run, LEDGER), entries)
 
 
-def snapshot(run: str, *names: str) -> dict:
-    """The digests of `names` (a 'dir/' name: its files) as a step begins."""
-    return {n: safe_digest(os.path.join(run, n)) for n in expand(run, names, {})}
+def is_record(name: str) -> bool:
+    """A name the ledger tracks: one of TRACKED, or a file in one of TRACKED_DIRS whose name does not begin with
+    a dot (a dot file, xval's own temporary ones among them, is not a record)."""
+    if name in TRACKED:
+        return True
+    folder, _, base = name.partition("/")
+    return f"{folder}/" in TRACKED_DIRS and bool(base) and "/" not in base and not base.startswith(".")
 
 
-def enter_written(run: str, before: dict, *names: str) -> None:
-    """Enter what this step wrote before it stopped, and only that: the records among `names` that are new or
-    changed since `before`. A record this step did not write, or one the ledger already found changed, is left as
-    it is, so it stays detected (#23 verify round 11, E1, F2)."""
-    written = []
-    for n in expand(run, names, {}):
-        digest = safe_digest(os.path.join(run, n))
-        if digest is not None and digest != before.get(n):
-            written.append(n)
-    if written:
-        enter(run, *written)
+class Step:
+    """The one entry to the ledger (#23 verify round 12, G3). A step enters what it wrote itself: the records it
+    wrote or removed through the write entry, and the file the program it ran wrote for it (`expect`), when that
+    file is new or changed since the step declared it. A record the step did not write keeps its entry as it was,
+    or stays without one, so the ledger keeps detecting it. commit() enters what was written so far: a step that
+    sends a request commits first, and every step commits as it ends, also when it fails or is interrupted. The
+    two records that may exist without an entry are entered by `adopt`, and only while they have none."""
+
+    def __init__(self, run: str):
+        global _written
+        self.run, self.outputs, self.pending = run, {}, {}
+        _written = []
+
+    def expect(self, name: str) -> None:
+        """A file that a program this step runs (codex-call, SAM) writes: entered when new or changed since now."""
+        self.outputs[name] = safe_digest(os.path.join(self.run, name))
+
+    def adopt(self, name: str, digest: str | None = None) -> None:
+        """A record the step did not write but makes a record now: Claude's answers when sealed, the profile when
+        the first request is recorded, with the digest of the bytes the step read (round 12, H6)."""
+        if name not in PENDING:
+            raise ValueError(f"{name} is not one of the records that may exist without an entry")
+        self.pending[name] = digest
+
+    def commit(self) -> None:
+        global _written
+        run = os.path.abspath(self.run)
+        names = []
+        for path in list(_written or []):
+            name = os.path.relpath(path, run)
+            if is_record(name) and name not in PENDING:   # Claude's answers and the profile only by adopt
+                names.append(name)
+        for name, before in self.outputs.items():
+            now = safe_digest(os.path.join(self.run, name))
+            if now is not None and now != before:
+                names.append(name)
+        names = list(dict.fromkeys(names))
+        entries = ledger(self.run) if self.pending else {}
+        adopted = {n: d or safe_digest(os.path.join(self.run, n)) for n, d in self.pending.items() if n not in entries}
+        adopted = {n: d for n, d in adopted.items() if d}
+        if names or adopted:
+            enter(self.run, *names, *adopted, digests=adopted)
+        _written = []
+        self.outputs = {n: safe_digest(os.path.join(self.run, n)) for n in self.outputs}
+        self.pending = {}
 
 
 def differences(run: str, names: Any = None) -> list[tuple[str, str]]:
@@ -290,6 +398,47 @@ def checked(run: str, names: Any = None, then: str = "") -> None:
     if found:
         raise Stop("target_invalid", explain(run, found) + (f"; {then}" if then else ""),
                    records=[name for name, _ in found])
+
+
+def initialised(run: str) -> None:
+    """Every step but init, confirm-privacy and result needs init to have completed (#23 verify round 12, G2).
+    Before any attempt it cannot be done yet, which keeps the run's own error; after an attempt that did not
+    complete the run is used up, and that is init's error."""
+    if not isinstance(load(os.path.join(run, LEDGER)), dict):
+        checked(run, INPUTS)   # a ledger that is gone is said as such, not as an init that did not complete
+    entries = ledger(run)
+    if not (os.path.lexists(os.path.join(run, "init_attempt.json")) or "init_attempt.json" in entries):
+        raise Stop("target_invalid", "the run is not initialised yet: run `init` first", record=False)
+    if "meta.json" not in entries:
+        raise Stop("target_invalid", "init did not complete in this run, so the run is used up; start a new run",
+                   step="init")
+
+
+ROUND_STEP = re.compile(r"ask --round (1|zoom)")
+
+
+def used_up(run: str, error: Any) -> bool:
+    """Whether an error can never be resolved: init's (a run is initialised once), or a round's raised after its
+    request was recorded (a round is asked once). Such an error is not replaced or cleared (round 12, G1)."""
+    step = error.get("step") if isinstance(error, dict) else None
+    if step == "init":
+        return True
+    match = ROUND_STEP.fullmatch(step) if isinstance(step, str) else None
+    if not match:
+        return False
+    if differences(run, ("requests.json",)):
+        return True   # it cannot be told whether the round was asked: kept, so nothing is lost
+    requests = load(os.path.join(run, "requests.json"), {})
+    asked = requests.get(match.group(1)) if isinstance(requests, dict) else None
+    return isinstance(asked, dict) and bool(asked.get("requested_at"))
+
+
+def keeps_error(run: str) -> bool:
+    """Whether the run's error stays as it is when another step stops or completes: it does not match the ledger,
+    so it stays detected (round 11, E1), or it can never be resolved (round 12, G1)."""
+    if differences(run, ("error.json",)):
+        return True
+    return used_up(run, load(os.path.join(run, "error.json")))
 
 
 def checked_inputs(run: str) -> None:

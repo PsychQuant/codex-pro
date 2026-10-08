@@ -294,7 +294,7 @@ Claude 的逐格答案先寫到 run 目錄 `.codex-pro/visual-xval-run-<timestam
 - **寫入只有一個入口**（H1）。所有檔案（紀錄、prompt、題目檔、封存檔、結果檔、影格複本、原解析度複本、裁切圖、`.gitignore`、錯誤歷史）先寫到同一目錄下一個新的暫存檔（以點開頭，不是紀錄），再以 `os.replace` 換上去；名字上原本是 symlink、硬連結或 FIFO 時，被換掉的是那個名字，不會寫穿到 run 外，也沒有「先檢查再開檔」的空窗。目錄本身是 symlink 時不寫。`sips` 只寫到這種暫存檔，清除 metadata 之後再經入口寫出。錯誤歷史以讀出、加一行、整份換上的方式附加；它不是一般檔案時略過。
 - **用掉的 run 或一輪，錯誤不被取代也不被清除**（G1 第一個方向）。run 的錯誤與帳本不符，或是永遠解不開的錯誤（`init` 的錯誤；請求已記下之後 `ask --round 1`、`ask --round zoom` 的錯誤）時，其他步驟的停下只記進歷史。Python 3.9 的路徑照同一條規則。
 - **結果檔從紀錄本身推出失敗**（G1 第二個方向，後備）。run 沒有呈現錯誤時：某一輪的請求已記下卻沒有登記的答案（`codex.json`、`zoom_codex.json`），寫成那一輪的 `backend_error`；有 init 的嘗試卻沒有登記的設定（`meta.json`），寫成 `init` 的 `target_invalid`。所以就算 `error.json` 不見了，用掉的一輪也不會看起來沒有錯誤；harness 以 SIGKILL 結束 `ask` 時（#26）也一樣。
-- **init 的嘗試是紀錄**（G2）。`init_attempt.json` 寫出後立刻登記，移開它不能重做 init。init 的拒絕只看這個嘗試與 init 寫的輸入（記錄或條目），不再看其他條目：init 之前跑過的步驟留下的紀錄不會用掉 run。init 之後的步驟都要求 init 完成：還沒嘗試過時是「還不能做」的拒絕；嘗試過卻沒完成（`meta.json` 沒有條目）時停在 `init` 的 `target_invalid`，因為 run 已經用掉。
+- **init 的嘗試是紀錄**（G2）。`init_attempt.json` 寫出後立刻登記，移開它不能重做 init。init 的拒絕只看這個嘗試與 init 寫的輸入（記錄或條目），不再看其他條目：init 之前跑過的步驟留下的紀錄不會用掉 run。init 之後的步驟（`adjudicate` 除外：任何停下之後它都記下「沒有比對」）都要求 init 完成：還沒嘗試過時是「還不能做」的拒絕；嘗試過卻沒完成（`meta.json` 沒有條目）時停在 `init` 的 `target_invalid`，因為 run 已經用掉。
 - **中斷**（G2、F2 的殘留）。每一步都把 SIGTERM 當成 SIGINT；被中斷的步驟照樣 commit 它寫出的檔，並記下 `internal_error`（`ask` 在 codex-call 執行中被中斷時仍是 `backend_error`）。
 - **不取代 run 錯誤的拒絕列成完整的封閉清單**（H4）。spec 列出四組，只有這些，不得類推；計畫是 `{}`（沒有題目）時，放大輪與 `seal --zoom` 也是「沒有事可做」的拒絕，不寫 `zoom_rejected.json`。
 - **其餘**。Python 3.9 的路徑不覆寫讀不到的帳本（H2）；只在沒送過請求時才採用 `runtime_error.txt`（H3）；SAM 的狀態細節也要比對結果通過核對才呈現（H5）；codex-call 啟動失敗而撤回請求時，profile 不登記（H6）；SKILL 照 #26 寫完整的逾時限制（H7）；訊息以位置稱呼使用者的圖時不再用字串取代，3.9 路徑以角色稱呼 `--out`（H8）。

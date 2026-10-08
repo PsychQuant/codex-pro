@@ -33,6 +33,8 @@ import struct
 import zlib
 import subprocess
 
+from run_files import scratch, write_bytes
+
 PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
 PNG_KEEP = {b"IHDR", b"PLTE", b"IDAT", b"IEND", b"tRNS", b"cHRM", b"gAMA", b"iCCP", b"sBIT", b"sRGB",
             b"cICP", b"mDCV", b"cLLI", b"pHYs", b"bKGD", b"acTL", b"fcTL", b"fdAT"}
@@ -335,12 +337,11 @@ def strip_png(data: bytes) -> bytes:
     return b"".join(out)
 
 
-def strip_file(path: str, kind: str) -> None:
+def stripped(path: str, kind: str) -> bytes:
+    """The file's bytes with only the blocks a decoder needs; the caller writes them through the write entry."""
     strip = {"jpeg": strip_jpeg, "png": strip_png}[kind]
     with open(path, "rb") as fh:
-        cleaned = strip(fh.read())
-    with open(path, "wb") as fh:
-        fh.write(cleaned)
+        return strip(fh.read())
 
 
 def prepare_copy(src: str, frames_dir: str, stem: str, max_edge: int | None = MAX_EDGE) -> str:
@@ -362,24 +363,26 @@ def prepare_copy(src: str, frames_dir: str, stem: str, max_edge: int | None = MA
     target = os.path.join(frames_dir, f"{stem}.{'jpg' if out == 'jpeg' else 'png'}")
     # Decode and encode to a lossless PNG first, turn it upright there, and only then encode the final
     # format: a JPEG is compressed once, at quality 95 (round 5, N8). sips also writes an EXIF block of
-    # its own when it saves, so stripping comes last.
-    staged = target + ".staged.png"
+    # its own when it saves, so stripping comes last. sips writes only to temporary files of xval's own;
+    # the copy is written through the one write entry, so a link at its name is never written through
+    # (#23 verify round 12, H1).
+    staged = scratch(frames_dir, ".png")
+    encoded = scratch(frames_dir, ".jpg") if out == "jpeg" else None
     cmd = ["sips", "--matchTo", SRGB_PROFILE, "-s", "format", "png"]
     if max_edge and max(w, h) > max_edge:
         cmd += ["-Z", str(max_edge)]
     try:
         subprocess.run(cmd + [src, "--out", staged], capture_output=True, check=True)
-        if not os.path.isfile(staged) or not all(image_size(staged)):
+        if not os.path.getsize(staged) or not all(image_size(staged)):
             raise MediaError("cannot decode the image")
         for step in ORIENTATION_STEPS.get(turn, []):
             subprocess.run(["sips", *step, staged, "--out", staged], capture_output=True, check=True)
-        if out == "jpeg":
-            subprocess.run(["sips", "-s", "format", "jpeg", "-s", "formatOptions", "95", staged, "--out", target],
+        if encoded:
+            subprocess.run(["sips", "-s", "format", "jpeg", "-s", "formatOptions", "95", staged, "--out", encoded],
                            capture_output=True, check=True)
-        else:
-            os.replace(staged, target)
+        write_bytes(target, stripped(encoded or staged, out))
     finally:
-        if os.path.exists(staged):
-            os.remove(staged)
-    strip_file(target, out)
+        for work in (staged, encoded):
+            if work and os.path.lexists(work):
+                os.remove(work)
     return os.path.basename(target)

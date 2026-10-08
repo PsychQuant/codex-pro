@@ -105,6 +105,13 @@ checks = {
     "two_refusal_kinds": "這一步已經做過" in body and "這一步還不能做" in body,
     "images_by_position": "使用者給的圖以位置稱呼" in body,
     "harness_timeout_noted": "codex-pro#26" in body,
+    # round 12 (G1–G3, H1, H4, H7): one entry each for entering and writing; the closed list of refusals
+    "one_write_entry": "先寫到同一目錄下的暫存檔再換上" in body and "硬連結" in body,
+    "program_outputs": "codex-call、SAM 為它寫出的那一個檔" in body,
+    "four_refusal_groups": "只有下面四組，不得依性質相似類推" in body and "指令沒有指到一步" in body,
+    "used_up_errors": "永遠解不開" in body and "從紀錄推出" in body,
+    "bash_timeout_setting": "600000" in body and "SIGKILL" in body,
+    "interrupt_internal": "以外的步驟被 SIGINT 或 SIGTERM 中斷時也是這一類" in body,
     "track_point": "track_point: tip" in body,
     "reencoded_copies": "重新編碼" in body,
     "resend_rule": "同一個 run 可以再送" in body,
@@ -2430,7 +2437,7 @@ except subprocess.TimeoutExpired:
 PY
 )
 rm -f "$WORK/r10f/ledger.json"
-assert_contains "$d5" '"error": "target_invalid"' "a ledger that is a FIFO stops confirm-privacy instead of stalling it (D5)"
+refute_contains "$d5" "hung" "a ledger that is a FIFO does not stall confirm-privacy (D5); it is replaced (round 12, H1)"
 # D6: the ledger's keys stay inside the run.
 rm -rf "$WORK/r10k"; cp -R "$WORK/run6w" "$WORK/r10k"; printf 'outside\n' > "$WORK/outside_r10k.txt"
 edit_json "$WORK/r10k/ledger.json" 'd["frames/../../outside_r10k.txt"] = "0" * 64'
@@ -2598,14 +2605,14 @@ assert_contains "$RUN_OUT" "already sealed" "an error history that is a FIFO doe
 rm -rf "$WORK/r11s"; xval init --run "$WORK/r11s" --vocab "$WORK/vocab.json" "$WORK"/imgs/*.png
 cp "$WORK/claude_marked.json" "$WORK/r11s/claude.json"; mkfifo "$WORK/r11s/seal.json"
 xval_t python3 seal --run "$WORK/r11s"
-rm -f "$WORK/r11s/seal.json"
-assert_contains "$RUN_OUT" "not a regular file" "a seal file that is a FIFO is refused, not waited on (F1)"
+refute_contains "$RUN_OUT" "hung" "a seal file that is a FIFO is not waited on (F1)"
+assert_eq "regular" "$(python3 -c 'import os,stat,sys; print("regular" if stat.S_ISREG(os.lstat(sys.argv[1]).st_mode) else "other")' "$WORK/r11s/seal.json")" \
+  "it is replaced by the seal, a regular file (round 12, H1)"
 rm -rf "$WORK/r11k"; SEQ= new_run "$WORK/r11k"; printf 'outside\n' > "$WORK/outside_prompt.txt"
 ln -s "$WORK/outside_prompt.txt" "$WORK/r11k/prompt_round1.md"; rm -f "$WORK/mock.log"
 ask_with "$WORK/codex_reply.md" "$WORK/r11k" 1
-assert_contains "$RUN_OUT" "not a regular file" "a prompt file that is a symlink is refused (F1)"
-assert_eq "outside" "$(cat "$WORK/outside_prompt.txt")" "and nothing is written through it"
-assert_no_file "$WORK/mock.log" "and nothing is sent"
+assert_eq "outside" "$(cat "$WORK/outside_prompt.txt")" "a prompt file that is a symlink is not written through (F1)"
+assert_eq "no" "$([ -L "$WORK/r11k/prompt_round1.md" ] && echo yes || echo no)" "it is replaced by the prompt (round 12, H1)"
 rm -rf "$WORK/r11o"; cp -R "$WORK/run6w" "$WORK/r11o"; mkfifo "$WORK/r11o_out.md"
 xval_t python3 result --run "$WORK/r11o" --out "$WORK/r11o_out.md"
 rm -f "$WORK/r11o_out.md"
@@ -2650,6 +2657,194 @@ PY
 edit_json "$WORK/r11a2/claude.json" 'd["claims"][0]["objects"] = {"INST": 9}'
 result9 "$WORK/r11a2"
 refute_contains "$(cat "$WORK/r11a2_result.md")" "Anchors:" "SAM's anchors, derived from the comparison, are not shown when it is not (F4)"
+
+# Round 12 (H1): one write entry. A temporary file is moved over the name, so a link there is replaced and
+# never written through, and nothing is written into a directory that is a symbolic link.
+rm -rf "$WORK/r12a"; cp -R "$WORK/run6w" "$WORK/r12a"; printf 'outside crop\n' > "$WORK/r12a_outside.txt"
+mkdir -p "$WORK/r12a/crops"; ln -s "$WORK/r12a_outside.txt" "$WORK/r12a/crops/z01.png"
+xval crops --run "$WORK/r12a"
+assert_eq "outside crop" "$(cat "$WORK/r12a_outside.txt")" "a crop name that is a symlink out of the run is not written through (H1)"
+assert_eq "no" "$([ -L "$WORK/r12a/crops/z01.png" ] && echo yes || echo no)" "the crop replaces the link"
+rm -rf "$WORK/r12b"; cp -R "$WORK/run6w" "$WORK/r12b"; mkdir -p "$WORK/r12b_outdir"
+ln -s "$WORK/r12b_outdir" "$WORK/r12b/crops"
+xval crops --run "$WORK/r12b"
+assert_contains "$RUN_OUT" '"error": "target_invalid"' "a crops directory that is a symlink is not written into (H1)"
+assert_eq "0" "$(ls "$WORK/r12b_outdir" | wc -l | tr -d ' ')" "and nothing lands outside the run"
+rm -rf "$WORK/r12c"; SEQ= new_run "$WORK/r12c"; printf 'outside history\n' > "$WORK/r12c_outside.txt"
+rm -f "$WORK/r12c/errors.jsonl"; ln "$WORK/r12c_outside.txt" "$WORK/r12c/errors.jsonl"
+xval seal --run "$WORK/r12c"
+assert_eq "outside history" "$(cat "$WORK/r12c_outside.txt")" "an error history hard-linked out of the run is not written through (H1)"
+assert_contains "$(cat "$WORK/r12c/errors.jsonl")" "already sealed" "the refusal is in the run's own history"
+rm -rf "$WORK/r12d"; mkdir -p "$WORK/r12d"; xval confirm-privacy --run "$WORK/r12d"; mkdir -p "$WORK/r12d/frames"
+printf 'outside copy\n' > "$WORK/r12d_outside.txt"; ln -s "$WORK/r12d_outside.txt" "$WORK/r12d/frames/f01.jpg"
+xval init --run "$WORK/r12d" --vocab "$WORK/vocab.json" "$WORK/rotated_exif.jpg"
+assert_eq "outside copy" "$(cat "$WORK/r12d_outside.txt")" "an image copy's name that is a symlink is not written through (H1)"
+
+# Round 12 (G3): a step enters only what it wrote; a file placed beside its records stays detected.
+rm -rf "$WORK/r12e"; cp -R "$WORK/run6w" "$WORK/r12e"; xval crops --run "$WORK/r12e"
+cp "$WORK/r12e/frames/f01.png" "$WORK/r12e/crops/z99.png"
+xval crops --run "$WORK/r12e"
+assert_eq "0" "$RUN_STATUS" "crops can be run again before the zoom answers are sealed"
+assert_contains "$(ledger_changed "$WORK/r12e")" "crops/z99.png" "a crop it did not write stays out of the ledger (G3)"
+rm -rf "$WORK/r12f"; SEQ= new_run "$WORK/r12f"; printf 'placed reply\n' > "$WORK/r12f/codex_round1.md"; rm -f "$WORK/mock.log"
+ask_with "$WORK/codex_reply.md" "$WORK/r12f" 1
+assert_contains "$RUN_OUT" '"error": "target_invalid"' "a reply file codex-call did not write stops the request (G3)"
+assert_no_file "$WORK/mock.log" "and nothing is sent"
+assert_contains "$(ledger_changed "$WORK/r12f")" "codex_round1.md" "and the file stays out of the ledger"
+assert_eq "['comparison.json']" "$(python3 -B - "$WORK/r12g" "$SCRIPTS" <<'PY'
+import os, shutil, sys
+run = sys.argv[1]; sys.path.insert(0, sys.argv[2])
+import run_files
+shutil.rmtree(run, ignore_errors=True); os.makedirs(run)
+run_files.dump(os.path.join(run, "ledger.json"), {})
+open(os.path.join(run, "track.json"), "w").write("placed")      # there before the step began
+step = run_files.Step(run)
+run_files.dump(os.path.join(run, "comparison.json"), {"n": 1})
+step.expect("track.json")                                       # its program then writes nothing
+step.commit()
+print(sorted(run_files.ledger(run)))
+PY
+)" "a program's output that did not change is not entered; what xval wrote is (G3)"
+assert_eq "0" "$(python3 - "$SCRIPTS" <<'PY'
+import re, sys
+found = 0
+for name in ("xval.py", "result_file.py", "media.py", "seal.py"):
+    src = open(f"{sys.argv[1]}/{name}", encoding="utf-8").read()
+    if name == "xval.py":   # the Python 3.9 path is its own, 3.9-compatible copy of the rule
+        head, rest = src.split("def _older_python", 1)
+        src = head + rest.split("if sys.version_info < (3, 10):", 1)[1]
+    found += len(re.findall(r"(?<![\w.])enter\(|enter_written\(", src))
+    found += len(re.findall(r"open\([^)]*['\"](?:w|a|wb|ab|x)['\"]", src))
+print(found)
+PY
+)" "no step enters or opens a file for writing outside the two entries (G3, H1)"
+
+# Round 12 (G1): an error that can never be resolved is not replaced or cleared.
+rm -rf "$WORK/r12h"; SEQ= new_run "$WORK/r12h"
+RUN_OUT=$(HOME="$WORK/home" MOCK_STDERR="error: HTTP 429: too many requests" MOCK_STATUS=1 MOCK_LOG="$WORK/mock.log" \
+  MOCK_PROMPTS="$WORK/prompts.txt" PATH="$WORK/stubbin:$PATH" python3 "$SCRIPTS/xval.py" ask --run "$WORK/r12h" --round 1 2>&1)
+cp "$WORK/r12h/frames/f01.png" "$WORK/r12h/frames/f99.png"
+xval sam --run "$WORK/r12h"
+rm -f "$WORK/r12h/frames/f99.png"
+xval sam --run "$WORK/r12h"
+assert_eq "rate_limit" "$(json_get "$(cat "$WORK/r12h/error.json")" 'd["error"]')" "a used-up round's error is not replaced, then cleared (G1)"
+result9 "$WORK/r12h"
+assert_eq "rate_limit" "$(fm "$WORK/r12h_result.md" error)" "and the result file still shows it"
+rm -rf "$WORK/r12i"; SEQ= new_run "$WORK/r12i"
+RUN_OUT=$(HOME="$WORK/home" MOCK_STDERR="error: HTTP 429: too many requests" MOCK_STATUS=1 MOCK_LOG="$WORK/mock.log" \
+  MOCK_PROMPTS="$WORK/prompts.txt" PATH="$WORK/stubbin:$PATH" python3 "$SCRIPTS/xval.py" ask --run "$WORK/r12i" --round 1 2>&1)
+edit_json "$WORK/r12i/error.json" 'd["detail"] = "edited"'
+xval adjudicate --run "$WORK/r12i"; xval adjudicate --run "$WORK/r12i"
+assert_contains "$(cat "$WORK/r12i/error.json")" "edited" "an error that does not match the ledger is not overwritten (G1)"
+assert_contains "$(ledger_changed "$WORK/r12i")" "error.json" "and stays detected"
+rm -rf "$WORK/r12j"; SEQ= new_run "$WORK/r12j"
+RUN_OUT=$(HOME="$WORK/home" MOCK_STDERR="error: HTTP 429: too many requests" MOCK_STATUS=1 MOCK_LOG="$WORK/mock.log" \
+  MOCK_PROMPTS="$WORK/prompts.txt" PATH="$WORK/stubbin:$PATH" python3 "$SCRIPTS/xval.py" ask --run "$WORK/r12j" --round 1 2>&1)
+python3 -B - "$WORK/r12j" <<'PY'
+import json, os, sys
+run = sys.argv[1]; os.remove(f"{run}/error.json")
+entries = json.load(open(f"{run}/ledger.json")); entries.pop("error.json"); json.dump(entries, open(f"{run}/ledger.json", "w"))
+PY
+result9 "$WORK/r12j"
+assert_eq "backend_error" "$(fm "$WORK/r12j_result.md" error)" "a requested round without an answer is a failure even with its error gone (G1)"
+assert_contains "$(cat "$WORK/r12j_result.md")" "ask --round 1" "at that round's step"
+if [ -x "$OLDPY" ] && "$OLDPY" -c 'import sys; sys.exit(0 if sys.version_info < (3, 10) else 1)' 2>/dev/null; then
+  rm -rf "$WORK/r12k"; SEQ= new_run "$WORK/r12k"
+  RUN_OUT=$(HOME="$WORK/home" MOCK_STDERR="error: HTTP 429: too many requests" MOCK_STATUS=1 MOCK_LOG="$WORK/mock.log" \
+    MOCK_PROMPTS="$WORK/prompts.txt" PATH="$WORK/stubbin:$PATH" python3 "$SCRIPTS/xval.py" ask --run "$WORK/r12k" --round 1 2>&1)
+  ( cd "$WORK" && HOME="$WORK/home" "$OLDPY" "$SCRIPTS/xval.py" confirm-privacy --run "$WORK/r12k" >/dev/null 2>&1 )
+  xval confirm-privacy --run "$WORK/r12k"
+  assert_eq "rate_limit" "$(json_get "$(cat "$WORK/r12k/error.json")" 'd["error"]')" "an old Python does not replace a used-up round's error (G1)"
+  rm -rf "$WORK/r12l"; SEQ= new_run "$WORK/r12l"; printf 'not json {' > "$WORK/r12l/ledger.json"
+  ( cd "$WORK" && HOME="$WORK/home" "$OLDPY" "$SCRIPTS/xval.py" compare --run "$WORK/r12l" >/dev/null 2>&1 )
+  assert_eq "not json {" "$(cat "$WORK/r12l/ledger.json")" "an old Python does not write over an unreadable ledger (H2)"
+else
+  skip "an old Python does not replace a used-up round's error" "no Python older than 3.10 at $OLDPY"
+  skip "an old Python does not write over an unreadable ledger" "no Python older than 3.10 at $OLDPY"
+fi
+
+# Round 12 (G2): a failed or interrupted init uses up the run.
+rm -rf "$WORK/r12m"; mkdir -p "$WORK/r12m"; xval confirm-privacy --run "$WORK/r12m"
+xval init --run "$WORK/r12m" --vocab "$WORK/no-such-vocab.json" "$WORK"/imgs/*.png
+mv "$WORK/r12m/init_attempt.json" "$WORK/r12m_attempt.json"
+xval init --run "$WORK/r12m" --vocab "$WORK/vocab.json" "$WORK/imgs/shot_2026-09-11_1001.png"
+assert_contains "$RUN_OUT" "already initialised" "a failed init cannot be redone by moving its attempt away (G2)"
+rm -rf "$WORK/r12n"; mkdir -p "$WORK/r12n"; xval confirm-privacy --run "$WORK/r12n"
+HOME="$WORK/home" python3 -B - "$WORK/r12n" "$SCRIPTS" "$WORK/vocab.json" "$WORK"/imgs/*.png <<'PY' >/dev/null 2>&1
+import sys
+run, scripts, vocab, *images = sys.argv[1:]; sys.path.insert(0, scripts)
+import xval
+real = xval.dump
+def dump(path, data):   # the settings cannot be written: init stops after its copies and the other JSON
+    if path.endswith("meta.json"):
+        raise OSError(28, "No space left on device")
+    real(path, data)
+xval.dump = dump
+try:
+    xval.main(["init", "--run", run, "--vocab", vocab, *images])
+except SystemExit:
+    pass
+PY
+cp "$WORK/claude_marked.json" "$WORK/r12n/claude.json"
+xval seal --run "$WORK/r12n"
+assert_contains "$RUN_OUT" "init did not complete" "an init that stopped at its settings leaves the run used up (G2)"
+assert_no_file "$WORK/r12n/seal.json" "so nothing is sealed"
+mkdir -p "$WORK/sipsslow"; cat > "$WORK/sipsslow/sips" <<'STUB'
+#!/bin/bash
+n=$(( $(cat "$SIPS_COUNT" 2>/dev/null || echo 0) + 1 )); echo "$n" > "$SIPS_COUNT"
+[ "$n" = "$SIPS_SLEEP_AT" ] && { printf '%s\n' "$PPID" > "$SIPS_PIDFILE"; sleep 30; }
+exec /usr/bin/sips "$@"
+STUB
+chmod +x "$WORK/sipsslow/sips"
+rm -rf "$WORK/r12o" "$WORK/sipscount" "$WORK/r12o.pid"; mkdir -p "$WORK/r12o"; xval confirm-privacy --run "$WORK/r12o"
+( HOME="$WORK/home" SIPS_COUNT="$WORK/sipscount" SIPS_SLEEP_AT=4 SIPS_PIDFILE="$WORK/r12o.pid" PATH="$WORK/sipsslow:$PATH" \
+  python3 "$SCRIPTS/xval.py" init --run "$WORK/r12o" --vocab "$WORK/vocab.json" "$WORK"/imgs/*.png > "$WORK/r12o.out" 2>&1 ) &
+for _ in $(seq 1 100); do [ -s "$WORK/r12o.pid" ] && break; sleep 0.1; done
+kill -TERM "$(cat "$WORK/r12o.pid")" 2>/dev/null; wait   # a background job ignores SIGINT; SIGTERM is taken as SIGINT
+assert_eq "internal_error" "$(json_get "$(cat "$WORK/r12o/error.json" 2>/dev/null || echo '{}')" 'd.get("error")')" \
+  "an interrupted init records internal_error (G2)"
+assert_eq "init" "$(json_get "$(cat "$WORK/r12o/error.json" 2>/dev/null || echo '{}')" 'd.get("step")')" "at init"
+rm -rf "$WORK/r12p"; mkdir -p "$WORK/r12p"; xval confirm-privacy --run "$WORK/r12p"
+xval sam --run "$WORK/r12p"
+assert_contains "$RUN_OUT" "not initialised yet" "a step before init is refused as one that cannot be done yet (G2)"
+assert_no_file "$WORK/r12p/error.json" "and records no error"
+xval init --run "$WORK/r12p" --vocab "$WORK/vocab.json" "$WORK"/imgs/*.png
+assert_eq "0" "$RUN_STATUS" "init then runs (F7)"
+
+# Round 12 (H3–H8): the residue.
+rm -rf "$WORK/r12q"; SEQ= new_run "$WORK/r12q"; ask_with "$WORK/codex_reply.md" "$WORK/r12q" 1; xval compare --run "$WORK/r12q"
+xval adjudicate --run "$WORK/r12q"; printf 'package_corruption\nerror=x\n' > "$WORK/r12q/runtime_error.txt"; result9 "$WORK/r12q"
+assert_eq "" "$(fm "$WORK/r12q_result.md" error)" "a runtime error is not taken for a run that made its request (H3)"
+rm -rf "$WORK/r12r"; cp -R "$WORK/run6w" "$WORK/r12r"; rm -f "$WORK/r12r/error.json"; xval crops --run "$WORK/r12r"
+printf '{}' > "$WORK/r12r/zoom_plan.json"; python3 -B - "$WORK/r12r" "$SCRIPTS" <<'PY'
+import sys; sys.path.insert(0, sys.argv[2]); import run_files; run_files.enter(sys.argv[1], "zoom_plan.json")
+PY
+rm -f "$WORK/r12r/zoom_claude.json"; xval seal --run "$WORK/r12r" --zoom
+assert_no_file "$WORK/r12r/zoom_rejected.json" "a zoom plan without a question rejects nothing (H4)"
+rm -rf "$WORK/r12s"; cp -R "$WORK/r11a2" "$WORK/r12s"; result9 "$WORK/r12s"
+refute_contains "$(cat "$WORK/r12s_result.md")" "frames tracked" "SAM's detail is not shown when the comparison is not (H5)"
+rm -rf "$WORK/r12t"; SEQ= new_run "$WORK/r12t"
+HOME="$WORK/home" python3 -B - "$WORK/r12t" "$SCRIPTS" "$WORK/stubbin/codex-call" <<'PY' >/dev/null 2>&1
+import sys
+run, scripts, stub = sys.argv[1:4]; sys.path.insert(0, scripts)
+import xval
+xval.runtime = lambda r: stub
+def cannot_start(*a, **k):
+    raise OSError(8, "Exec format error")
+xval.subprocess.Popen = cannot_start
+try:
+    xval.main(["ask", "--run", run, "--round", "1"])
+except SystemExit:
+    pass
+PY
+assert_contains "$(cat "$WORK/r12t/errors.jsonl")" "nothing was sent" "codex-call that cannot start sends nothing"
+edit_json "$WORK/r12t/profile.json" 'd["model"] = "gpt-other"'
+ask_with "$WORK/codex_reply.md" "$WORK/r12t" 1
+assert_eq "0" "$RUN_STATUS" "a request withdrawn because codex-call could not start leaves the profile unentered (H6)"
+rm -rf "$WORK/r12u"; xval init --run "$WORK/r12u" --vocab "$WORK/vocab.json" "$WORK/nope.png" "$WORK/nope.png"
+assert_contains "$RUN_OUT" "images 1, 2 of 2" "the same file given twice is named by both positions (H8)"
+rm -rf "$WORK/r12v"; printf 'not an image' > "$WORK/e"; xval init --run "$WORK/r12v" --vocab "$WORK/vocab.json" "$WORK/e"
+refute_contains "$RUN_OUT" "image 1bP" "a file name that is a common substring does not garble the message (H8)"
 
 # Round 6 (Q1): the steps that write into a directory are a closed list.
 rm -rf "$WORK/typo"

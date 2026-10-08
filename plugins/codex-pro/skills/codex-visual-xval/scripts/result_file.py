@@ -12,7 +12,7 @@ import tempfile
 from typing import Any
 
 import compare_claims
-from run_files import Stop, differences, explain, is_run_dir, ledger, regular_or_absent, safe_digest
+from run_files import Stop, differences, explain, is_run_dir, ledger, safe_digest, write_bytes
 
 
 def load(path: str, default: Any = None) -> Any:
@@ -176,6 +176,24 @@ def error_detail(error: dict) -> str:
     return f"kept in {where} in the run directory ({what}, which the result file does not show)."
 
 
+def derived_failure(run: str, entries: dict, requests: dict) -> dict | None:
+    """A failure that can never be resolved, read from the records themselves when the run shows no error of its
+    own (#23 verify round 12, G1): an init attempt whose settings were never entered, and a round whose request was
+    recorded and that has no entered answer. So a used-up run or round never reads as one without an error, also when
+    its error was lost or never written (a step ended by SIGKILL, #26)."""
+    attempted = os.path.lexists(os.path.join(run, "init_attempt.json")) or "init_attempt.json" in entries
+    if attempted and "meta.json" not in entries:
+        return {"error": "target_invalid", "step": "init", "source": "xval",
+                "detail": "init did not complete in this run, so the run is used up (read from its records)"}
+    for rnd, answer in (("1", "codex.json"), ("zoom", "zoom_codex.json")):
+        asked = requests.get(rnd)
+        if isinstance(asked, dict) and asked.get("requested_at") and answer not in entries:
+            return {"error": "backend_error", "step": f"ask --round {rnd}", "source": "xval",
+                    "detail": "the request was sent and no answer is on record, so this round is used up (read from "
+                              "the request record)"}
+    return None
+
+
 def runtime_failure(run: str) -> dict | None:
     """The error the runtime resolution recorded, when the run skipped `ask` (the native SKILL does): its class
     only, from the first line of runtime_error.txt (round 10, C5)."""
@@ -217,12 +235,12 @@ def emit(text: str, error: str | None, argv: list[str]) -> None:
             os.makedirs(".codex-pro", exist_ok=True)
             stamp = datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
             out = os.path.join(".codex-pro", f"visual-xval-{stamp}.md")
-        if not regular_or_absent(out):   # a FIFO would stall the step, a symlink write elsewhere (round 11, F1)
-            raise OSError(0, "not a regular file")
-        with open(out, "wb") as fh:
-            fh.write(data)
-    except OSError as exc:   # the result step's own error, kept out of the run's (round 8, K1)
-        raise Stop("target_invalid", f"cannot write the result file: {exc.strerror or type(exc).__name__}")   # F5
+        # through the write entry; --out is the user's own path, so a link or a FIFO there is refused, not replaced
+        # (round 11, F1; round 12, H1)
+        write_bytes(out, data, refuse_links=True)
+    except (OSError, Stop) as exc:   # the result step's own error, kept out of the run's (round 8, K1)
+        reason = exc.detail if isinstance(exc, Stop) else exc.strerror or type(exc).__name__
+        raise Stop("target_invalid", f"cannot write the result file: {reason}")   # F5
     print(json.dumps({"result": out, "error": error}))
 
 
@@ -260,10 +278,14 @@ def render(run: str, stopped: dict | None) -> tuple[str, str | None]:
     def record(name: str, default: Any) -> Any:
         return default if name in bad else load(os.path.join(run, name), default)
 
+    requests = record("requests.json", {})
     error = stopped or record("error.json", {}) or None
     if error and "error" not in error:
         error = None
-    if not error and not stopped and "error.json" not in bad:
+    if not error and not stopped and not found:   # what can never be resolved shows without its error (round 12, G1);
+        error = derived_failure(run, entries, requests)   # a record that does not match is target_invalid first
+    asked = any(isinstance(r, dict) and r.get("requested_at") for r in requests.values())
+    if not error and not stopped and "error.json" not in bad and not asked:   # made no request (round 12, H3)
         error = runtime_failure(run)
 
     compared_ok = not any(n == x or (x.endswith("/") and n.startswith(x)) for n in bad for x in COMPARED_FROM)
@@ -278,7 +300,6 @@ def render(run: str, stopped: dict | None) -> tuple[str, str | None]:
     sealed_now = safe_digest(os.path.join(run, "claude.json"))
     seal_broken = not seal_record or sealed_now != seal_record.get("sha256") or bool(bad & {"claude.json", "seal.json"})
     settings = record("profile.json", {})   # each value is form-checked as well
-    requests = record("requests.json", {})
     request = requests.get("1") if isinstance(requests.get("1"), dict) else {}
     sam_state = record("sam.json", {})
     track = record("track.json", {}) if sam_state.get("sam_status") == "ok" else {}
@@ -372,6 +393,9 @@ def render(run: str, stopped: dict | None) -> tuple[str, str | None]:
     lines += ["", "## SAM evidence", ""]
     if "sam.json" in bad:
         lines.append("Not shown: SAM's record does not match the run's ledger.")
+    elif compared and not compared_ok and fm["sam_status"] not in ("", "not_run"):
+        # its counts and detail rest on the comparison, which is not shown (round 12, H5)
+        lines.append(f"Status: `{fm['sam_status']}`. Its detail rests on the comparison, which is not shown.")
     else:
         detail = sam_state.get("detail")
         if sam_state.get("detail_source") == "xval" and isinstance(detail, str):

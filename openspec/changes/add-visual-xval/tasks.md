@@ -395,13 +395,13 @@
 
 - [x] 17.1 規格與 design（design「第十二輪：登記與寫入各只有一個入口」；Sealed Claude answers 的登記入口、寫入入口、init 的嘗試、拒絕的封閉清單、永遠解不開的錯誤與中斷；Structured result file 的推出失敗、runtime 錯誤與 SAM 細節）。
   - 驗證：`spectra validate` 與 `spectra analyze` 無 warning。
-- [ ] 17.2 寫入入口：暫存檔加 `os.replace`，含影像、封存檔、結果檔、`.gitignore` 與錯誤歷史；不寫進 symlink 目錄（H1）。
+- [x] 17.2 寫入入口：暫存檔加 `os.replace`，含影像、封存檔、結果檔、`.gitignore` 與錯誤歷史；不寫進 symlink 目錄（H1）。
   - [after: 17.1]
-- [ ] 17.3 登記入口：`Step` 與 `commit()`、外部程式的輸出、兩種 pending 的登記、原始碼掃描測試；送出前核對回覆檔（G3、H6）。
+- [x] 17.3 登記入口：`Step` 與 `commit()`、外部程式的輸出、兩種 pending 的登記、原始碼掃描測試；送出前核對回覆檔（G3、H6）。
   - [after: 17.2]
-- [ ] 17.4 run 的錯誤與 init：永遠解不開的錯誤不被取代或清除、結果檔推出失敗、init 的嘗試是紀錄、init 完成的要求、中斷記成 internal_error、Python 3.9 的路徑（G1、G2、H2）。
+- [x] 17.4 run 的錯誤與 init：永遠解不開的錯誤不被取代或清除、結果檔推出失敗、init 的嘗試是紀錄、init 完成的要求、中斷記成 internal_error、Python 3.9 的路徑（G1、G2、H2）。
   - [after: 17.3]
-- [ ] 17.5 其餘與文件：拒絕的封閉清單與空計畫、runtime 錯誤只在沒送過請求時、SAM 細節、訊息以位置稱呼、SKILL 與 CHANGELOG（H3–H5、H7、H8）。
+- [x] 17.5 其餘與文件：拒絕的封閉清單與空計畫、runtime 錯誤只在沒送過請求時、SAM 細節、訊息以位置稱呼、SKILL 與 CHANGELOG（H3–H5、H7、H8）。
   - 驗證：`bash tests/run.sh` 只剩 #24。
   - [after: 17.4]
 - [ ] 17.6 真實後端端到端（第十二次）。

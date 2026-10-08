@@ -30,11 +30,10 @@ def seal(answers: str, seal_path: str) -> None:
         "sealed_at": datetime.datetime.now().astimezone().isoformat(timespec="seconds"),
         "sealed_epoch": datetime.datetime.now().timestamp(),   # orders the seal against the request
     }
-    # only a regular file is written: a FIFO would stall, a symlink would write elsewhere (#23 verify round 11, F1)
-    if os.path.lexists(seal_path) and (os.path.islink(seal_path) or not os.path.isfile(seal_path)):
-        raise OSError(f"{os.path.basename(seal_path)} is not a regular file; nothing was written to it")
-    with open(seal_path, "w", encoding="utf-8") as fh:
-        json.dump(record, fh, ensure_ascii=True, indent=1)
+    # through xval's one write entry: a link at the name is replaced, never written through (#23 verify round 12,
+    # H1). Imported here, not at the top: run_files imports this module.
+    from run_files import write_bytes
+    write_bytes(seal_path, json.dumps(record, ensure_ascii=True, indent=1).encode("utf-8"))
     print(json.dumps(record, ensure_ascii=False))
 
 
