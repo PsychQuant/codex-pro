@@ -34,7 +34,7 @@ def load(path: str, default: Any = None) -> Any:
     try:
         with open(path, encoding="utf-8") as fh:
             return json.load(fh)
-    except (OSError, ValueError):
+    except (OSError, ValueError, RecursionError):   # nested too deep is unreadable too (round 11, F9)
         return default
 
 
@@ -170,7 +170,16 @@ def expand(run: str, names: Any, entries: dict) -> list[str]:
 
 
 def enter(run: str, *names: str) -> None:
-    """Record the digests of what a step has just written."""
+    """Record the digests of what a step has just written. When the ledger is missing or unreadable while the run
+    holds other records, no new ledger is written over them: the next step would read the new one as the whole
+    truth, and the evidence that it was gone would be lost (#23 verify round 11, F3)."""
+    if not isinstance(load(os.path.join(run, LEDGER)), dict):
+        listed = set(expand(run, names, {}))
+        others = [n for n in expand(run, TRACKED + TRACKED_DIRS, {})
+                  if n not in listed and safe_digest(os.path.join(run, n)) is not None]
+        if others:
+            raise Stop("target_invalid", f"the run's ledger ({LEDGER}) is missing or unreadable, so none of its records "
+                       "can be checked; no new one is written over them")
     entries = ledger(run)
     for name in expand(run, names, entries):
         digest = safe_digest(os.path.join(run, name))
@@ -179,6 +188,24 @@ def enter(run: str, *names: str) -> None:
         else:
             entries.pop(name, None)
     dump(os.path.join(run, LEDGER), entries)
+
+
+def snapshot(run: str, *names: str) -> dict:
+    """The digests of `names` (a 'dir/' name: its files) as a step begins."""
+    return {n: safe_digest(os.path.join(run, n)) for n in expand(run, names, {})}
+
+
+def enter_written(run: str, before: dict, *names: str) -> None:
+    """Enter what this step wrote before it stopped, and only that: the records among `names` that are new or
+    changed since `before`. A record this step did not write, or one the ledger already found changed, is left as
+    it is, so it stays detected (#23 verify round 11, E1, F2)."""
+    written = []
+    for n in expand(run, names, {}):
+        digest = safe_digest(os.path.join(run, n))
+        if digest is not None and digest != before.get(n):
+            written.append(n)
+    if written:
+        enter(run, *written)
 
 
 def differences(run: str, names: Any = None) -> list[tuple[str, str]]:

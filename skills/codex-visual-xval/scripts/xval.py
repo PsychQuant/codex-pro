@@ -163,8 +163,9 @@ import adjudicate as adjudication  # noqa: E402
 import compare_claims  # noqa: E402
 import media  # noqa: E402
 import result_file  # noqa: E402
-from run_files import (Stop, INPUTS, adopt_run_dir, checked, checked_comparison, checked_inputs, dump, enter,  # noqa: E402
-                       failure, is_run_dir, ledger, load, neutral_names, now_iso, run_dir)
+from run_files import (Stop, INPUTS, adopt_run_dir, checked, checked_comparison, checked_inputs, differences,  # noqa: E402
+                       dump, enter, enter_written, failure, is_run_dir, ledger, load, neutral_names, now_iso, run_dir,
+                       snapshot)
 from codex_errors import classify, login_problem  # noqa: E402
 from zoom_round import (class_lines, crop_box, dispute_points, enlargement, position_pads, question,  # noqa: E402
                         zoom_skip_reason,
@@ -207,7 +208,8 @@ def load_vocab(path: str) -> Any:
 
 def init(run: str, vocab_path: str, images: list[str], sequence: bool, first_side: str = "") -> None:
     if any(os.path.exists(os.path.join(run, f)) for f in ("frames.json", "init_attempt.json")) \
-            or set(ledger(run)) - {"privacy.json"}:   # or their entries: moving them away is no reset (round 10, C1)
+            or set(ledger(run)) - {"privacy.json", "error.json"}:   # or their entries: moving them away is no reset
+        # (round 10, C1); the error of a step run before init does not use the run up (round 11, F7)
         # Once only, a failed attempt included: the privacy confirmation refers to one set of images
         # (round 3, L4; round 4, M4). Refused before anything else is checked (M1).
         raise Stop("target_invalid", "this run is already initialised, or an init attempt failed in it; "
@@ -237,21 +239,30 @@ def init(run: str, vocab_path: str, images: list[str], sequence: bool, first_sid
         # file names only: a local directory can name a person or a client (round 5, V4)
         raise Stop("target_invalid", f"not a readable file: {[os.path.basename(p) for p in missing]}")
     os.makedirs(os.path.join(run, "frames"), exist_ok=True)
+    before = snapshot(run, *INPUTS)
     try:
         frames = copy_frames(run, images)
-    except Exception:
-        enter(run, "frames/", "hires/")   # what init wrote before it stopped is xval's own (round 10, D2)
+        dump(os.path.join(run, "frames.json"), frames)
+        dump(os.path.join(run, "vocab.json"), vocab)
+        meta = {
+            "started_at": datetime.datetime.now().astimezone().isoformat(timespec="seconds"),
+            "sequence": sequence, "n_images": len(images), "order": list(frames),
+            # who gave the first side's answers: in the native Codex bundle it is the Codex host model (round 2, F1)
+            "first_side_model": first_side}
+        dump(os.path.join(run, "meta.json"), meta)   # its settings are part of the inputs (round 6, W2)
+    except BaseException:
+        stopped_partway(run, before, *INPUTS)
         raise
-    dump(os.path.join(run, "frames.json"), frames)
-    dump(os.path.join(run, "vocab.json"), vocab)
-    meta = {
-        "started_at": datetime.datetime.now().astimezone().isoformat(timespec="seconds"),
-        "sequence": sequence, "n_images": len(images), "order": list(frames),
-        # who gave the first side's answers: in the native Codex bundle it is the Codex host model (round 2, F1)
-        "first_side_model": first_side}
-    dump(os.path.join(run, "meta.json"), meta)   # its settings are part of the inputs (round 6, W2)
     enter(run, *INPUTS)   # the inputs as init wrote them, checked by every later step (round 9)
     print(json.dumps({"ok": True, "frames": sorted(frames)}))
+
+
+def stopped_partway(run: str, before: dict, *names: str) -> None:
+    """A step that stops, by failure or interruption, enters what it wrote (round 10, D2; round 11, E1, F2)."""
+    try:
+        enter_written(run, before, *names)
+    except (Stop, OSError):
+        pass   # the step's own error is the one to report
 
 
 def copy_frames(run: str, images: list[str]) -> dict:
@@ -297,15 +308,17 @@ def seal_answers(run: str, zoom: bool) -> None:
     # does not reset a step (round 10, C1). What they read is checked against the ledger first.
     entries = ledger(run)
     previous = load(record)
-    if previous or os.path.basename(record) in entries:
-        when = previous.get("sealed_at") if isinstance(previous, dict) else None
-        raise Stop("target_invalid", f"already sealed{f' at {when}' if when else ''}; a seal is not rewritten", record=False)
+    if previous or os.path.basename(record) in entries:   # its fields are not repeated: unchecked here (F9)
+        raise Stop("target_invalid", "already sealed; a seal is not rewritten", record=False)
     checked(run, ("requests.json",))
     if load(os.path.join(run, "requests.json"), {}).get("zoom" if zoom else "1"):
         raise Stop("target_invalid", "Codex has already been asked this round; answers sealed now prove nothing", record=False)
     if zoom and (load(os.path.join(run, "zoom_rejected.json")) or "zoom_rejected.json" in entries):
         raise Stop("target_invalid", "Claude's zoom answers already failed the checks, so the zoom round is not used; "
                    "answers fixed afterwards are not sealed", record=False)
+    if zoom and not os.path.exists(os.path.join(run, "zoom_plan.json")) and "zoom_plan.json" not in entries:
+        # nothing to answer yet: no rejection is written and the run's error stays (round 11, F8)
+        raise Stop("target_invalid", "no zoom plan yet: run `crops` first; nothing was sealed", record=False)
     if zoom:
         checked(run, ("zoom_plan.json",))   # what the answers are checked against (round 9)
         try:
@@ -431,8 +444,6 @@ def profile(run: str) -> dict:
         raise Stop("target_invalid", "no resolved profile in the run directory (Step 4.1 writes profile.json); nothing was sent")
     if "profile.json" in ledger(run):   # the profile the first request used (round 10, C2)
         checked(run, ("profile.json",), then="nothing was sent")
-    else:
-        enter(run, "profile.json")
     return data
 
 
@@ -456,6 +467,8 @@ def call_codex(run: str, prompt: str, images: list[str], tag: str, argv: list[st
         raise Stop("runtime_unavailable", f"cannot write the prompt file: {failure(exc)}; nothing was sent")
     enter(run, os.path.basename(prompt_file))
     record_request(run, rnd, requested_at=now_iso(), requested_epoch=datetime.datetime.now().timestamp())
+    if "profile.json" not in ledger(run):   # a record from the first recorded request on (round 11, F6)
+        enter(run, "profile.json")
     cmd = [path, "--output", output, "--model", settings["model"],
            "--effort", settings["effort"], "--max-time", str(settings["max_time"]),
            "--instructions", INSTRUCTIONS, "--prompt-file", prompt_file]
@@ -535,7 +548,13 @@ def before_request(run: str, rnd: str) -> None:
     if earlier:   # first: a done round is refused as done, not as whatever else has changed since (T6)
         raise Stop("target_invalid", f"round {rnd} was already requested at {earlier.get('requested_at')}; "
                    "a recorded answer is not replaced and requests are not retried", record=False)
-    if rnd == "zoom" and (load(os.path.join(run, "zoom_rejected.json")) or "zoom_rejected.json" in ledger(run)):
+    entries = ledger(run)
+    if rnd == "zoom":   # what cannot be done yet keeps the run's own error (round 11, F8)
+        for name, step in (("comparison.json", "compare"), ("zoom_plan.json", "crops")):
+            if not os.path.exists(os.path.join(run, name)) and name not in entries:
+                raise Stop("target_invalid", f"no {name[:-5].replace('_', ' ')} yet: run `{step}` first; nothing was sent",
+                           record=False)
+    if rnd == "zoom" and (load(os.path.join(run, "zoom_rejected.json")) or "zoom_rejected.json" in entries):
         raise Stop("target_invalid", "the zoom round is not used, because Claude's zoom answers failed the checks; "
                    "nothing was sent", record=False)
     if not load(os.path.join(run, "privacy.json")):
@@ -672,6 +691,8 @@ def crops(run: str) -> None:
                 os.path.realpath(os.path.join(run, info["hires"]))) == hires_dir):
             raise Stop("target_invalid", "a full-resolution copy lies outside the run's hires directory; nothing was cropped")
     os.makedirs(os.path.join(run, "crops"), exist_ok=True)
+    written_by_crops = ("crops/", "zoom_plan.json", "zoom_skipped.json", "zoom_prompt.md")
+    before = snapshot(run, *written_by_crops)
     try:
         plan, shown, skipped = {}, [], []
         n = 0
@@ -718,14 +739,18 @@ def crops(run: str) -> None:
                     entry[key] = item[key]
             plan[item["id"]] = entry
             shown.append({"id": item["id"], "crop": os.path.join(run, crop), "question": entry["question"]})
-    except Exception:
-        enter(run, "crops/")   # the crops written before the failure are xval's own (round 10, D2)
+    except BaseException:
+        stopped_partway(run, before, *written_by_crops)   # only what it wrote (round 11, E1, F2)
         raise
-    dump(os.path.join(run, "zoom_plan.json"), plan)
-    dump(os.path.join(run, "zoom_skipped.json"), skipped)
-    if plan:
-        with open(os.path.join(run, "zoom_prompt.md"), "w", encoding="utf-8") as fh:
-            fh.write(zoom_prompt(plan, vocab))
+    try:
+        dump(os.path.join(run, "zoom_plan.json"), plan)
+        dump(os.path.join(run, "zoom_skipped.json"), skipped)
+        if plan:
+            with open(os.path.join(run, "zoom_prompt.md"), "w", encoding="utf-8") as fh:
+                fh.write(zoom_prompt(plan, vocab))
+    except BaseException:
+        stopped_partway(run, before, *written_by_crops)
+        raise
     # what both sides see, checked when the zoom round is asked and adjudicated (M6; round 9)
     enter(run, "crops/", "zoom_plan.json", "zoom_skipped.json", "zoom_prompt.md")
     print(json.dumps({"crops": shown, "question_file": os.path.join(run, "zoom_prompt.md") if plan else None,
@@ -927,6 +952,8 @@ def clear_error(run: str, command: str) -> None:
     never raises one, and reads nothing in a directory that is not a run (round 7, Y3)."""
     if command == "result" or not is_run_dir(run):
         return
+    if differences(run, ("error.json",)):
+        return   # an error that does not match the ledger is not cleared: it stays detected (round 11, E1)
     current = load(os.path.join(run, "error.json"))
     if isinstance(current, dict) and current.get("step") == command:
         os.remove(os.path.join(run, "error.json"))

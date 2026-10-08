@@ -2518,6 +2518,60 @@ xval adjudicate --run "$WORK/r10j"; result9 "$WORK/r10j"
 assert_eq "package_corruption" "$(fm "$WORK/r10j_result.md" error)" "a native preflight failure reaches the result file without ask (C5)"
 refute_contains "$(cat "$WORK/r10j_result.md")" "hash_mismatch" "with its class only"
 
+# Round 11 (E1): xval does not erase a difference the ledger found.
+rm -rf "$WORK/r11a"; SEQ= new_run "$WORK/r11a"
+RUN_OUT=$(HOME="$WORK/home" MOCK_STDERR="error: HTTP 429: too many requests" MOCK_STATUS=1 MOCK_LOG="$WORK/mock.log" \
+  MOCK_PROMPTS="$WORK/prompts.txt" PATH="$WORK/stubbin:$PATH" python3 "$SCRIPTS/xval.py" ask --run "$WORK/r11a" --round 1 2>&1)
+edit_json "$WORK/r11a/error.json" 'd["step"] = "confirm-privacy"'
+xval confirm-privacy --run "$WORK/r11a"
+assert_file "$WORK/r11a/error.json" "an edited error is not cleared by the step it now names (E1)"
+result9 "$WORK/r11a"
+assert_eq "target_invalid" "$(fm "$WORK/r11a_result.md" error)" "and the result file still shows a failed run (E1)"
+rm -rf "$WORK/r11c"; cp -R "$WORK/run6w" "$WORK/r11c"; rm -f "$WORK/r11c/error.json"; xval crops --run "$WORK/r11c"
+cp "$WORK/r11c/frames/f01.png" "$WORK/r11c/crops/z01.png"; rm -f "$WORK/sipscount"
+RUN_OUT=$(HOME="$WORK/home" SIPS_COUNT="$WORK/sipscount" SIPS_FAIL_AT=1 PATH="$WORK/sipsfail:$PATH" \
+  python3 "$SCRIPTS/xval.py" crops --run "$WORK/r11c" 2>&1)
+assert_contains "$(ledger_changed "$WORK/r11c")" "crops/z01.png" "a crop replaced by hand stays detected when crops fails again (E1)"
+# F2: a step that stops after its images enters the JSON it wrote too.
+rm -rf "$WORK/r11j"; mkdir -p "$WORK/r11j"; xval confirm-privacy --run "$WORK/r11j"; mkfifo "$WORK/r11j/meta.json"
+xval init --run "$WORK/r11j" --vocab "$WORK/vocab.json" "$WORK"/imgs/*.png
+rm -f "$WORK/r11j/meta.json"
+assert_eq "" "$(ledger_changed "$WORK/r11j")" "an init that stops at its JSON enters the copies and records it wrote (F2)"
+# F3: a missing ledger is not rebuilt by a later step.
+rm -rf "$WORK/r11l"; cp -R "$WORK/run6w" "$WORK/r11l"; rm "$WORK/r11l/ledger.json"
+xval compare --run "$WORK/r11l"
+assert_no_file "$WORK/r11l/ledger.json" "a step that stops on a missing ledger does not write a new one (F3)"
+xval adjudicate --run "$WORK/r11l"
+assert_contains "$RUN_OUT" "ledger (ledger.json) is missing" "so the next step still says the ledger is missing (F3)"
+# F6: the profile becomes a record when the first request is recorded.
+rm -rf "$WORK/r11p"; SEQ= new_run "$WORK/r11p"; printf '%s\n' "$WORK/no-such-codex-call" > "$WORK/r11p/runtime.txt"
+ask_with "$WORK/codex_reply.md" "$WORK/r11p" 1
+assert_contains "$RUN_OUT" '"error": "runtime_unavailable"' "a run stops before sending when codex-call is missing"
+edit_json "$WORK/r11p/profile.json" 'd["model"] = "gpt-other"'; printf '%s\n' "$WORK/stubbin/codex-call" > "$WORK/r11p/runtime.txt"
+ask_with "$WORK/codex_reply.md" "$WORK/r11p" 1
+assert_eq "0" "$RUN_STATUS" "after nothing was sent, a changed profile is used on the next try (F6)"
+rm -rf "$WORK/r11b"; SEQ= new_run "$WORK/r11b"; result9 "$WORK/r11b"
+assert_eq "" "$(fm "$WORK/r11b_result.md" error)" "a profile before any request is not a record yet (F6, the r10e check made real)"
+# F7: a step that failed before init does not use up the run.
+rm -rf "$WORK/r11i"; mkdir -p "$WORK/r11i"; xval confirm-privacy --run "$WORK/r11i"; xval seal --run "$WORK/r11i"
+xval init --run "$WORK/r11i" --vocab "$WORK/vocab.json" "$WORK"/imgs/*.png
+assert_eq "0" "$RUN_STATUS" "init still runs after an earlier step failed (F7)"
+# F8: what cannot be done yet keeps the run's own error, and writes no rejection.
+rm -rf "$WORK/r11y"; SEQ= new_run "$WORK/r11y"
+RUN_OUT=$(HOME="$WORK/home" MOCK_STDERR="error: HTTP 429: too many requests" MOCK_STATUS=1 MOCK_LOG="$WORK/mock.log" \
+  MOCK_PROMPTS="$WORK/prompts.txt" PATH="$WORK/stubbin:$PATH" python3 "$SCRIPTS/xval.py" ask --run "$WORK/r11y" --round 1 2>&1)
+ask_with "$WORK/zoom_reply.md" "$WORK/r11y" zoom
+assert_eq "rate_limit" "$(json_get "$(cat "$WORK/r11y/error.json")" 'd["error"]')" "the zoom round before a comparison keeps the run's error (F8)"
+printf '{"answers": {}}\n' > "$WORK/r11y/zoom_claude.json"; xval seal --run "$WORK/r11y" --zoom
+assert_no_file "$WORK/r11y/zoom_rejected.json" "seal --zoom before a zoom plan rejects nothing (F8)"
+assert_no_file "$WORK/r11y/zoom_seal.json" "and seals nothing either (F8)"
+assert_eq "rate_limit" "$(json_get "$(cat "$WORK/r11y/error.json")" 'd["error"]')" "and keeps the run's error"
+# F9: zoom answers nested too deep are rejected, not an internal error to retry past.
+rm -rf "$WORK/r11n"; cp -R "$WORK/run6w" "$WORK/r11n"; rm -f "$WORK/r11n/error.json"; xval crops --run "$WORK/r11n"
+python3 -c 'import sys; open(sys.argv[1], "w").write("[" * 200000)' "$WORK/r11n/zoom_claude.json"
+xval seal --run "$WORK/r11n" --zoom
+assert_file "$WORK/r11n/zoom_rejected.json" "zoom answers nested too deep are rejected (F9)"
+
 # Round 6 (Q1): the steps that write into a directory are a closed list.
 rm -rf "$WORK/typo"
 xval confirm-privacy --run "$WORK/typo/deep/run"
