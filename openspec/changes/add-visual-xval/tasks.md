@@ -518,6 +518,6 @@
 - [x] 25.3 文件：SKILL、CHANGELOG（D2、D5、D6），在 #26 補上 pai#89 的前置條件（D7）；送 verify 前由 agent 逐句對照程式找反例。
   - 驗證：`bash tests/run.sh` 只剩 #24。
   - [after: 25.2]
-- [ ] 25.4 真實後端端到端（第二十次）。
+- [x] 25.4 真實後端端到端（第二十次）。
   - 驗證：紀錄寫進 e2e-checklist §F。
   - [after: 25.3]
