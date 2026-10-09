@@ -492,6 +492,6 @@
 - [x] 23.3 文件：SKILL Step 1、3、4.2、5，CHANGELOG（S1、T1、T2、T5）；送 verify 前由一組 agent 逐句對照程式找反例，照它確認的 20 項改（3.9 `result` 的 SIGTERM、固定內容結果檔的 Limitations 改程式；其餘改文字）；B3、C4 的等待放寬到 60 秒。
   - 驗證：`bash tests/run.sh` 只剩 #24。
   - [after: 23.2]
-- [ ] 23.4 真實後端端到端（第十八次）。
+- [x] 23.4 真實後端端到端（第十八次）。
   - 驗證：紀錄寫進 e2e-checklist §F。
   - [after: 23.3]
