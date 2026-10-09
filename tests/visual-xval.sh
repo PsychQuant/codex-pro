@@ -2065,8 +2065,8 @@ if [ -x "$OLDPY" ] && "$OLDPY" -c 'import sys; sys.exit(0 if sys.version_info < 
   printf '{"model": "gpt test", "effort": "high", "max_time": 30, "profile_source": "elsewhere"}' > "$WORK/runold4/profile.json"; enter_rec "$WORK/runold4" profile.json
   RUN_OUT=$(cd "$WORK/project" && "$OLDPY" "$SCRIPTS/xval.py" result --run "$WORK/runold4" --out "$WORK/runold4_result.md" 2>&1)
   assert_contains "$RUN_OUT" '"result"' "a record nested too deep does not stop the old-Python result file (B5)"
-  assert_eq "invalid invalid" "$(fm "$WORK/runold4_result.md" model) $(fm "$WORK/runold4_result.md" profile_source)" \
-    "and its frontmatter fields are written in their own forms (B5)"
+  assert_eq "|" "$(fm "$WORK/runold4_result.md" model)|$(fm "$WORK/runold4_result.md" profile_source)" \
+    "and its frontmatter carries no value from the records, so none in a wrong form (B5; round 16, Q5)"
   RUN_OUT=$(cd "$WORK/project" && "$OLDPY" "$SCRIPTS/xval.py" result --run "$WORK/runold4" --out "$WORK/no-such-dir/x.md" 2>&1)
   assert_contains "$RUN_OUT" '"error": "target_invalid"' "an old-Python result file that cannot be written is target_invalid"
   assert_contains "$(tail -1 "$WORK/runold4/errors.jsonl" 2>/dev/null)" "cannot write the result file" "and it is kept in the history (B5)"
@@ -2074,7 +2074,7 @@ if [ -x "$OLDPY" ] && "$OLDPY" -c 'import sys; sys.exit(0 if sys.version_info < 
   rm -rf "$WORK/runold5"; cp -R "$WORK/run6w" "$WORK/runold5"; edit_json "$WORK/runold5/meta.json" 'd["first_side_model"] = "forged-model"'
   ( cd "$WORK/project" && "$OLDPY" "$SCRIPTS/xval.py" result --run "$WORK/runold5" --out "$WORK/runold5_result.md" >/dev/null 2>&1 )
   assert_eq "" "$(fm "$WORK/runold5_result.md" first_side_model)" "an old Python does not show a record that fails the ledger (D9)"
-  assert_eq "12 images" "$(fm "$WORK/runold5_result.md" target)" "and still shows the verified ones"
+  assert_eq "" "$(fm "$WORK/runold5_result.md" target)" "nor any other: it reads none of the records (round 16, Q5)"
   rm -rf "$WORK/oldproj"; mkdir -p "$WORK/oldproj"; : > "$WORK/oldproj/.codex-pro"
   RUN_OUT=$(cd "$WORK/oldproj" && "$OLDPY" "$SCRIPTS/xval.py" result --run "$WORK/runold4" 2>&1)
   assert_contains "$RUN_OUT" '"error": "target_invalid"' "a default location that cannot be created gives a structured answer (B5)"
@@ -3080,7 +3080,7 @@ cp "$WORK/r15a/.gitignore" "$WORK/r15a_gitignore"
     --out "$WORK/r15a_out/link/../.gitignore" > "$WORK/r15a.out" 2>&1 )
 assert_eq "same" "$(cmp -s "$WORK/r15a_gitignore" "$WORK/r15a/.gitignore" && echo same || echo changed)" \
   "a symbolic link followed by '..' does not let the result file into the run (M1)"
-assert_contains "$(cat "$WORK/r15a.out")" "not written into the run directory" "and the result step says why (M1)"
+assert_contains "$(cat "$WORK/r15a.out")" "not written into the directory --run names" "and the result step says why (M1)"
 ( cd "$WORK/project" && HOME="$WORK/home" python3 "$SCRIPTS/xval.py" result --run "$WORK/r15a" \
     --out "$WORK/r15a_out/away/../r.md" >/dev/null 2>&1 )
 assert_file "$WORK/r15a_else/r.md" "outside the run, the file is written where the operating system resolves the path (M1)"
@@ -3224,7 +3224,7 @@ else
 fi
 
 # Round 15 (N6): one write entry, checked by a scanner that is itself shown to see every write form.
-assert_eq "16 0 0" "$(python3 - "$SCRIPTS" <<'PY'
+assert_eq "17 1 0 0" "$(python3 - "$SCRIPTS" <<'PY'
 import ast, os, sys
 WRITES = {"os": {"replace", "rename", "renames", "link", "symlink", "truncate", "write", "open", "fdopen", "remove",
                  "unlink", "rmdir", "removedirs", "mkfifo", "mknod"},
@@ -3238,8 +3238,12 @@ def mode_of(node, at):
     return node.args[at] if len(node.args) > at else next((k.value for k in node.keywords if k.arg == "mode"), None)
 def scan(source, skip_fn=None):
     tree = ast.parse(source)
+    found = []
     names = {}   # local name -> (module, attribute or None), through every import and alias
     for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom) and any(a.name == "*" for a in node.names) \
+                and node.module and node.module.split(".")[0] in WRITES:
+            found.append(node.lineno)   # every name of a writing module, unseen by name
         if isinstance(node, ast.Import):
             for a in node.names:
                 names[a.asname or a.name.split(".")[0]] = (a.name.split(".")[0] if not a.asname else a.name, None)
@@ -3251,12 +3255,15 @@ def scan(source, skip_fn=None):
         for node in ast.walk(tree):
             if isinstance(node, ast.FunctionDef) and node.name == skip_fn:
                 skip |= {id(n) for n in ast.walk(node)}
-    found = []
     for node in ast.walk(tree):
         if id(node) in skip or not isinstance(node, ast.Call):
             continue
         f = node.func
         target = None
+        if isinstance(f, ast.Call) and isinstance(f.func, ast.Name) and f.func.id == "getattr" and len(f.args) >= 2 \
+                and isinstance(f.args[0], ast.Name) and names.get(f.args[0].id, (None,))[0] in WRITES:
+            found.append(node.lineno)   # getattr(os, "remove")(...): a module's attribute by its name
+            continue
         if isinstance(f, ast.Name):
             target = names.get(f.id, ("builtins", f.id) if f.id == "open" else None)
         elif isinstance(f, ast.Attribute) and isinstance(f.value, ast.Name) and f.value.id in names \
@@ -3302,6 +3309,10 @@ def f(p, q, x):
     Path(p).replace(q)
     x.open(mode="x")
     o.fdopen(3, "w")
+    getattr(o, "remove")(p)
+'''
+STAR = '''
+from os import *
 '''
 CLEAN = '''
 import os, json
@@ -3319,9 +3330,224 @@ for name in sorted(os.listdir(sys.argv[1])):
     if name.endswith(".py") and name not in ("run_files.py", "sam_track.py"):
         source = open(os.path.join(sys.argv[1], name), encoding="utf-8").read()
         real += [f"{name}:{n}" for n in scan(source, "_older_python")]   # the Python 3.9 path is its own copy
-print(len(scan(SAMPLE)), len(scan(CLEAN)), len(real), *real)
+print(len(scan(SAMPLE)), len(scan(STAR)), len(scan(CLEAN)), len(real), *real)
 PY
-)" "the scanner sees every write form, none in a harmless one, and no module but run_files writes a file (N6)"
+)" "the scanner sees the 17 write forms of its sample and a star import, none in a harmless sample, and no module but run_files writes a file by any of them (N6; round 16, Q6)"
+
+# Round 16 (P1): only a write that still lands in the run after resolution is refused; a link to the run itself followed by
+# '..' lands beside the run, and is written there.
+rm -rf "$WORK/r16a_parent" "$WORK/r16a_out"; mkdir -p "$WORK/r16a_parent" "$WORK/r16a_out"
+SEQ= new_run "$WORK/r16a_parent/run"; ln -s "$WORK/r16a_parent/run" "$WORK/r16a_out/runlink"
+( cd "$WORK/project" && HOME="$WORK/home" python3 "$SCRIPTS/xval.py" result --run "$WORK/r16a_parent/run" \
+    --out "$WORK/r16a_out/runlink/../beside.md" >/dev/null 2>&1 )
+assert_file "$WORK/r16a_parent/beside.md" "a link to the run itself followed by '..' is written beside the run, as resolved (P1)"
+
+# Round 16 (Q1): --run is normalised once, where the step starts: a name with '..' is refused and a trailing '/.' is
+# dropped, so a run directory that is a symbolic link is refused however it is spelled, on both paths.
+rm -rf "$WORK/r16b_real" "$WORK/r16b_link"; mkdir -p "$WORK/r16b_real"; ln -s "$WORK/r16b_real" "$WORK/r16b_link"
+xval confirm-privacy --run "$WORK/r16b_link/."
+assert_contains "$RUN_OUT" "symbolic link" "a run directory that is a symbolic link is refused when named with a trailing '/.' (Q1)"
+assert_eq "0" "$(ls -A "$WORK/r16b_real" | wc -l | tr -d ' ')" "and nothing is written into the link's target (Q1)"
+mkdir -p "$WORK/r16b_real/sub"
+xval confirm-privacy --run "$WORK/r16b_real/sub/.."
+assert_contains "$RUN_OUT" "'..'" "a --run named with '..' is refused (Q1)"
+assert_eq "sub" "$(ls -A "$WORK/r16b_real" | tr '\n' ' ' | sed 's/ $//')" "and nothing is written (Q1)"
+rm -rf "$WORK/r16c" "$WORK/r16c_link"; SEQ= new_run "$WORK/r16c"; ln -s "$WORK/r16c" "$WORK/r16c_link"
+rm -f "$WORK/r16c/errors.jsonl"
+if [ -x "$OLDPY" ] && "$OLDPY" -c 'import sys; sys.exit(0 if sys.version_info < (3, 10) else 1)' 2>/dev/null; then
+  ( cd "$WORK" && HOME="$WORK/home" "$OLDPY" "$SCRIPTS/xval.py" compare --run "$WORK/r16c_link/." >/dev/null 2>&1 )
+  assert_no_file "$WORK/r16c/errors.jsonl" "an old Python does not write through a run directory that is a symbolic link either (Q1)"
+else
+  skip "an old Python does not write through a run directory that is a symbolic link either" "no Python older than 3.10 at $OLDPY"
+fi
+
+# Round 16 (Q2): a name the ledger sees as a record (a regular file, or a link to one) without an entry stops the step,
+# and is not replaced; a FIFO or a dangling link there is not a record. The privacy confirmation follows the same rule.
+rm -rf "$WORK/r16d"; xval init --run "$WORK/r16d" --vocab "$WORK/vocab.json" "$WORK"/imgs/*.png
+cp "$WORK/claude_marked.json" "$WORK/r16d/claude.json"
+printf '{"sha256": "x"}\n' > "$WORK/r16d_fake_seal.json"; ln -s "$WORK/r16d_fake_seal.json" "$WORK/r16d/seal.json"
+xval seal --run "$WORK/r16d"
+assert_contains "$RUN_OUT" "seal.json is not in the run's ledger" "a link to a file at seal.json without an entry stops the seal (Q2)"
+assert_eq "link" "$([ -L "$WORK/r16d/seal.json" ] && echo link || echo replaced)" "and it is not replaced, so the ledger keeps detecting it (Q2)"
+rm -rf "$WORK/r16e"; cp -R "$WORK/run6w" "$WORK/r16e"; xval crops --run "$WORK/r16e"
+printf '{"at": "x", "detail": "y"}\n' > "$WORK/r16e_rej.json"; ln -s "$WORK/r16e_rej.json" "$WORK/r16e/zoom_rejected.json"
+printf '{"answers": {"z01.png": {"value": false}}}\n' > "$WORK/r16e/zoom_claude.json"
+xval seal --run "$WORK/r16e" --zoom
+assert_contains "$RUN_OUT" "zoom_rejected.json is not in the run's ledger" "a link at zoom_rejected.json without an entry stops seal --zoom (Q2)"
+rm -f "$WORK/mock.log"; ask_with "$WORK/zoom_reply.md" "$WORK/r16e" zoom
+assert_no_file "$WORK/mock.log" "and the zoom round is not sent (Q2)"
+rm -rf "$WORK/r16f"; cp -R "$WORK/run6w" "$WORK/r16f"; xval crops --run "$WORK/r16f"
+printf '{"at": "x", "detail": "y"}\n' > "$WORK/r16f/zoom_rejected.json"
+rm -f "$WORK/mock.log"; ask_with "$WORK/zoom_reply.md" "$WORK/r16f" zoom
+assert_contains "$RUN_OUT" "zoom_rejected.json is not in the run's ledger" "the zoom round names an unentered zoom rejection (Q2; round 15, N1)"
+assert_no_file "$WORK/mock.log" "and is not sent (Q2)"
+rm -rf "$WORK/r16k"; cp -R "$WORK/run6w" "$WORK/r16k"; printf '{"sha256": "x"}\n' > "$WORK/r16k/zoom_seal.json"
+xval crops --run "$WORK/r16k"
+assert_contains "$RUN_OUT" "zoom_seal.json is not in the run's ledger" "crops names an unentered zoom seal (Q2; round 15, N1)"
+rm -rf "$WORK/r16g"; SEQ= new_run "$WORK/r16g"; printf '{}\n' > "$WORK/r16g/privacy.json"
+python3 -B - "$WORK/r16g" <<'PY'
+import json, sys
+p = f"{sys.argv[1]}/ledger.json"; d = json.load(open(p)); d.pop("privacy.json", None); json.dump(d, open(p, "w"))
+PY
+xval confirm-privacy --run "$WORK/r16g"
+assert_contains "$RUN_OUT" "privacy.json is not in the run's ledger" "a privacy confirmation without an entry is named as such by confirm-privacy (Q2)"
+rm -f "$WORK/r16g/error.json"; python3 -B - "$WORK/r16g" <<'PY'
+import json, sys
+p = f"{sys.argv[1]}/ledger.json"; d = json.load(open(p)); d.pop("error.json", None); json.dump(d, open(p, "w"))
+PY
+ask_with "$WORK/codex_reply.md" "$WORK/r16g" 1
+assert_contains "$RUN_OUT" "privacy.json is not in the run's ledger" "and by ask, which does not say it was never confirmed (Q2)"
+rm -rf "$WORK/r16l"; xval init --run "$WORK/r16l" --vocab "$WORK/vocab.json" "$WORK"/imgs/*.png; mkfifo "$WORK/r16l/privacy.json"
+xval_t python3 confirm-privacy --run "$WORK/r16l"
+assert_eq "regular" "$(python3 -c 'import os,stat,sys; print("regular" if stat.S_ISREG(os.lstat(sys.argv[1]).st_mode) else "other")' "$WORK/r16l/privacy.json")" \
+  "a FIFO at privacy.json is not a confirmation: confirm-privacy replaces it (Q2)"
+
+# Round 16 (Q3): the folder is resolved as the operating system resolves it, so a missing folder or a file followed by
+# '..' is no folder, and the path the step reports is the file it wrote.
+rm -rf "$WORK/r16h"; mkdir -p "$WORK/r16h"; : > "$WORK/r16h/plain"
+RUN_OUT=$(cd "$WORK/project" && python3 "$SCRIPTS/xval.py" result --run "$WORK/r15a" --out "$WORK/r16h/nonexist/../r.md" 2>&1)
+assert_contains "$RUN_OUT" '"error": "target_invalid"' "a missing folder followed by '..' is no folder (Q3)"
+RUN_OUT=$(cd "$WORK/project" && python3 "$SCRIPTS/xval.py" result --run "$WORK/r15a" --out "$WORK/r16h/plain/../r2.md" 2>&1)
+assert_contains "$RUN_OUT" '"error": "target_invalid"' "a file followed by '..' is no folder (Q3)"
+assert_eq "none" "$(ls "$WORK/r16h" | grep -c '^r' | sed 's/^0$/none/')" "and nothing is written beside them (Q3)"
+RUN_OUT=$(cd "$WORK/project" && python3 "$SCRIPTS/xval.py" result --run "$WORK/r15a" --out "$WORK/r15a_out/away/../r3.md" 2>/dev/null)
+assert_eq "same" "$(python3 -c 'import json,os,sys; p = json.loads(sys.argv[1])["result"]; print("same" if os.path.realpath(p) == p and os.path.samefile(p, sys.argv[2]) else "other")' "$RUN_OUT" "$WORK/r15a_else/r3.md" 2>/dev/null)" \
+  "the path reported is the file written (Q3)"
+if [ -x "$OLDPY" ] && "$OLDPY" -c 'import sys; sys.exit(0 if sys.version_info < (3, 10) else 1)' 2>/dev/null; then
+  RUN_OUT=$(cd "$WORK/project" && "$OLDPY" "$SCRIPTS/xval.py" result --run "$WORK/r15a" --out "$WORK/r16h/nonexist/../r4.md" 2>&1)
+  assert_contains "$RUN_OUT" '"error": "target_invalid"' "an old Python resolves the folder as the system does too (Q3)"
+else
+  skip "an old Python resolves the folder as the system does too" "no Python older than 3.10 at $OLDPY"
+fi
+rm -rf "$WORK/r16m_real" "$WORK/r16m_link"; mkdir -p "$WORK/r16m_real"; ln -s "$WORK/r16m_real" "$WORK/r16m_link"
+assert_eq "refused" "$(python3 -B - "$SCRIPTS" "$WORK/r16m_link" <<'PY' 2>/dev/null
+import os, sys
+sys.path.insert(0, sys.argv[1]); import sam_track
+try:
+    sam_track.write_track(os.path.join(sys.argv[2], "track.json"), {"sam_status": "ok"})
+    print("written")
+except OSError:
+    print("refused")
+PY
+)" "SAM's track is not written into a run directory that is a symbolic link (Q3)"
+
+# Round 16 (Q4): the result file is never written into the directory --run names, whether or not it reads as a run.
+rm -rf "$WORK/r16i"; SEQ= new_run "$WORK/r16i"; cp "$WORK/r16i/ledger.json" "$WORK/r16i_ledger.json"
+{ printf '# edited\n'; cat "$WORK/r16i/.gitignore"; } > "$WORK/r16i_gi"; mv "$WORK/r16i_gi" "$WORK/r16i/.gitignore"
+( cd "$WORK/project" && python3 "$SCRIPTS/xval.py" result --run "$WORK/r16i" --out "$WORK/r16i/ledger.json" >/dev/null 2>&1 )
+assert_eq "same" "$(cmp -s "$WORK/r16i_ledger.json" "$WORK/r16i/ledger.json" && echo same || echo changed)" \
+  "a run whose .gitignore was edited still keeps the result file out (Q4)"
+( cd "$WORK/r16i" && python3 "$SCRIPTS/xval.py" result --run . >/dev/null 2>&1 )
+assert_no_file "$WORK/r16i/.codex-pro" "and the default location is not created in it (Q4)"
+if [ -x "$OLDPY" ] && "$OLDPY" -c 'import sys; sys.exit(0 if sys.version_info < (3, 10) else 1)' 2>/dev/null; then
+  ( cd "$WORK/project" && "$OLDPY" "$SCRIPTS/xval.py" result --run "$WORK/r16i" --out "$WORK/r16i/ledger.json" >/dev/null 2>&1 )
+  assert_eq "same" "$(cmp -s "$WORK/r16i_ledger.json" "$WORK/r16i/ledger.json" && echo same || echo changed)" \
+    "an old Python keeps it out too (Q4)"
+else
+  skip "an old Python keeps it out too" "no Python older than 3.10 at $OLDPY"
+fi
+
+# Round 16 (Q5): the Python 3.9 result file reads none of the run's records, so it shows none, the image count included.
+if [ -x "$OLDPY" ] && "$OLDPY" -c 'import sys; sys.exit(0 if sys.version_info < (3, 10) else 1)' 2>/dev/null; then
+  rm -rf "$WORK/r16n"; cp -R "$WORK/run6w" "$WORK/r16n"
+  ( cd "$WORK/project" && "$OLDPY" "$SCRIPTS/xval.py" result --run "$WORK/r16n" --out "$WORK/r16n_result.md" >/dev/null 2>&1 )
+  assert_eq "|||" "$(fm "$WORK/r16n_result.md" target)|$(fm "$WORK/r16n_result.md" n_images)|$(fm "$WORK/r16n_result.md" model)|$(fm "$WORK/r16n_result.md" first_side_model)" \
+    "an old Python's result file shows no value from the run's records (Q5)"
+  assert_eq "# Visual cross-validation" "$(grep '^# ' "$WORK/r16n_result.md")" "nor an image count in its heading (Q5)"
+else
+  skip "an old Python's result file shows no value from the run's records" "no Python older than 3.10 at $OLDPY"
+  skip "nor an image count in its heading" "no Python older than 3.10 at $OLDPY"
+fi
+
+# Round 16 (Q7): once a step stops or completes, interrupts are ignored while it records that; a step that stops before
+# codex-call starts withdraws its request; the answer says when nothing was sent.
+rm -rf "$WORK/r16o"; xval init --run "$WORK/r16o" --vocab "$WORK/vocab.json" "$WORK"/imgs/*.png
+assert_eq "answered entered" "$(printf '%s\n' "$(HOME="$WORK/home" python3 -B - "$WORK/r16o" "$SCRIPTS" <<'PY' 2>/dev/null
+import io, json, os, signal, sys
+run, scripts = sys.argv[1:3]; sys.path.insert(0, scripts)
+signal.signal(signal.SIGINT, signal.default_int_handler)
+import xval, run_files
+original = xval.dump
+def dump(path, data):   # an interrupt arrives while the stop is being recorded
+    original(path, data)
+    if path.endswith("error.json"):
+        os.kill(os.getpid(), signal.SIGINT)
+xval.dump = dump
+out = io.StringIO(); real = sys.stdout
+try:
+    xval.main(["seal", "--run", run])
+except SystemExit:
+    pass
+except KeyboardInterrupt:
+    pass
+answered = os.path.exists(f"{run}/error.json")
+print("answered" if answered else "lost", "entered" if not run_files.differences(run, ("error.json",)) else "not-entered")
+PY
+)" | tail -1)" "an interrupt while a stop is recorded does not cut the record short (Q7)"
+rm -rf "$WORK/r16p"; SEQ= new_run "$WORK/r16p"
+assert_eq "withdrawn unused" "$(printf '%s\n' "$(HOME="$WORK/home" python3 -B - "$WORK/r16p" "$SCRIPTS" "$WORK/stubbin/codex-call" <<'PY' 2>/dev/null
+import json, os, sys
+run, scripts, stub = sys.argv[1:4]; sys.path.insert(0, scripts)
+import xval
+def retire(*a, **k):   # a failure after the request is recorded and before codex-call starts
+    raise OSError(5, "Input/output error")
+xval.runtime = lambda r: stub
+xval.retire_error = retire
+try:
+    xval.main(["ask", "--run", run, "--round", "1"])
+except SystemExit:
+    pass
+requests = json.load(open(f"{run}/requests.json")) if os.path.exists(f"{run}/requests.json") else {}
+error = json.load(open(f"{run}/error.json"))
+print("withdrawn" if "1" not in requests else "kept", "used" if error.get("used_up") else "unused")
+PY
+)" | tail -1)" "a failure before codex-call starts withdraws the request, so the round is not used up (Q7)"
+rm -rf "$WORK/r16q"; SEQ= new_run "$WORK/r16q"
+RUN_OUT=$(HOME="$WORK/home" python3 -B - "$WORK/r16q" "$SCRIPTS" "$WORK/stubbin/codex-call" <<'PY' 2>/dev/null
+import os, signal, sys
+run, scripts, stub = sys.argv[1:4]; sys.path.insert(0, scripts)
+signal.signal(signal.SIGINT, signal.default_int_handler)
+import xval
+def start(*a, **k):
+    os.kill(os.getpid(), signal.SIGINT)
+    raise xval.subprocess.SubprocessError("Exception occurred in preexec_fn.")
+xval.runtime = lambda r: stub
+xval.subprocess.Popen = start
+try:
+    xval.main(["ask", "--run", run, "--round", "1"])
+except SystemExit:
+    pass
+PY
+)
+assert_contains "$RUN_OUT" "nothing was sent" "an interrupt during a failed start says nothing was sent (Q7)"
+rm -rf "$WORK/r16r"; SEQ= new_run "$WORK/r16r"
+RUN_OUT=$(HOME="$WORK/home" python3 -B - "$WORK/r16r" "$SCRIPTS" "$WORK/stubbin/codex-call" <<'PY' 2>/dev/null
+import sys
+run, scripts, stub = sys.argv[1:4]; sys.path.insert(0, scripts)
+import xval
+def start(*a, **k):
+    raise xval.subprocess.SubprocessError("Exception occurred in preexec_fn.")
+xval.runtime = lambda r: stub
+xval.subprocess.Popen = start
+try:
+    xval.main(["ask", "--run", run, "--round", "1"])
+except SystemExit:
+    pass
+PY
+)
+refute_contains "$RUN_OUT" "preexec_fn" "a start that fails in the new process is told in xval's own words (Q7)"
+assert_eq "ignored" "$(HOME="$WORK/home" python3 -B - "$WORK/r16r" "$SCRIPTS" <<'PY' 2>/dev/null | tail -1
+import signal, sys
+run, scripts = sys.argv[1:3]; sys.path.insert(0, scripts)
+signal.signal(signal.SIGINT, signal.SIG_IGN)
+import xval
+try:
+    xval.main(["compare", "--run", run])
+except SystemExit:
+    pass
+print("ignored" if signal.getsignal(signal.SIGINT) is signal.SIG_IGN else "handled")
+PY
+)" "an ignored SIGINT stays ignored (round 15, M2)"
 
 # Round 6 (Q1): the steps that write into a directory are a closed list.
 rm -rf "$WORK/typo"

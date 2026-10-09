@@ -225,7 +225,7 @@ def result(run: str, argv: list[str]) -> None:
             text, error = render(run, None)
         except Exception:
             text, error = last_resort(run)
-    emit(text, error, argv, run if is_run_dir(run) else None)
+    emit(text, error, argv, run)   # the directory --run names, whether or not it reads as a run (round 16, Q4)
 
 
 def emit(text: str, error: str | None, argv: list[str], run: str | None = None) -> None:
@@ -234,27 +234,30 @@ def emit(text: str, error: str | None, argv: list[str], run: str | None = None) 
     if default:   # the default location, decided before anything is created (round 14, L1)
         stamp = datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
         out = os.path.join(".codex-pro", f"visual-xval-{stamp}.md")
-    try:   # once, as the operating system resolves it: the check below and the write use this (round 15, M1)
-        folder, target = resolved(out)
-    except (OSError, Stop) as exc:
-        reason = exc.detail if isinstance(exc, Stop) else exc.strerror or type(exc).__name__
-        raise Stop("target_invalid", f"cannot write the result file: {reason}")
-    if run and lies_inside(folder, run):
-        # never into the run, where it would take a record's place: by the directory itself, not its spelling, and for
-        # the default location too (round 13, J1; round 14, L1, L2; round 15, M1)
-        raise Stop("target_invalid", "the result file is not written into the run directory; give --out a path "
-                   "outside it, or run the step from outside the run directory")
+    # Never into the directory --run names, where it would take a record's place: by the directory itself, not its
+    # spelling, for the default location too, and whether or not that directory reads as a run (round 13, J1; round 14,
+    # L1, L2; round 15, M1; round 16, Q4). The default location is judged by the working directory before anything is
+    # created; then the path is resolved, as the system resolves it, and the check and the write use what it gave.
+    refused = Stop("target_invalid", "the result file is not written into the directory --run names; give --out a "
+                   "path outside it, or run the step from outside that directory")
     data = text.encode("utf-8", "replace")   # encoded before the file is opened: no empty file is left (A1)
     try:
+        if default and run and lies_inside(os.getcwd(), run):
+            raise refused
         if default:   # .codex-pro is created only for the default location (round 6, Q1)
             os.makedirs(".codex-pro", exist_ok=True)
+        folder, target = resolved(out)
+        if run and lies_inside(folder, run):
+            raise refused
         # through the write entry; --out is the user's own path, so a link or a FIFO there is refused, not replaced
         # (round 11, F1; round 12, H1)
         write_bytes(target, data, refuse_links=True)
     except (OSError, Stop) as exc:   # the result step's own error, kept out of the run's (round 8, K1)
+        if exc is refused:
+            raise
         reason = exc.detail if isinstance(exc, Stop) else exc.strerror or type(exc).__name__
         raise Stop("target_invalid", f"cannot write the result file: {reason}")   # F5
-    print(json.dumps({"result": out, "error": error}))
+    print(json.dumps({"result": target, "error": error}))   # the file written, as resolved (round 16, Q3)
 
 
 def frontmatter(fm: dict) -> list[str]:

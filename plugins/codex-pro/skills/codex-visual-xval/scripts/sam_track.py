@@ -278,12 +278,19 @@ def write_track(out_path: str, data: dict) -> None:
     replaced and never written through (#23 verify round 12, H1), with the mode the user's umask allows. This runs in
     SAM's own Python, which does not load xval's modules."""
     import tempfile
-    fd, tmp = tempfile.mkstemp(dir=os.path.dirname(os.path.abspath(out_path)), prefix=".xval-", suffix=".tmp")
+    # As xval's write entry does: the run directory is not written into when it is a symbolic link, and the temporary
+    # file and the name are in the one directory the system resolves (round 16, Q3)
+    spelled = os.path.dirname(out_path if os.path.isabs(out_path) else os.path.join(os.getcwd(), out_path))
+    if os.path.islink(spelled):
+        raise OSError(0, "the run directory is a symbolic link; nothing was written into it")
+    folder = os.path.realpath(spelled)
+    target = os.path.join(folder, os.path.basename(out_path))
+    fd, tmp = tempfile.mkstemp(dir=folder, prefix=".xval-", suffix=".tmp")
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as fh:
             json.dump(data, fh, indent=1)
         os.chmod(tmp, 0o666 & ~_UMASK)
-        os.replace(tmp, out_path)
+        os.replace(tmp, target)
     except BaseException:
         if os.path.lexists(tmp):
             os.remove(tmp)

@@ -452,3 +452,18 @@
 - [x] 20.5 真實後端端到端（第十五次）。
   - 驗證：紀錄寫進 e2e-checklist §F。
   - [after: 20.4]
+
+## 21. Verify 第十六輪修正：`--run` 在進入點只定一次，紀錄的定義只有一個（#23 第十六輪 report 的 P1、Q1–Q7）
+
+- [x] 21.1 規格與 design（design「第十六輪」；`link/..` 情境照解析後的位置；`--run` 的規則；「已經做過」的三種；結果檔不寫的封閉清單；Interpreter requirement；請求在啟動前停下就撤回）。
+  - 驗證：`spectra validate` 與 `spectra analyze` 無 warning。
+- [x] 21.2 `named_run()` 在主路徑與 3.9 路徑的進入點定下 `--run`；`resolved()` 只認作業系統到得了的目錄；結果檔回報實際路徑、不寫進 `--run` 指的目錄；`write_track` 同一套寫法（P1、Q1、Q3、Q4）。
+  - [after: 21.1]
+- [x] 21.3 `done()` 與帳本同一個紀錄判斷、隱私確認改用它；3.9 結果檔不讀紀錄；停下或完成後忽略中斷；啟動前停下就撤回；啟動失敗的字句；`sam()` 的區域變數；掃描器（Q2、Q5–Q7）。
+  - [after: 21.2]
+- [x] 21.4 文件：SKILL、CHANGELOG、xval 的模組 docstring（Q6）。
+  - 驗證：`bash tests/run.sh` 只剩 #24。
+  - [after: 21.3]
+- [ ] 21.5 真實後端端到端（第十六次）。
+  - 驗證：紀錄寫進 e2e-checklist §F。
+  - [after: 21.4]

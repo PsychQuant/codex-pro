@@ -15,13 +15,16 @@ one run directory, because each Bash call in the skill starts a fresh shell.
 The runtime comes from RUN/runtime.txt and any native preflight error from
 RUN/runtime_error.txt; both are written by the skill's runtime-resolution step.
 
-Exit status 5 means the step stopped with a structured error: {"error", "detail"} on stdout,
-and a line in RUN/errors.jsonl. It becomes the run's error in RUN/error.json only when it is
-one: not when the step refused something already done or not yet possible, not when the run
-keeps an error that does not match its ledger or can never be resolved, not for the result
-step's own failure, and never under Python older than 3.10. Nothing is retried. Steps that see
-Codex's answers print only counts and identifiers, never answer values, so Claude can still
-answer the zoom round blind.
+Exit status 5 means the step stopped with a structured error: {"error", "detail"} on stdout.
+When --run names a run directory, a line also goes to RUN/errors.jsonl (skipped when that file
+is not a regular file). The stop becomes the run's error in RUN/error.json except in these
+cases, and only these: one of the four groups of refusals the spec lists (a step already done;
+a step that cannot be done yet or has nothing to do; Claude's zoom answers failing the checks;
+a command that names no step); the run already keeps an error that does not match its ledger
+or can never be resolved; the ledger cannot take the entry; the result step's own failure; and
+any step under Python older than 3.10. Nothing is retried. Steps that see Codex's answers print
+only counts and identifiers, never answer values, so Claude can still answer the zoom round
+blind.
 """
 import datetime
 import hashlib
@@ -42,7 +45,9 @@ sys.path.insert(0, HERE)
 def _older_python(argv):
     """Stop under Python < 3.10 before anything below is defined: those definitions use 3.10
     syntax and would crash at import, leaving no result file (#23 verify B10). This function
-    must itself stay 3.9-compatible."""
+    must itself stay 3.9-compatible. It keeps no copy of the run's rules: it reads none of the
+    run's records and writes neither the run's error nor its ledger; it answers, keeps a line in
+    the error history and writes a result file in fixed text (round 14, K2; round 16, Q5)."""
     found = "%d.%d.%d" % tuple(sys.version_info[:3])
     # the interpreter by its name only: its directory can be a person's (round 8, K6)
     detail = "Python 3.10 or later is required; this is Python %s (%s)" % (found, os.path.basename(sys.executable))
@@ -54,13 +59,21 @@ def _older_python(argv):
     if not run:
         print(__doc__, file=sys.stderr)
         sys.exit(64)
+    # --run as named, as on the main path (round 16, Q1): a trailing '/' or '/.' is dropped, and a name with '..'
+    # names no run this path writes into
+    while len(run) > 1 and (run.endswith(os.sep) or run.endswith(os.sep + ".")):
+        run = run[:-1] if run.endswith(os.sep) else (run[:-2] or os.sep)
+    named = ".." not in run.split(os.sep)
     def joined(path):   # made absolute by joining, never respelled; the working directory only for a relative path
         return path if os.path.isabs(path) else os.path.join(os.getcwd(), path)
-    def resolved(path):   # once, as the operating system resolves it, as on the main path (round 15, M1); 3.9-compatible
+    def resolved(path):   # as on the main path (round 15, M1; round 16, Q3); 3.9-compatible
         name = os.path.basename(path)
         if name in ("", ".", ".."):
             raise OSError(0, "the path does not name a file")
-        folder = os.path.realpath(os.path.dirname(joined(path)))
+        spelled = os.path.dirname(joined(path))
+        if not os.path.isdir(spelled):   # a missing folder, or a file, followed by '..' is no folder
+            raise OSError(0, "the folder of the path does not exist")
+        folder = os.path.realpath(spelled)
         return folder, os.path.join(folder, name)
     def put(path, data, users=False):   # a new temporary file moved over the name: no link written through (round 12, H1)
         import tempfile
@@ -81,15 +94,7 @@ def _older_python(argv):
             except OSError:
                 pass
             raise
-    def read_json(path):
-        if not os.path.isfile(path):
-            return None
-        try:
-            with open(path, encoding="utf-8") as fh:
-                return json.load(fh)
-        except (OSError, ValueError, RecursionError):
-            return None
-    def is_run(path):   # only a run directory is written into or read (round 5, V5; round 6, Q1); 3.9-compatible
+    def is_run(path):   # only a run directory gets a history line (round 5, V5; round 6, Q1); 3.9-compatible
         if not os.path.isfile(os.path.join(path, ".gitignore")):   # a FIFO would stall (round 9, B2)
             return False
         try:
@@ -97,9 +102,7 @@ def _older_python(argv):
                 return fh.readline().strip() == "# copies of the images given to /codex-pro:codex-visual-xval"
         except OSError:
             return False
-    def inside_run(folder):   # by device and inode, as on the main path (round 14, L2, L3); 3.9-compatible
-        if not is_run(run):
-            return False
+    def inside(folder):   # in the directory --run names, run or not, by device and inode (round 14, L2; round 16, Q4)
         try:
             target = os.stat(run)
         except OSError:
@@ -115,6 +118,8 @@ def _older_python(argv):
                 return False
             folder = parent
     def history(path, entry):   # appended by rewriting it whole; not a regular file: skipped (round 11, F1)
+        if not (named and is_run(path)):
+            return
         target = os.path.join(path, "errors.jsonl")
         if os.path.lexists(target) and (os.path.islink(target) or not os.path.isfile(target)):
             return
@@ -124,71 +129,27 @@ def _older_python(argv):
                 old = fh.read()
         put(target, old + (json.dumps(entry) + "\n").encode("utf-8"))
     if command != "result":
-        if is_run(run):
-            # the history only: the run's error and its ledger are the main path's alone, so this path keeps no second
-            # copy of their rules (round 14, K2)
-            entry = {"error": "runtime_unavailable", "detail": detail, "step": step, "source": "xval",
-                     "kept_run_error": True}
-            try:
-                history(run, entry)
-            except OSError:
-                pass
+        # the history only: the run's error and its ledger are the main path's alone, so this path keeps no second
+        # copy of their rules (round 14, K2)
+        entry = {"error": "runtime_unavailable", "detail": detail, "step": step, "source": "xval",
+                 "kept_run_error": True}
+        try:
+            history(run, entry)
+        except OSError:
+            pass
         print(json.dumps({"error": "runtime_unavailable", "detail": detail}))
         sys.exit(5)
-    def entered():   # the ledger, read the way run_files reads it; 3.9-compatible
-        path = os.path.join(run, "ledger.json")
-        if not os.path.isfile(path):
-            return {}
-        try:
-            with open(path, encoding="utf-8") as fh:
-                value = json.load(fh)
-        except (OSError, ValueError, RecursionError):
-            return {}
-        return value if isinstance(value, dict) else {}
-    entries = entered() if is_run(run) else {}
-    def read(name, default):   # a record of another type is read as missing (round 8, K1)
-        import hashlib
-        path = os.path.join(run, name)
-        if not is_run(run) or not os.path.isfile(path):
-            return default
-        # only what the ledger verifies, as on the main path (round 10, D9); the profile is pending before a request
-        expected = entries.get(name)
-        asked = read_json(os.path.join(run, "requests.json"))   # pending until a request is recorded (round 13, J2)
-        requested = isinstance(asked, dict) and any(isinstance(r, dict) and r.get("requested_at") for r in asked.values())
-        if expected is None and not (name == "profile.json" and not requested):
-            return default
-        if expected is not None:
-            try:
-                with open(path, "rb") as fh:
-                    if hashlib.sha256(fh.read()).hexdigest() != expected:
-                        return default
-            except OSError:
-                return default
-        try:
-            with open(path, encoding="utf-8") as fh:
-                value = json.load(fh)
-        except (OSError, ValueError, RecursionError):   # nested too deep is unreadable too (round 9, B5)
-            return default
-        return value if isinstance(value, type(default)) else default
-    profile, frames, meta = read("profile.json", {}), read("frames.json", {}), read("meta.json", {})
-    model_id = r"[A-Za-z0-9][A-Za-z0-9._:/@+-]{0,99}"
-    def form(pattern, value):   # each field in its own form, otherwise `invalid`, as in result_file.py (round 9, B5)
-        if value is None or value == "":
-            return ""
-        if isinstance(value, bool) or not isinstance(value, (str, int, float)):
-            return "invalid"
-        return str(value) if re.fullmatch(pattern, str(value)) else "invalid"
     now = datetime.datetime.now().astimezone()
-    fm = [("skill", "visual-xval"), ("target", "%d images" % len(frames)), ("model", form(model_id, profile.get("model"))),
-          ("effort", form(r"[a-z]{1,20}", profile.get("effort"))),
-          ("profile_source", form(r"default|global|project|mixed", profile.get("profile_source"))),
-          ("first_side_model", form(model_id, meta.get("first_side_model"))), ("timestamp", now.isoformat(timespec="seconds")),
-          ("n_images", len(frames)), ("n_claims", ""), ("agreement_rate", ""), ("claude_answers_sha256", ""),
-          ("sealed_at", ""), ("seal_broken", "true"), ("codex_requested_at", ""), ("codex_reply_sha256", ""),
-          ("sam_status", ""), ("error", "runtime_unavailable")]
-    # Fixed text, true of any run: this Python reads none of the steps a newer one may have run (round 15, N5)
-    lines = ["---"] + ["%s: %s" % kv for kv in fm] + ["---", "", "# Visual cross-validation — %d images" % len(frames), "",
-             "The result step stopped: `runtime_unavailable`. It cannot read the run's records under this Python, so "
+    fm = [("skill", "visual-xval"), ("target", ""), ("model", ""), ("effort", ""), ("profile_source", ""),
+          ("first_side_model", ""), ("timestamp", now.isoformat(timespec="seconds")), ("n_images", ""),
+          ("n_claims", ""), ("agreement_rate", ""), ("claude_answers_sha256", ""), ("sealed_at", ""),
+          ("seal_broken", "true"), ("codex_requested_at", ""), ("codex_reply_sha256", ""), ("sam_status", ""),
+          ("error", "runtime_unavailable")]
+    # Fixed text, true of any run: this Python reads none of the run's records, so it shows none of their values, the
+    # image count and the settings included, and a seal it did not check is not shown as intact (round 15, N5;
+    # round 16, Q5)
+    lines = ["---"] + ["%s: %s" % kv for kv in fm] + ["---", "", "# Visual cross-validation", "",
+             "The result step stopped: `runtime_unavailable`. It does not read the run's records under this Python, so "
              "nothing from them is shown; they are in the run directory. Write the result file again with Python 3.10 "
              "or later.", "", "Runtime preflight detail: " + detail, "",
              "## Agreement", "", "Not shown.", "", "## Disagreements", "", "Not shown.", "",
@@ -201,25 +162,28 @@ def _older_python(argv):
     if default:
         out = os.path.join(".codex-pro", "visual-xval-%s.md" % now.astimezone(datetime.timezone.utc).strftime("%Y%m%dT%H%M%SZ"))
     try:
-        folder, target = resolved(out)   # the check and the write use this one directory (round 15, M1)
-        if inside_run(folder):   # never into the run (round 13, J1; round 14, L1, L3)
-            raise OSError(0, "it would be written into the run directory")
-        if default:   # .codex-pro is created only for the default location (round 6, Q1), inside the try (B5)
+        # never into the directory --run names (round 13, J1; round 14, L1, L3; round 16, Q4): the default location
+        # by the working directory before anything is created (B5), then the path as the system resolves it
+        if default and inside(os.path.realpath(os.getcwd())):
+            raise OSError(0, "it would be written into the directory --run names")
+        if default:   # .codex-pro is created only for the default location (round 6, Q1)
             os.makedirs(".codex-pro", exist_ok=True)
+        folder, target = resolved(out)   # the check and the write use what it gave (round 15, M1)
+        if inside(folder):
+            raise OSError(0, "it would be written into the directory --run names")
         if os.path.lexists(target) and (os.path.islink(target) or not os.path.isfile(target)):   # the user's (round 11, F1)
             raise OSError(0, "not a regular file")
         put(target, data, users=True)
     except OSError as exc:   # a structured answer, not a traceback (round 7, Y3), kept in the history (round 9, B5)
         entry = {"error": "target_invalid", "detail": "cannot write the result file: %s" % (exc.strerror or type(exc).__name__),
                  "step": "result", "at": now.isoformat(timespec="seconds"), "source": "xval"}   # by role (round 12, H8)
-        if is_run(run):
-            try:
-                history(run, entry)
-            except OSError:
-                pass
+        try:
+            history(run, entry)
+        except OSError:
+            pass
         print(json.dumps({"error": entry["error"], "detail": entry["detail"]}))
         sys.exit(5)
-    print(json.dumps({"result": out, "error": "runtime_unavailable"}))
+    print(json.dumps({"result": target, "error": "runtime_unavailable"}))   # the file written (round 16, Q3)
     sys.exit(0)
 
 
@@ -232,7 +196,7 @@ import media  # noqa: E402
 import result_file  # noqa: E402
 from run_files import (Stop, Step, INPUTS, adopt_run_dir, append_text, checked, checked_comparison,  # noqa: E402
                        checked_inputs, discard, done, dump, failure, initialised, is_run_dir, keeps_error, ledger,
-                       ledger_usable,
+                       ledger_usable, named_run,
                        load, neutral_names, now_iso, remove, requested, run_dir, scratch, uses_up, write_bytes,
                        write_text)
 from codex_errors import classify, login_problem  # noqa: E402
@@ -357,8 +321,9 @@ def copy_frames(run: str, images: list[str]) -> dict:
 
 def confirm_privacy(run: str) -> None:
     adopt_run_dir(run)
-    if os.path.lexists(os.path.join(run, "privacy.json")) or "privacy.json" in ledger(run):
-        # given once, by record or entry: a removed confirmation stays detected (round 13, J4)
+    # given once, counted by its entry: a removed confirmation stays detected (round 13, J4); a file there without an
+    # entry is said as such, and a FIFO or a dangling link is not a confirmation (round 16, Q2)
+    if done(run, "privacy.json", then="nothing was confirmed"):
         raise Stop("target_invalid", "the privacy reminder is already confirmed for this run", record=False)
     dump(os.path.join(run, "privacy.json"), {"confirmed_at": now_iso()})
     print(json.dumps({"ok": True}))
@@ -570,20 +535,33 @@ def call_codex(run: str, prompt: str, images: list[str], tag: str, argv: list[st
     try:
         first = not requested(run)   # before this request is recorded (round 14, L5)
         record_request(run, rnd, requested_at=now_iso(), requested_epoch=datetime.datetime.now().timestamp())
-        retire_error(run, "ask --round 1" if rnd == "1" else "ask --round zoom")
-        files.expect(os.path.basename(output))   # codex-call's reply: entered only if it writes it (round 12, G3)
-        if first and "profile.json" not in ledger(run):   # pending only until a request is recorded (F6; H6; L5)
-            files.adopt("profile.json", profile_digest)
-        files.commit()   # the prompt, the request and the profile, before codex-call starts (G3; round 13, I2, J2)
+        starting = False
         try:
+            retire_error(run, "ask --round 1" if rnd == "1" else "ask --round zoom")
+            files.expect(os.path.basename(output))   # codex-call's reply: entered only if it writes it (round 12, G3)
+            if first and "profile.json" not in ledger(run):   # pending only until a request is recorded (F6; H6; L5)
+                files.adopt("profile.json", profile_digest)
+            files.commit()   # the prompt, the request and the profile, before codex-call starts (G3; round 13, I2, J2)
+            starting = True
             proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, encoding="utf-8",
                                     errors="replace",
                                     preexec_fn=lambda: signal.pthread_sigmask(signal.SIG_SETMASK, previous))
-        except (OSError, ValueError, TypeError, subprocess.SubprocessError) as exc:
-            # nothing was executed, a failure in preexec_fn included (round 15, M2): withdrawn while still held
-            withdraw_request(run, rnd)
-            files.release("profile.json")   # the profile was not used: pending again (round 12, H6; round 13, J2)
-            raise Stop("runtime_unavailable", f"cannot run codex-call: {failure(exc)}; nothing was sent")
+        except BaseException as exc:
+            # Nothing was executed, whatever stopped the step before codex-call started, a failure in the new process
+            # before it was executed included: the request is withdrawn and the profile entry taken back while the
+            # interrupts are still held (round 15, M2; round 16, Q7). If that fails too, the request stays recorded and
+            # the round counts as used up, the safe direction.
+            try:
+                withdraw_request(run, rnd)
+                files.release("profile.json")   # the profile was not used: pending again (round 12, H6; round 13, J2)
+            except (OSError, Stop):
+                pass
+            if starting and isinstance(exc, OSError):
+                raise Stop("runtime_unavailable", f"cannot run codex-call: {failure(exc)}; nothing was sent")
+            if starting and isinstance(exc, (ValueError, TypeError, subprocess.SubprocessError)):
+                raise Stop("runtime_unavailable", "cannot run codex-call: the new process could not be started; "
+                           "nothing was sent")   # in xval's own words, not the interpreter's (round 16, Q7)
+            raise
     except BaseException:
         signal.pthread_sigmask(signal.SIG_SETMASK, previous)   # an interrupt held until now arrives after the above
         raise
@@ -672,7 +650,7 @@ def before_request(run: str, rnd: str) -> None:
             raise Stop("target_invalid", "the zoom plan holds no question; nothing was sent", record=False)
     if "privacy.json" in ledger(run):   # given, then removed or changed: said as such (round 14, L6)
         checked(run, ("privacy.json",), then="nothing was sent")
-    if not load(os.path.join(run, "privacy.json")):
+    elif not done(run, "privacy.json", then="nothing was sent"):   # nothing unchecked is read (round 16, Q2)
         raise Stop("target_invalid", "the privacy reminder has not been confirmed for this run "
                    "(run `confirm-privacy` after the user agrees); nothing was sent")
     answers, seal = ("zoom_claude.json", "zoom_seal.json") if rnd == "zoom" else ("claude.json", "seal.json")
@@ -910,12 +888,12 @@ def sam(run: str, files: Step) -> None:
     dump(os.path.join(run, "sam_frames.json"), [os.path.join(run, "frames", n) for n in neutral_names(run)])
     files.expect("track.json")   # SAM's own output: entered only if SAM writes it (round 12, G3)
     env_dir = os.path.expanduser("~/.codex-pro/sam-env")
-    done = subprocess.run([os.path.join(env_dir, "bin", "python"), "-I", os.path.join(HERE, "sam_track.py"), "track",
+    tracked = subprocess.run([os.path.join(env_dir, "bin", "python"), "-I", os.path.join(HERE, "sam_track.py"), "track",
                            "--frames", os.path.join(run, "sam_frames.json"), "--anchors", os.path.join(run, "anchors.json"),
                            "--out", os.path.join(run, "track.json")], capture_output=True, encoding="utf-8", errors="replace",
                           env={**os.environ, "HF_HOME": os.path.join(env_dir, "hf")})
-    if done.returncode != 0:
-        return record("failed", (done.stdout + done.stderr).strip()[-500:], source="sam")
+    if tracked.returncode != 0:
+        return record("failed", (tracked.stdout + tracked.stderr).strip()[-500:], source="sam")
     track = load(os.path.join(run, "track.json"), {})
     record("ok", f"{len(track.get('frames', {}))} frames tracked, {len(track.get('invalid_frames', []))} collapsed")
 
@@ -982,6 +960,11 @@ def main(argv: list[str]) -> None:
     if not run:
         print(__doc__, file=sys.stderr)
         sys.exit(64)
+    try:   # once, where the step starts: every path of the run is built from it (round 16, Q1)
+        run = named_run(run)
+    except Stop as stop:   # a --run named with '..' names no step's directory: nothing is written (refusal group 4)
+        print(json.dumps({"error": stop.error, "detail": stop.detail}, ensure_ascii=False))
+        sys.exit(5)
     step = (f"ask --round {option(argv, '--round')}" if command == "ask"
             else "seal --zoom" if command == "seal" and "--zoom" in argv else command)
     files = Step(run, enters=command != "result")   # the one entry to the ledger (round 12, G3); result: none (J1)
@@ -1024,16 +1007,22 @@ def main(argv: list[str]) -> None:
         else:
             print(__doc__, file=sys.stderr)
             sys.exit(64)
+        stopping.append(0)   # done: recording it is not cut short by an interrupt (round 16, Q7)
         files.commit()   # what the step wrote, entered as it ends (round 12, G3)
     except Stop as stop:   # result's own failure goes to the history only: the run's error stays (round 7, Y3)
+        stopping.append(0)   # stopping: recording it is not cut short by an interrupt (round 16, Q7)
         commit_written(files)
         stop_run(run, stop.step or step, stop.error, stop.detail, stop.record and command != "result",
                  refused=not stop.record, records=stop.records, source=stop.source, files=files)
     except KeyboardInterrupt:   # SIGINT or SIGTERM: what it wrote is entered, and the error says so (round 12, G2)
+        stopping.append(0)
         commit_written(files)
-        stop_run(run, step, "internal_error", "interrupted: the step was stopped partway; what it wrote is entered in "
-                 "the run's ledger", command != "result", refused=False, files=files)
+        detail = "interrupted: the step was stopped partway; what it wrote is entered in the run's ledger"
+        if command == "ask" and is_run_dir(run) and not uses_up(run, step):   # no request on record (round 16, Q7)
+            detail += "; nothing was sent"
+        stop_run(run, step, "internal_error", detail, command != "result", refused=False, files=files)
     except Exception as exc:   # an unexpected failure still leaves a record and a result file
+        stopping.append(0)
         commit_written(files)
         stop_run(run, step, "internal_error", f"{type(exc).__name__}: {failure(exc)}", command != "result", refused=False,
                  source="python", files=files)

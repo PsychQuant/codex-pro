@@ -56,13 +56,30 @@ def _where(folder: str) -> str:
 
 def resolved(path: str) -> tuple[str, str]:
     """Where `path` is written: its directory as the operating system reaches it, each symbolic link followed before
-    the '..' after it, and its last name. Resolved once, from the string as given and never respelled first, so a
-    check made on the directory and the write into it are about the same directory (#23 verify round 15, M1)."""
+    the '..' after it, and its last name. Resolved from the string as given and never respelled first, so a check made
+    on the directory and the write into it are about the same directory (#23 verify round 15, M1). The folder must be
+    one the system reaches: a missing folder, or a file, followed by '..' is no folder, though a respelling would make
+    it one (round 16, Q3). Resolving the result again gives the result itself."""
     name = os.path.basename(path)
     if name in ("", ".", ".."):
         raise Stop("target_invalid", "the path does not name a file; nothing was written")
-    folder = os.path.realpath(os.path.dirname(_joined(path)))
+    spelled = os.path.dirname(_joined(path))
+    if not os.path.isdir(spelled):
+        raise Stop("target_invalid", "the folder of the path does not exist; nothing was written")
+    folder = os.path.realpath(spelled)
     return folder, os.path.join(folder, name)
+
+
+def named_run(run: str) -> str:
+    """The run directory as named on the command line, settled once where a step starts, so every path of the run is
+    built from it (#23 verify round 16, Q1). A name with '..' is refused: its spelling and the directory the system
+    reaches can differ. A trailing '/' or '/.' is dropped, so a run directory that is a symbolic link is judged by
+    its own name, however it is written."""
+    if ".." in run.split(os.sep):
+        raise Stop("target_invalid", "the --run directory is named with '..'; name it without '..'", record=False)
+    while len(run) > 1 and (run.endswith(os.sep) or run.endswith(os.sep + ".")):
+        run = run[:-1] if run.endswith(os.sep) else (run[:-2] or os.sep)
+    return run
 
 
 def _joined(path: str) -> str:
@@ -477,13 +494,14 @@ def checked(run: str, names: Any = None, then: str = "") -> None:
 
 def done(run: str, name: str, then: str = "") -> bool:
     """Whether the record that marks a step done is there. It counts by its ledger entry, so a record moved away does
-    not let the step be done again (round 10, C1), and nothing unchecked is read to decide. A regular file at the name
-    without an entry stops the step as not entered, rather than being taken for the step done; a FIFO or a link at
-    the name is not a record (round 11, F1) and does not count (#23 verify round 15, N1)."""
+    not let the step be done again (round 10, C1), and nothing unchecked is read to decide (round 15, N1). Without an
+    entry, what the ledger sees as a record (a regular file, or a link to one: the same test differences() makes)
+    stops the step as not in the ledger, and is neither taken for the step done nor replaced; anything else at the
+    name (a FIFO, a dangling link) is not a record, does not count, and is replaced when the step writes the name
+    (#23 verify round 16, Q2)."""
     if name in ledger(run):
         return True
-    path = os.path.join(run, name)
-    if os.path.isfile(path) and not os.path.islink(path):
+    if safe_digest(os.path.join(run, name)) is not None:
         checked(run, (name,), then=then)
     return False
 
