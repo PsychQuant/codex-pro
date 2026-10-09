@@ -434,6 +434,6 @@
 - [x] 19.4 文件：SKILL、CHANGELOG、design 的指向（L7）。
   - 驗證：`bash tests/run.sh` 只剩 #24。
   - [after: 19.3]
-- [ ] 19.5 真實後端端到端（第十四次）。
+- [x] 19.5 真實後端端到端（第十四次）。
   - 驗證：紀錄寫進 e2e-checklist §F。
   - [after: 19.4]

@@ -354,6 +354,13 @@ f01 是 PIL 寫出的 3000×1875 PNG，f02 是 PIL 寫出的 JPEG（品質 92）
 - 第二個 run 完整跑完：第一輪 8 秒、放大輪 7 秒，各一次請求；放大輪題目檔與 subagent 作答的那份逐字相同。這次 Codex 在放大輪把 d3 答成 false（先前幾次是 true），兩邊不一致，所以 d3 不採用：裁決為一筆 `resolved_codex`、兩筆無法裁決，是模型答案的差異，不是程式的改變。
 - 第二個 run 的帳本 29 筆，跑完後沒有任何不符、沒有 `error.json`、沒有暫存檔；複本與裁切圖 0644、不含 EXIF、XMP 或文字區塊；結果檔沒有 error、`invalid`、「not shown」「never sealed」、外來文字、資料夾名稱、撇號或 `<!--`。
 
+第十四次紀錄：2026-10-09，codex-pro `8cd6987`（第十四輪 verify 的修正：送出前的錯誤在請求記下時清除、Python 3.9 的路徑只記歷史、結果檔是否落在 run 裡以目錄本身判斷、啟動 codex-call 時擋住中斷），
+同一個 runtime 與 profile、同一組 PIL 合成圖，資料夾名稱含撇號、括號與 `<!--`。
+
+- 第一輪 9 秒、放大輪 6 秒，各一次請求；放大輪題目檔與 subagent 作答的那份逐字相同。
+- 分歧三筆全是植入的錯誤；這次 Codex 在放大輪對 d3 的回答與先前多數幾次一致，裁決為兩筆 `resolved_codex`、一筆無法裁決（「不近」不採用）。
+- 帳本 29 筆，跑完後沒有任何不符、沒有 `error.json`、沒有暫存檔；複本與裁切圖的權限依使用者的 umask（022 時為 0644），不含 EXIF、XMP 或文字區塊；結果檔沒有 error、`invalid`、「not shown」「never sealed」、外來文字、資料夾名稱、撇號或 `<!--`。
+
 ## Post-test cleanup checklist
 
 - [ ] B 段使用的 disposable account／VM 沒有污染日常 Codex home
