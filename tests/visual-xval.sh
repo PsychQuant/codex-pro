@@ -83,7 +83,7 @@ checks = {
     "later_steps_check": bool(step5) and "crops" in step5.group(1) and "adjudicate" in step5.group(1),
     # round 7 (Y5, Y7): the writers in full, the zoom round's checks, Foundation's home directory
     "six_writers": "Step 1 的 `mkdir -p`" in body and "暫存目錄" in body and "codex-call" in body.split("不是 run 的目錄就拒絕")[0][-400:],
-    "zoom_checks": "放大計畫存在" in body,
+    "zoom_checks": "沒有計畫或計畫裡沒有題目時拒絕" in body,   # the zoom plan must exist and hold a question (round 14)
     "cffixed": "CFFIXED_USER_HOME" in body,
     # round 8 (K2): uv and ~/.codex-pro are in the writers list; round 9: result's temporary directory is only
     # for a directory that is not a run, since the last resort reads no record
@@ -111,11 +111,14 @@ checks = {
     "four_refusal_groups": "只有下面四組，不得依性質相似類推" in body and "指令沒有指到一步" in body,
     "used_up_errors": "永遠解不開" in body and "從紀錄推出" in body,
     "bash_timeout_setting": "600000" in body and "SIGKILL" in body,
-    "interrupt_internal": "步驟被 SIGINT 或 SIGTERM 中斷時也是這一類" in body and "codex-call 啟動之後被中斷是 `backend_error`" in body,
+    "interrupt_internal": "步驟被 SIGINT 或 SIGTERM 中斷時也是這一類" in body and "codex-call 執行中被中斷是 `backend_error`" in body,
     # round 13 (I1, J1, J3, J4): used up when recorded; result writes nothing into the run; privacy confirmed once
     "used_up_when_recorded": "寫下錯誤的當下判定" in body and "`used_up`" in body,
     "result_outside_run": "結果檔不寫進 run 目錄" in body,
     "privacy_once": "再一次隱私確認" in body,
+    # round 14 (K1, K2): a pre-send error cleared as the request is recorded; an old Python keeps to the history
+    "presend_error_retired": "這一步先前在送出前停下的錯誤，此時清除" in body,
+    "old_python_history_only": "不改 run 的錯誤與帳本" in body,
     "track_point": "track_point: tip" in body,
     "reencoded_copies": "重新編碼" in body,
     "resend_rule": "同一個 run 可以再送" in body,
@@ -2877,7 +2880,8 @@ if [ -x "$OLDPY" ] && "$OLDPY" -c 'import sys; sys.exit(0 if sys.version_info < 
   assert_no_file "$WORK/r13c/error.json" "an init error with no init attempt does not use up the run (I1)"
   rm -rf "$WORK/r13g"; SEQ= new_run "$WORK/r13g"
   ( cd "$WORK" && HOME="$WORK/home" "$OLDPY" "$SCRIPTS/xval.py" ask --run "$WORK/r13g" --round 1 >/dev/null 2>&1 )
-  assert_eq "ask --round 1" "$(json_get "$(cat "$WORK/r13g/error.json")" 'd["step"]')" "an old Python names the step with its round (J6)"
+  assert_eq "ask --round 1" "$(tail -1 "$WORK/r13g/errors.jsonl" | python3 -c 'import json,sys; print(json.load(sys.stdin)["step"])')" \
+    "an old Python names the step with its round in the history (J6)"
 else
   skip "an init error with no init attempt does not use up the run" "no Python older than 3.10 at $OLDPY"
   skip "an old Python names the step with its round" "no Python older than 3.10 at $OLDPY"
@@ -2950,6 +2954,133 @@ xval crops --run "$WORK/r13i"; xval seal --run "$WORK/r13i" --zoom
 edit_json "$WORK/r13i/zoom_plan.json" 'd["x"] = {}'
 ask_with "$WORK/zoom_reply.md" "$WORK/r13i" zoom
 assert_contains "$RUN_OUT" "the zoom round is not used" "a dropped zoom round is refused as done first (J9)"
+
+# Round 14 (K1): an error from before a round's request is cleared once that request is recorded, so a request
+# ended by SIGKILL shows as the failed round it is.
+rm -rf "$WORK/r14a" "$WORK/r14a.pid"; SEQ= new_run "$WORK/r14a"
+RUN_OUT=$(HOME="$WORK/home" CFFIXED_USER_HOME="$WORK/nologin" MOCK_REPLY="$WORK/codex_reply.md" MOCK_LOG="$WORK/mock.log" \
+  MOCK_PROMPTS="$WORK/prompts.txt" PATH="$WORK/stubbin:$PATH" python3 "$SCRIPTS/xval.py" ask --run "$WORK/r14a" --round 1 2>&1)
+HOME="$WORK/home" MOCK_SLEEP=30 MOCK_PIDFILE="$WORK/r14a.pid" MOCK_LOG="$WORK/mock.log" MOCK_PROMPTS="$WORK/prompts.txt" \
+  PATH="$WORK/stubbin:$PATH" python3 "$SCRIPTS/xval.py" ask --run "$WORK/r14a" --round 1 >/dev/null 2>&1 &
+XP=$!
+for _ in $(seq 1 100); do [ -s "$WORK/r14a.pid" ] && break; sleep 0.1; done
+kill -9 "$XP" 2>/dev/null; wait "$XP" 2>/dev/null; kill "$(cat "$WORK/r14a.pid")" 2>/dev/null
+result9 "$WORK/r14a"
+assert_eq "backend_error" "$(fm "$WORK/r14a_result.md" error)" \
+  "a round sent after a pre-send error and ended by SIGKILL shows as used up, not as nothing sent (K1)"
+refute_contains "$(cat "$WORK/r14a_result.md")" "nothing was sent" "and the result file does not say nothing was sent"
+
+# Round 14 (K2): the Python 3.9 path answers and keeps a history line, and touches neither the run's error nor its ledger.
+if [ -x "$OLDPY" ] && "$OLDPY" -c 'import sys; sys.exit(0 if sys.version_info < (3, 10) else 1)' 2>/dev/null; then
+  rm -rf "$WORK/r14b"; SEQ= new_run "$WORK/r14b"; ask_with "$WORK/codex_reply.md" "$WORK/r14b" 1
+  cp "$WORK/r14b/ledger.json" "$WORK/r14b_ledger.json"
+  ( cd "$WORK" && HOME="$WORK/home" "$OLDPY" "$SCRIPTS/xval.py" init --run "$WORK/r14b" --vocab "$WORK/vocab.json" "$WORK"/imgs/*.png >/dev/null 2>&1 )
+  ( cd "$WORK" && HOME="$WORK/home" "$OLDPY" "$SCRIPTS/xval.py" ask --run "$WORK/r14b" --round foo >/dev/null 2>&1 )
+  assert_no_file "$WORK/r14b/error.json" "an old Python does not write the run's error (K2)"
+  assert_eq "same" "$(cmp -s "$WORK/r14b_ledger.json" "$WORK/r14b/ledger.json" && echo same || echo changed)" "nor its ledger (K2)"
+  assert_contains "$(tail -1 "$WORK/r14b/errors.jsonl")" "runtime_unavailable" "but keeps a line in the history"
+  rm -rf "$WORK/r14c_real" "$WORK/r14c_link"; mkdir -p "$WORK/r14c_real"; ln -s "$WORK/r14c_real" "$WORK/r14c_link"
+  ( cd "$WORK/project" && "$OLDPY" "$SCRIPTS/xval.py" result --run "$WORK/r14b" --out "$WORK/r14c_link/r.md" >/dev/null 2>&1 )
+  assert_file "$WORK/r14c_real/r.md" "an old Python writes the result file through a symlinked --out folder (L3)"
+  cp "$WORK/r14b/requests.json" "$WORK/r14b_requests.json"
+  ( cd "$WORK/project" && "$OLDPY" "$SCRIPTS/xval.py" result --run "$WORK/r14b" --out "$WORK/r14b/requests.json" >/dev/null 2>&1 )
+  assert_eq "same" "$(cmp -s "$WORK/r14b_requests.json" "$WORK/r14b/requests.json" && echo same || echo changed)" \
+    "an old Python does not write the result file over a record in the run (L3)"
+else
+  skip "an old Python touches neither the run's error nor its ledger" "no Python older than 3.10 at $OLDPY"
+fi
+
+# Round 14 (L1, L2): the result file never lands in the run, whatever the path looks like.
+rm -rf "$WORK/r14d"; SEQ= new_run "$WORK/r14d"
+( cd "$WORK/r14d" && HOME="$WORK/home" python3 "$SCRIPTS/xval.py" result --run . >/dev/null 2>&1 )
+assert_no_file "$WORK/r14d/.codex-pro" "without --out, the default location is not created inside the run (L1)"
+cp "$WORK/r14d/requests.json" "$WORK/r14d_requests.json" 2>/dev/null || printf '{}' > "$WORK/r14d_requests.json"
+printf '{}' > "$WORK/r14d/marker.json"; cp "$WORK/r14d/frames.json" "$WORK/r14d_frames.json"
+UPPER=$(python3 -c 'import sys; print(sys.argv[1].upper())' "$WORK/r14d")
+if [ -d "$UPPER" ]; then   # a case-insensitive volume, as macOS's is by default
+  ( cd "$WORK/project" && python3 "$SCRIPTS/xval.py" result --run "$WORK/r14d" --out "$UPPER/frames.json" >/dev/null 2>&1 )
+  assert_eq "same" "$(cmp -s "$WORK/r14d_frames.json" "$WORK/r14d/frames.json" && echo same || echo changed)" \
+    "a case variant of the run's path does not let the result file in (L2)"
+else
+  skip "a case variant of the run's path does not let the result file in" "this volume is case-sensitive"
+fi
+
+# Round 14 (L4): codex-call is started with interrupts held, so none can arrive between its start and the guard.
+rm -rf "$WORK/r14e"; SEQ= new_run "$WORK/r14e"
+assert_eq "held child-restores" "$(printf '%s\n' "$(HOME="$WORK/home" python3 -B - "$WORK/r14e" "$SCRIPTS" "$WORK/stubbin/codex-call" <<'PY' 2>/dev/null
+import signal, sys
+run, scripts, stub = sys.argv[1:4]; sys.path.insert(0, scripts)
+import xval
+seen = {}
+class Proc:
+    returncode = 0
+    def communicate(self):
+        raise KeyboardInterrupt
+    def kill(self):
+        pass
+    def wait(self):
+        pass
+def start(*a, **k):
+    seen["held"] = signal.SIGINT in signal.pthread_sigmask(signal.SIG_BLOCK, [])
+    seen["child"] = callable(k.get("preexec_fn"))
+    return Proc()
+xval.runtime = lambda r: stub
+xval.subprocess.Popen = start
+try:
+    xval.main(["ask", "--run", run, "--round", "1"])
+except SystemExit:
+    pass
+print(("held" if seen.get("held") else "open"), ("child-restores" if seen.get("child") else "child-inherits"))
+PY
+)" | tail -1)" "interrupts are held while codex-call starts, and released for it (L4)"
+
+# Round 14 (L5): after the first request, a profile without an entry stops the next request; it is not entered again.
+rm -rf "$WORK/r14f"; cp -R "$WORK/run6w" "$WORK/r14f"; xval crops --run "$WORK/r14f"
+printf '{"answers": {"z01.png": {"value": false}}}\n' > "$WORK/r14f/zoom_claude.json"; xval seal --run "$WORK/r14f" --zoom
+python3 -B - "$WORK/r14f" <<'PY'
+import json, sys
+p = f"{sys.argv[1]}/ledger.json"; d = json.load(open(p)); d.pop("profile.json", None); json.dump(d, open(p, "w"))
+PY
+rm -f "$WORK/mock.log"; ask_with "$WORK/zoom_reply.md" "$WORK/r14f" zoom
+assert_no_file "$WORK/mock.log" "a profile whose entry is gone after the first request stops the zoom round (L5)"
+assert_contains "$(ledger_changed "$WORK/r14f")" "profile.json" "and stays detected, not entered again"
+
+# Round 14 (L6): a removed privacy confirmation is reported as removed, not as never given.
+rm -rf "$WORK/r14g"; SEQ= new_run "$WORK/r14g"; rm -f "$WORK/r14g/privacy.json"
+ask_with "$WORK/codex_reply.md" "$WORK/r14g" 1
+assert_contains "$RUN_OUT" "privacy.json was removed" "a removed privacy confirmation is named as removed (L6)"
+
+# Round 14 (L8): a syntax-level scan for any write outside the two entries, over every module but run_files and SAM's.
+assert_eq "0" "$(python3 - "$SCRIPTS" <<'PY'
+import ast, os, sys
+WRITES = {("os", "replace"), ("os", "rename"), ("os", "link"), ("os", "symlink"), ("os", "truncate"), ("os", "write"),
+          ("os", "open"), ("os", "fdopen"), ("shutil", None), ("tempfile", "NamedTemporaryFile"),
+          ("tempfile", "mkstemp"), ("io", "open")}
+found = []
+for name in sorted(os.listdir(sys.argv[1])):
+    if not name.endswith(".py") or name in ("run_files.py", "sam_track.py"):
+        continue
+    tree = ast.parse(open(os.path.join(sys.argv[1], name), encoding="utf-8").read())
+    skip = set()
+    for node in ast.walk(tree):   # the Python 3.9 path is its own, 3.9-compatible copy
+        if isinstance(node, ast.FunctionDef) and node.name == "_older_python":
+            skip |= {id(n) for n in ast.walk(node)}
+    for node in ast.walk(tree):
+        if id(node) in skip or not isinstance(node, ast.Call):
+            continue
+        f = node.func
+        if isinstance(f, ast.Name) and f.id == "open":
+            mode = node.args[1] if len(node.args) > 1 else next((k.value for k in node.keywords if k.arg == "mode"), None)
+            if mode is not None and not (isinstance(mode, ast.Constant) and mode.value in ("r", "rb")):
+                found.append(f"{name}:{node.lineno}")
+        elif isinstance(f, ast.Attribute) and isinstance(f.value, ast.Name):
+            if (f.value.id, f.attr) in WRITES or (f.value.id, None) in WRITES:
+                found.append(f"{name}:{node.lineno}")
+            elif f.attr in ("write_text", "write_bytes") and f.value.id not in ("run_files",):
+                found.append(f"{name}:{node.lineno}")
+print(len(found), *found)
+PY
+)" "no module but run_files writes a file, by any call form (L8)"
 
 # Round 6 (Q1): the steps that write into a directory are a closed list.
 rm -rf "$WORK/typo"

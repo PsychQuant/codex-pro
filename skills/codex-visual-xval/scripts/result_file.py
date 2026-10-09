@@ -12,7 +12,7 @@ import tempfile
 from typing import Any
 
 import compare_claims
-from run_files import Stop, differences, explain, is_run_dir, ledger, safe_digest, write_bytes
+from run_files import Stop, differences, explain, is_run_dir, ledger, lies_inside, safe_digest, write_bytes
 
 
 def load(path: str, default: Any = None) -> Any:
@@ -229,17 +229,19 @@ def result(run: str, argv: list[str]) -> None:
 
 def emit(text: str, error: str | None, argv: list[str], run: str | None = None) -> None:
     out = option(argv, "--out")
-    if out and run:   # never written into the run, where it would take a record's place (round 13, J1)
-        here, folder = os.path.realpath(run), os.path.realpath(os.path.dirname(os.path.abspath(out)))
-        if os.path.commonpath([here, folder]) == here:
-            raise Stop("target_invalid", "the result file is not written into the run directory; give --out a path "
-                       "outside it")
+    default = not out
+    if default:   # the default location, decided before anything is created (round 14, L1)
+        stamp = datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+        out = os.path.join(".codex-pro", f"visual-xval-{stamp}.md")
+    if run and lies_inside(os.path.dirname(os.path.abspath(out)), run):
+        # never into the run, where it would take a record's place: by the directory itself, not its spelling, and for
+        # the default location too (round 13, J1; round 14, L1, L2)
+        raise Stop("target_invalid", "the result file is not written into the run directory; give --out a path "
+                   "outside it, or run the step from outside the run directory")
     data = text.encode("utf-8", "replace")   # encoded before the file is opened: no empty file is left (A1)
     try:
-        if not out:   # .codex-pro is created only for the default location (round 6, Q1)
+        if default:   # .codex-pro is created only for the default location (round 6, Q1)
             os.makedirs(".codex-pro", exist_ok=True)
-            stamp = datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-            out = os.path.join(".codex-pro", f"visual-xval-{stamp}.md")
         # through the write entry; --out is the user's own path, so a link or a FIFO there is refused, not replaced
         # (round 11, F1; round 12, H1)
         write_bytes(out, data, refuse_links=True)

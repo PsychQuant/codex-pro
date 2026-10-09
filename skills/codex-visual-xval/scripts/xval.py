@@ -50,19 +50,16 @@ def _older_python(argv):
     if not run:
         print(__doc__, file=sys.stderr)
         sys.exit(64)
-    import hashlib
-    def put(path, data):   # a new temporary file moved over the name: no link is written through (round 12, H1)
+    def put(path, data, users=False):   # a new temporary file moved over the name: no link written through (round 12, H1)
         import tempfile
         folder = os.path.dirname(os.path.abspath(path))
-        if os.path.islink(folder):
+        if not users and os.path.islink(folder):   # the run's own directory; --out's folder is the user's (round 14, L3)
             raise OSError(0, "a symbolic link")
         fd, tmp = tempfile.mkstemp(dir=folder, prefix=".xval-", suffix=".tmp")
         try:
             with os.fdopen(fd, "wb") as fh:
                 fh.write(data)
-            mask = os.umask(0)
-            os.umask(mask)
-            os.chmod(tmp, 0o666 & ~mask)   # as the main path writes them (round 13, J6)
+            os.chmod(tmp, 0o644)   # as the main path writes them (round 13, J6)
             os.replace(tmp, path)
         except BaseException:
             try:
@@ -70,14 +67,6 @@ def _older_python(argv):
             except OSError:
                 pass
             raise
-    def digest(path):
-        if not os.path.isfile(path):
-            return None
-        try:
-            with open(path, "rb") as fh:
-                return hashlib.sha256(fh.read()).hexdigest()
-        except OSError:
-            return None
     def read_json(path):
         if not os.path.isfile(path):
             return None
@@ -94,16 +83,24 @@ def _older_python(argv):
                 return fh.readline().strip() == "# copies of the images given to /codex-pro:codex-visual-xval"
         except OSError:
             return False
-    def keeps(path, ledger_value):
-        """The run's error stays when the ledger is missing or unreadable (no new one is written, round 11, F3;
-        round 12, H2), when the error does not match the ledger, or when it can never be resolved (round 12, G1)."""
-        if not isinstance(ledger_value, dict):
-            return True
-        error_path = os.path.join(path, "error.json")
-        if ledger_value.get("error.json") != digest(error_path):
-            return True
-        current = read_json(error_path)   # recorded as using up the run or its round when written (round 13, I1)
-        return isinstance(current, dict) and current.get("used_up") is True
+    def inside_run(path):   # by device and inode, as on the main path (round 14, L2, L3); 3.9-compatible
+        if not is_run(run):
+            return False
+        try:
+            target = os.stat(run)
+        except OSError:
+            return False
+        folder = os.path.realpath(os.path.dirname(os.path.abspath(path)))
+        while True:
+            try:
+                if os.path.samestat(os.stat(folder), target):
+                    return True
+            except OSError:
+                pass
+            parent = os.path.dirname(folder)
+            if parent == folder:
+                return False
+            folder = parent
     def history(path, entry):   # appended by rewriting it whole; not a regular file: skipped (round 11, F1)
         target = os.path.join(path, "errors.jsonl")
         if os.path.lexists(target) and (os.path.islink(target) or not os.path.isfile(target)):
@@ -115,15 +112,11 @@ def _older_python(argv):
         put(target, old + (json.dumps(entry) + "\n").encode("utf-8"))
     if command != "result":
         if is_run(run):
-            entry = {"error": "runtime_unavailable", "detail": detail, "step": step, "source": "xval"}
-            ledger_value = read_json(os.path.join(run, "ledger.json"))
+            # the history only: the run's error and its ledger are the main path's alone, so this path keeps no second
+            # copy of their rules (round 14, K2)
+            entry = {"error": "runtime_unavailable", "detail": detail, "step": step, "source": "xval",
+                     "kept_run_error": True}
             try:
-                if not keeps(run, ledger_value):
-                    put(os.path.join(run, "error.json"), json.dumps(entry).encode("utf-8"))
-                    ledger_value["error.json"] = digest(os.path.join(run, "error.json"))
-                    put(os.path.join(run, "ledger.json"), json.dumps(ledger_value, indent=1).encode("utf-8"))
-                else:
-                    entry["kept_run_error"] = True
                 history(run, entry)
             except OSError:
                 pass
@@ -188,13 +181,17 @@ def _older_python(argv):
              "only a human reference can."]
     out = argv[argv.index("--out") + 1] if "--out" in argv and argv.index("--out") + 1 < len(argv) else None
     data = ("\n".join(lines) + "\n").encode("utf-8", "replace")
+    default = out is None
+    if default:
+        out = os.path.join(".codex-pro", "visual-xval-%s.md" % now.astimezone(datetime.timezone.utc).strftime("%Y%m%dT%H%M%SZ"))
     try:
-        if out is None:   # .codex-pro is created only for the default location (round 6, Q1), inside the try (B5)
+        if inside_run(out):   # never into the run (round 13, J1; round 14, L1, L3)
+            raise OSError(0, "it would be written into the run directory")
+        if default:   # .codex-pro is created only for the default location (round 6, Q1), inside the try (B5)
             os.makedirs(".codex-pro", exist_ok=True)
-            out = os.path.join(".codex-pro", "visual-xval-%s.md" % now.astimezone(datetime.timezone.utc).strftime("%Y%m%dT%H%M%SZ"))
         if os.path.lexists(out) and (os.path.islink(out) or not os.path.isfile(out)):   # the user's own path (round 11, F1)
             raise OSError(0, "not a regular file")
-        put(out, data)
+        put(out, data, users=True)
     except OSError as exc:   # a structured answer, not a traceback (round 7, Y3), kept in the history (round 9, B5)
         entry = {"error": "target_invalid", "detail": "cannot write the result file: %s" % (exc.strerror or type(exc).__name__),
                  "step": "result", "at": now.isoformat(timespec="seconds"), "source": "xval"}   # by role (round 12, H8)
@@ -218,7 +215,7 @@ import media  # noqa: E402
 import result_file  # noqa: E402
 from run_files import (Stop, Step, INPUTS, adopt_run_dir, append_text, checked, checked_comparison,  # noqa: E402
                        checked_inputs, dump, failure, initialised, is_run_dir, keeps_error, ledger, ledger_usable,
-                       load, neutral_names, now_iso, remove, run_dir, scratch, uses_up, write_bytes,
+                       load, neutral_names, now_iso, remove, requested, run_dir, scratch, uses_up, write_bytes,
                        write_text)
 from codex_errors import classify, login_problem  # noqa: E402
 from zoom_round import (class_lines, crop_box, dispute_points, enlargement, position_pads, question,  # noqa: E402
@@ -512,9 +509,18 @@ def profile(run: str) -> tuple[dict, str]:
             raise Stop("target_invalid", f"profile.json has no valid {', '.join(bad)}{where}; Step 4.1 kept the value as "
                        "given and the reason in profile.json; nothing was sent")
         raise Stop("target_invalid", "no resolved profile in the run directory (Step 4.1 writes profile.json); nothing was sent")
-    if "profile.json" in ledger(run):   # the profile the first request used (round 10, C2)
+    if "profile.json" in ledger(run) or requested(run):   # a record from the first request on (round 10, C2; L5)
         checked(run, ("profile.json",), then="nothing was sent")
     return data, hashlib.sha256(raw).hexdigest()
+
+
+def retire_error(run: str, step: str) -> None:
+    """This step's own error from before its request: every check that raised it has now passed, so it is cleared as
+    the request is recorded, and a request ended later, even by SIGKILL, shows as the failed round it is (round 14, K1).
+    One that does not match the ledger, or that uses something up, stays; the history keeps the line."""
+    current = load(os.path.join(run, "error.json"))
+    if isinstance(current, dict) and current.get("step") == step and not keeps_error(run):
+        remove(os.path.join(run, "error.json"))
 
 
 def withdraw_request(run: str, rnd: str) -> None:
@@ -534,9 +540,11 @@ def call_codex(run: str, prompt: str, images: list[str], tag: str, argv: list[st
     except (OSError, Stop) as exc:
         reason = exc.detail if isinstance(exc, Stop) else failure(exc)
         raise Stop("runtime_unavailable", f"cannot write the prompt file: {reason}; nothing was sent")
+    first = not requested(run)   # before this request is recorded (round 14, L5)
     record_request(run, rnd, requested_at=now_iso(), requested_epoch=datetime.datetime.now().timestamp())
+    retire_error(run, "ask --round 1" if rnd == "1" else "ask --round zoom")
     files.expect(os.path.basename(output))   # codex-call's reply: entered only if it writes it (round 12, G3)
-    if "profile.json" not in ledger(run):   # a record from the first request on, as it was read (F6; H6)
+    if first and "profile.json" not in ledger(run):   # pending only until a request is recorded (F6; H6; L5)
         files.adopt("profile.json", profile_digest)
     files.commit()   # the prompt, the request and the profile, before codex-call starts (round 12, G3; round 13, I2, J2)
     cmd = [path, "--output", output, "--model", settings["model"],
@@ -544,9 +552,17 @@ def call_codex(run: str, prompt: str, images: list[str], tag: str, argv: list[st
            "--instructions", INSTRUCTIONS, "--prompt-file", prompt_file]
     for image in images:
         cmd += ["--image", image]
-    try:   # only starting the process can fail before anything is sent (round 7, Y6)
-        proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, encoding="utf-8", errors="replace")
-    except (OSError, ValueError, TypeError) as exc:
+    # Interrupts are held while it starts, so none can arrive between its start and the guard below; codex-call gets
+    # the mask as it was (round 14, L4). Only starting the process can fail before anything is sent (round 7, Y6).
+    held = {signal.SIGINT, signal.SIGTERM}
+    previous = signal.pthread_sigmask(signal.SIG_BLOCK, held)
+    try:
+        proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, encoding="utf-8", errors="replace",
+                                preexec_fn=lambda: signal.pthread_sigmask(signal.SIG_SETMASK, previous))
+    except BaseException as exc:
+        signal.pthread_sigmask(signal.SIG_SETMASK, previous)
+        if not isinstance(exc, (OSError, ValueError, TypeError)):
+            raise
         withdraw_request(run, rnd)
         files.release("profile.json")   # the profile was not used, so it is pending again (round 12, H6; round 13, J2)
         raise Stop("runtime_unavailable", f"cannot run codex-call: {failure(exc)}; nothing was sent")
@@ -555,13 +571,16 @@ def call_codex(run: str, prompt: str, images: list[str], tag: str, argv: list[st
     # output is read only now, and bytes that are not UTF-8 are replaced rather than raised, since a decoding error
     # here once withdrew a call that had already run (round 8, Z1). Foreground; the hard timeout is codex-call's.
     try:
+        signal.pthread_sigmask(signal.SIG_SETMASK, previous)   # one held during the start arrives here, in the guard
         _, stderr = proc.communicate()
     except KeyboardInterrupt:
+        signal.pthread_sigmask(signal.SIG_BLOCK, held)   # a second interrupt cannot cut the cleanup short (L4)
         proc.kill()
         proc.wait()   # what it wrote before it stopped is entered as the step ends (round 10, C4; round 12, G3)
         raise Stop("backend_error", "interrupted: codex-call was stopped; the request is counted as sent, so this "
                    "round is used up")
     except BaseException:
+        signal.pthread_sigmask(signal.SIG_BLOCK, held)
         proc.kill()
         proc.wait()
         raise
@@ -631,6 +650,8 @@ def before_request(run: str, rnd: str) -> None:
         checked(run, ("zoom_plan.json",), then="nothing was sent")
         if not load(os.path.join(run, "zoom_plan.json"), {}):   # nothing to ask (round 12, H4)
             raise Stop("target_invalid", "the zoom plan holds no question; nothing was sent", record=False)
+    if "privacy.json" in ledger(run):   # given, then removed or changed: said as such (round 14, L6)
+        checked(run, ("privacy.json",), then="nothing was sent")
     if not load(os.path.join(run, "privacy.json")):
         raise Stop("target_invalid", "the privacy reminder has not been confirmed for this run "
                    "(run `confirm-privacy` after the user agrees); nothing was sent")

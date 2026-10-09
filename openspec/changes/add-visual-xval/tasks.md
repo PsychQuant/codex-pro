@@ -412,7 +412,7 @@
 
 - [x] 18.1 規格與 design（design「第十三輪：『用掉了沒有』在寫下錯誤的當下判定」；Sealed Claude answers 的用掉判定、profile 隨請求登記、result 不登記、目錄規則的範圍、隱私確認一次、中斷保護）。
   - 驗證：`spectra validate` 與 `spectra analyze` 無 warning。
-- [x] 18.2 錯誤的 `used_up` 欄位（含 Python 3.9 的路徑與帶輪次的 step）、profile 隨請求登記與撤回、codex-call 啟動後只剩中斷保護（I1、I2、J2、J6）。
+- [x] 18.2 錯誤的 `used_up` 欄位（主路徑；Python 3.9 的路徑記帶輪次的 step，它的錯誤寫入在 19.2 移除）、profile 隨請求登記與撤回、codex-call 啟動後只剩中斷保護（I1、I2、J2、J6）。
   - [after: 18.1]
 - [x] 18.3 其餘：result 不登記、`--out` 不進 run 目錄、目錄規則只限 run、隱私確認一次、未核對的請求紀錄、以封存的雜湊登記答案、放大輪已不採用的拒絕在前、原始碼掃描加寬、權限（J1、J3–J7、J9）。
   - [after: 18.2]
@@ -422,3 +422,18 @@
 - [x] 18.5 真實後端端到端（第十三次）。
   - 驗證：紀錄寫進 e2e-checklist §F。
   - [after: 18.4]
+
+## 19. Verify 第十四輪修正：規則只留一份，送出前的錯誤在請求記下時解開（#23 第十四輪 report 的 K1、K2、L1–L8）
+
+- [x] 19.1 規格與 design（design「第十四輪」；Interpreter requirement 只記歷史；Codex 呼叫的中斷措辭；送出前錯誤的清除；profile 在請求之後的核對；結果檔以目錄本身判斷）。
+  - 驗證：`spectra validate` 與 `spectra analyze` 無 warning。
+- [x] 19.2 送出前的錯誤在請求記下時清除；Python 3.9 的路徑只記歷史，結果檔套用不進 run 與使用者的上層（K1、K2、L3）。
+  - [after: 19.1]
+- [x] 19.3 結果檔以 inode 判斷是否在 run 裡（含預設位置）、啟動 codex-call 時擋中斷、profile 只在 pending 時登記、隱私確認先對帳本、語法樹掃描（L1、L2、L4–L6、L8）。
+  - [after: 19.2]
+- [x] 19.4 文件：SKILL、CHANGELOG、design 的指向（L7）。
+  - 驗證：`bash tests/run.sh` 只剩 #24。
+  - [after: 19.3]
+- [ ] 19.5 真實後端端到端（第十四次）。
+  - 驗證：紀錄寫進 e2e-checklist §F。
+  - [after: 19.4]

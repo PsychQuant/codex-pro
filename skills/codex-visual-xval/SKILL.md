@@ -48,9 +48,9 @@ allowed-tools:
 4. `parse_failed`：Codex 的回覆不是符合 schema 的 JSON
 5. `runtime_unavailable`：找不到 `codex-call`、`python3` 比 3.10 舊、`codex-call` 根本沒能啟動，或寫不進 prompt 檔
 6. `internal_error`：腳本內部的意外例外。照樣寫結果檔；例外的文字只留在 run 目錄的 `error.json`，結果檔只說它在那裡。
-   步驟被 SIGINT 或 SIGTERM 中斷時也是這一類（它已寫出的檔照樣登記），只有 `ask` 在 codex-call 啟動之後被中斷是 `backend_error`
+   步驟被 SIGINT 或 SIGTERM 中斷時也是這一類（它已寫出的檔照樣登記），只有 `ask` 在 codex-call 執行中被中斷是 `backend_error`
 7. `backend_error`：`codex-call` 啟動之後失敗、沒有更具體的類別：後端回錯誤（例如 HTTP 500）、連線中斷、
-   沒說明原因（`HTTP 0`），或它自己的本機問題（讀不到 prompt、鎖檔權限）；`ask` 在 codex-call 啟動之後被 SIGINT 或 SIGTERM 中斷時也是這一類
+   沒說明原因（`HTTP 0`），或它自己的本機問題（讀不到 prompt、鎖檔權限）；`ask` 在 codex-call 執行中被 SIGINT 或 SIGTERM 中斷時也是這一類
    （codex-call 跟著終止，它已寫出的回覆照樣登記）。
    **`codex-call` 只要失敗，一律當成已送出**：錯誤訊息的字樣證明不了什麼都沒送出（後端的錯誤事件原文照印，
    收到回應之前的失敗都只印 `HTTP 0`），所以這一輪已經用掉，不重送。常見的送出前狀況改由 `xval.py` 在呼叫之前
@@ -73,7 +73,7 @@ $codex-visual-xval <image>... --vocab <vocab.json> [--claude-answers <claims.jso
 - `--sequence`：圖片是**同一支影片依時間排序的影格**。只有這時才跑 SAM 追蹤。
 
 腳本需要 **Python 3.10 以上**的 `python3`。macOS 內建的 `/usr/bin/python3` 是 3.9；用它執行時，`xval.py`
-會在載入其他模組之前停下，記為 `runtime_unavailable`，`result` 照樣寫出結果檔。
+會在載入其他模組之前停下，回答 `runtime_unavailable` 並記進錯誤歷史（不改 run 的錯誤與帳本），`result` 照樣寫出結果檔。
 
 以本 skill 的目錄設定 `SKILL_DIR`（Claude Code 會在載入時顯示 base directory；不得從目前工作目錄猜），
 並建立 run 目錄：
@@ -138,7 +138,7 @@ python3 "$SKILL_DIR/scripts/xval.py" seal --run "$RUN"
 `error.json`；帳本不見或讀不到時，不會寫一份新的蓋過去。xval 寫任何檔都先寫到同一目錄下的暫存檔再換上：名字上的
 symlink、硬連結或 FIFO 會被換掉，不會被寫穿到 run 外；run 目錄與它的 `frames/`、`hires/`、`crops/` 本身是 symlink 時
 不寫進去（`--out` 是使用者自己的路徑：那裡是 symlink 或 FIFO 時改為拒絕，它的上層目錄由使用者決定；結果檔不寫進 run 目錄，
-`result` 也不登記任何東西）。例外只有兩種：尚未封存的那一輪 Claude 答案，以及第一次請求之前的
+`result` 也不登記任何東西，結果檔是否落在 run 裡以目錄本身判斷，預設位置也一樣）。例外只有兩種：尚未封存的那一輪 Claude 答案，以及請求記下之前的
 `profile.json`。不是紀錄的檔只有這些：`ledger.json` 本身、`.gitignore`、`errors.jsonl`、
 `claude_source.json`、`runtime.txt`、`runtime_error.txt`，以及 `frames/`、`hires/`、`crops/` 與 run 目錄裡以點開頭的檔案
 （Finder 的 `.DS_Store`、xval 自己的暫存檔）。「已經做過」（隱私確認過、封存過、這一輪送過、放大輪答案被拒過、init 嘗試過）以檔案或它在帳本上
@@ -259,12 +259,13 @@ python3 "$SKILL_DIR/scripts/xval.py" ask --run "$RUN" --round 1
 
 `xval.py ask` 依序：這一輪已經送過就拒絕、放大輪已不採用就拒絕（兩者只記在 `errors.jsonl`，不取代 run 的錯誤）；
 init 還沒嘗試就拒絕，沒完成就停在 init 的錯誤；放大輪另外在沒有比對結果、沒有計畫或計畫裡沒有題目時拒絕；
-確認隱私確認已記錄、Claude 的答案已封存且未被改動、這一輪的回覆檔不在那裡（不是 codex-call 寫的回覆會擋下請求）；`runtime_error.txt` 記有錯誤就以那個錯誤停下（在登入檢查之前，
-原生 bundle 的 preflight 失敗時不讀 OAuth）；確認 Codex 已登入（`oauth_invalid`）；第一輪另外確認詞彙表、
-影格與 run 的設定都和封存時相同，影格都在 run 的 frames 目錄內；放大輪另外確認放大計畫存在、裁切圖都在 run 的
-crops 目錄內，計畫、題目檔、裁切圖與比對結果都和 `crops` 寫下時相同；`$RUN/profile.json` 有效。任一不符就停下，
-**不送任何請求**，訊息寫 nothing was sent。接著讀 `runtime_error.txt`（有錯就停）、確認 runtime 存在、確認
-`codex-call --help` 列出 `--image`（沒有就 `runtime_unsupported`）；寫好 prompt 檔，記下請求時間後送出、
+確認隱私確認已記錄（記錄過卻不見時照實說不見）、Claude 的答案已封存；接著以帳本核對答案、封存、隱私確認與請求紀錄，
+第一輪另外核對詞彙表、影格與 run 的設定，放大輪另外核對計畫、題目檔、裁切圖與比對結果，兩輪都核對回覆檔不在那裡
+（不是 codex-call 寫的回覆會擋下請求）；`runtime_error.txt` 記有錯誤就以那個錯誤停下（在登入檢查之前，原生 bundle
+的 preflight 失敗時不讀 OAuth）；確認 Codex 已登入（`oauth_invalid`）；第一輪確認影格都在 run 的 frames 目錄內，
+放大輪確認裁切圖都在 run 的 crops 目錄內；`$RUN/profile.json` 有效（第一次請求之後還要與帳本相符）。任一不符就停下，
+**不送任何請求**，訊息寫 nothing was sent。接著確認 runtime 存在、確認 `codex-call --help` 列出 `--image`（沒有就
+`runtime_unsupported`）；寫好 prompt 檔，記下請求時間（這一步先前在送出前停下的錯誤，此時清除）後送出、
 驗證回覆、記下回覆的 SHA-256。它只印出狀態，Codex 的答案寫在 `$RUN/codex.json`。
 
 **每一輪只送一次**：同一輪再跑一次 `ask` 會被拒絕，已記錄的答案不會被取代。這是「不 retry」與
@@ -296,7 +297,7 @@ crops 目錄內，計畫、題目檔、裁切圖與比對結果都和 `crops` �
 「同一個 run 可以再送」只在 `xval.py` 自己在呼叫 `codex-call` 之前就停下時成立：訊息寫 nothing was sent
 （沒登入的 `oauth_invalid`、封存或隱私確認不齊、輸入被改過的 `target_invalid`、寫不進 prompt 檔），或 `runtime_unsupported`、
 `runtime_unavailable`，修好之後在同一個 run 重跑同一步即可。**init 失敗會用掉這個 run**：另開一個 run 目錄，
-重做 Step 2 的隱私確認；init 沒完成時，之後的步驟都停在 init 的錯誤。`codex-call` 本身的任何失敗都當成已送出，這一輪已經用掉，要重來就另開一個 run
+重做 Step 2 的隱私確認；init 沒完成時，之後需要 init 的步驟都停在 init 的錯誤。`codex-call` 本身的任何失敗都當成已送出，這一輪已經用掉，要重來就另開一個 run
 （新的 run 不再是盲答，結果檔的 Limitations 會寫明）：
 
 | 來源 | `error` 值 | 回報訊息 |

@@ -272,9 +272,7 @@ def track(frames_path: str, anchors_path: str, out_path: str) -> None:
             json.dump({"sam_status": "ok", "model": MODEL_ID, "revision": MODEL_REVISION, "class": plan["class"],
                        "device": device, "frames": results,
                        "invalid_frames": sorted(f for f, r in results.items() if r["invalid"])}, fh, indent=1)
-        mask = os.umask(0)
-        os.umask(mask)
-        os.chmod(tmp, 0o666 & ~mask)   # as xval writes its records (round 13, J6)
+        os.chmod(tmp, 0o644)   # as xval writes its records; the umask is not touched in a threaded process (round 14)
         os.replace(tmp, out_path)
     except BaseException:
         if os.path.lexists(tmp):

@@ -217,9 +217,30 @@ TRACKED_DIRS = ("frames/", "hires/", "crops/")
 # The only records that may exist without an entry, each until the record named beside it exists: Claude's
 # answers of a round not yet sealed, and the profile Step 4.1 wrote, which becomes a record when the first request
 # is recorded (#23 verify round 10, C2; round 11, F6). The files that are not records are listed in the spec.
-PENDING = {"claude.json": "seal.json", "zoom_claude.json": "zoom_seal.json", "profile.json": "requests.json"}
+PENDING = {"claude.json": "seal.json", "zoom_claude.json": "zoom_seal.json",
+           "profile.json": "requests.json"}   # the profile: pending until a request is recorded in it (see pending())
 INPUTS = ("vocab.json", "frames.json", "meta.json", "frames/", "hires/")
 ANSWERS = ("claude.json", "seal.json", "codex.json")
+
+
+def lies_inside(folder: str, run: str) -> bool:
+    """Whether `folder` is the run directory or lies below it, judged by device and inode rather than by spelling,
+    so a case variant, a firmlink or a symbolic link followed by '..' is still the same directory (round 14, L2)."""
+    try:
+        target = os.stat(run)
+    except OSError:
+        return False
+    path = os.path.realpath(folder)
+    while True:
+        try:
+            if os.path.samestat(os.stat(path), target):
+                return True
+        except OSError:
+            pass
+        parent = os.path.dirname(path)
+        if parent == path:
+            return False
+        path = parent
 
 
 def requested(run: str) -> bool:
@@ -312,8 +333,8 @@ class Step:
         self.outputs[name] = safe_digest(os.path.join(self.run, name))
 
     def adopt(self, name: str, digest: str | None = None) -> None:
-        """A record the step did not write but makes a record now: Claude's answers when sealed, the profile when
-        the first request is recorded, with the digest of the bytes the step read (round 12, H6)."""
+        """A record the step did not write but makes a record now: Claude's answers when sealed, the profile when a
+        request is first recorded, with the digest of the bytes the step read (round 12, H6; round 14, L5)."""
         if name not in PENDING:
             raise ValueError(f"{name} is not one of the records that may exist without an entry")
         self.pending[name] = digest
