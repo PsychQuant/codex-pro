@@ -279,7 +279,13 @@ def last_resort(run: str) -> tuple[str, str]:
         "## Agreement", "", "Not shown.", "", "## Disagreements", "", "Not shown.", "",
         "## SAM evidence", "", "Not shown.", "", "## Seal", "", "Not checked.", "",
         "## Limitations", "",
-        "- Agreement between the two models does not establish that either is correct; only a human reference can."]
+        "- Agreement between the two models does not establish that either is correct; only a human reference can.",
+        "- Zoom-round answers on Claude's side come from a subagent; whether it was started fresh, and whether "
+        "its answers were sealed before they were read, depend on the skill being followed.",   # true of any run: no record read (round 18 audit)
+        "- Classes without a key point, if the vocabulary has any, are compared by count only, so count "
+        "disagreements on them cannot be settled.",
+        "- The model that gave the first side's answers is not shown here; if it was not a Claude model, both "
+        "sides may come from one model family, whose errors are not independent."]
     return "\n".join(lines) + "\n", error
 
 

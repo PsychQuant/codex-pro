@@ -95,7 +95,7 @@ checks = {
     "no_outside_text": "不帶 xval 以外的文字" in body and "否則寫 `invalid`" in body,
     "profile_field_only": "不帶原值" in body,
     # round 10 (C1, C2, C3, C5, D3, D9): the ledger's reach, the fifth source, derived records, the runtime class
-    "already_done_by_ledger": "移開再放回不會讓一步重來" in body and "`hires/`" in body.split("不是紀錄的檔只有這些")[1][:300],
+    "already_done_by_ledger": "移開再放回不會讓一步重來" in body and "`hires/`" in body.split("紀錄是 xval 各步驟以固定名字寫下的檔")[1][:300],
     "fifth_source": "外來文字只有這六種" in body and "Claude 答案裡的文字" in body and "Codex 的回覆" in body,   # round 11
     "derived_records": "推導出來的紀錄要連來源一起核對過才呈現" in body,
     "runtime_before_login": bool(re.search(r"`runtime_error.txt` 記有錯誤就以那個錯誤停下（在登入檢查之前", body)),
@@ -123,7 +123,7 @@ checks = {
     "reencoded_copies": "重新編碼" in body,
     "resend_rule": "同一個 run 可以再送" in body,
     "refusal_exit": "已經做過" in body,
-    "all_failures_anchor": "\n\n**所有 failure 仍寫 result file**" in body,
+    "all_failures_anchor": "\n\n**所有 failure 都不 retry**" in body,   # the generator's anchor (round 18)
     "no_retry": "所有 failure 都不 retry" in body,
     "one_error_enum": len(re.findall(r"error: <[^>\n]+>", body)) == 1,
     "result_path": ".codex-pro/visual-xval-" in body,
@@ -2310,10 +2310,12 @@ b3=$(HOME="$WORK/home" MOCK_SLEEP=60 MOCK_PIDFILE="$WORK/run9t.pid" MOCK_LOG="$W
 import os, signal, subprocess, sys, time
 proc = subprocess.Popen([sys.executable, f"{sys.argv[1]}/xval.py", "ask", "--run", sys.argv[2], "--round", "1"],
                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-for _ in range(100):
+for _ in range(600):   # up to 60 s: a loaded machine can take more than 10 s to start codex-call
     if os.path.exists(sys.argv[3]) and open(sys.argv[3]).read().strip():
         break
     time.sleep(0.1)
+else:
+    print("codex-call never started"); proc.kill(); sys.exit(0)
 child = int(open(sys.argv[3]).read())
 proc.send_signal(signal.SIGINT)
 proc.wait(timeout=20)
@@ -2506,10 +2508,12 @@ for sig in INT TERM; do
 import os, signal, subprocess, sys, time
 proc = subprocess.Popen([sys.executable, f"{sys.argv[1]}/xval.py", "ask", "--run", sys.argv[2], "--round", "1"],
                         stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
-for _ in range(100):
+for _ in range(600):   # up to 60 s: a loaded machine can take more than 10 s to start codex-call
     if os.path.exists(sys.argv[3]) and open(sys.argv[3]).read().strip():
         break
     time.sleep(0.1)
+else:
+    print("codex-call never started"); proc.kill(); sys.exit(0)
 child = int(open(sys.argv[3]).read())
 proc.send_signal(getattr(signal, "SIG" + sys.argv[4]))
 out, _ = proc.communicate(timeout=20)
@@ -3683,6 +3687,133 @@ except OSError:
     print("refused")
 PY
 )" "SAM's track refuses a folder the system does not reach (R6)"
+
+# Round 18 (T2): the answer follows the request: withdrawn means "nothing was sent", even when only the profile entry could
+# not be taken back; a request still on record means the round is used up, and the answer says so on every path.
+rm -rf "$WORK/r18a"; SEQ= new_run "$WORK/r18a"
+assert_eq "withdrawn nothing-sent" "$(printf '%s\n' "$(HOME="$WORK/home" python3 -B - "$WORK/r18a" "$SCRIPTS" "$WORK/stubbin/codex-call" <<'PY' 2>/dev/null
+import json, os, sys
+run, scripts, stub = sys.argv[1:4]; sys.path.insert(0, scripts)
+import xval, run_files
+def start(*a, **k):
+    raise OSError(8, "Exec format error")
+def release(self, name):   # the request is withdrawn, but taking the profile entry back fails
+    raise OSError(28, "No space left on device")
+xval.runtime = lambda r: stub
+xval.subprocess.Popen = start
+run_files.Step.release = release
+try:
+    xval.main(["ask", "--run", run, "--round", "1"])
+except SystemExit:
+    pass
+requests = json.load(open(f"{run}/requests.json")) if os.path.exists(f"{run}/requests.json") else {}
+detail = json.load(open(f"{run}/error.json")).get("detail", "")
+print("withdrawn" if "1" not in requests else "kept", "nothing-sent" if "nothing was sent" in detail else "used-up")
+PY
+)" | tail -1)" "a withdrawn request is said to have sent nothing, even when its profile entry could not be taken back (T2)"
+rm -rf "$WORK/r18b"; SEQ= new_run "$WORK/r18b"
+assert_eq "kept used-up" "$(printf '%s\n' "$(HOME="$WORK/home" python3 -B - "$WORK/r18b" "$SCRIPTS" "$WORK/stubbin/codex-call" <<'PY' 2>/dev/null
+import json, os, sys
+run, scripts, stub = sys.argv[1:4]; sys.path.insert(0, scripts)
+import xval
+def retire(*a, **k):   # an unexpected failure before codex-call starts
+    raise OSError(5, "Input/output error")
+def withdraw(*a, **k):   # and the withdrawal fails too
+    raise OSError(28, "No space left on device")
+xval.runtime = lambda r: stub
+xval.retire_error = retire
+xval.withdraw_request = withdraw
+try:
+    xval.main(["ask", "--run", run, "--round", "1"])
+except SystemExit:
+    pass
+requests = json.load(open(f"{run}/requests.json"))
+detail = json.load(open(f"{run}/error.json")).get("detail", "")
+print("kept" if "1" in requests else "withdrawn", "used-up" if "used up" in detail else "silent")
+PY
+)" | tail -1)" "an unexpected failure whose withdrawal fails says the round is used up (T2)"
+
+# Round 18 (T4): under Python 3.9, an interrupted result step still answers in structure and keeps its own error in the
+# history, as the result file's list (5) says for both interpreters.
+if [ -x "$OLDPY" ] && "$OLDPY" -c 'import sys; sys.exit(0 if sys.version_info < (3, 10) else 1)' 2>/dev/null; then
+  rm -rf "$WORK/r18c"; SEQ= new_run "$WORK/r18c"; mkdir -p "$WORK/r18c_out"
+  RUN_OUT=$(cd "$WORK/project" && "$OLDPY" - "$SCRIPTS/xval.py" "$WORK/r18c" "$WORK/r18c_out/r.md" <<'PY' 2>&1
+import os, runpy, sys
+script, run, out = sys.argv[1:4]
+original, calls = os.replace, []
+def interrupted(*a, **k):   # an interrupt as the result file is moved into place; the history line after it is written
+    calls.append(1)
+    if len(calls) == 1:
+        raise KeyboardInterrupt
+    return original(*a, **k)
+os.replace = interrupted
+sys.argv = [script, "result", "--run", run, "--out", out]
+runpy.run_path(script, run_name="__main__")
+PY
+)
+  assert_contains "$RUN_OUT" '"error": "internal_error"' "an old Python's interrupted result step still answers in structure (T4)"
+  assert_contains "$(tail -1 "$WORK/r18c/errors.jsonl" 2>/dev/null)" "internal_error" "and keeps its own error in the history (T4)"
+else
+  skip "an old Python's interrupted result step still answers in structure" "no Python older than 3.10 at $OLDPY"
+  skip "and keeps its own error in the history" "no Python older than 3.10 at $OLDPY"
+fi
+
+# Round 18 (T3, T6): a profile entered and then removed is said as removed; a FIFO at runtime.txt is no runtime, not a stall.
+rm -rf "$WORK/r18d"; cp -R "$WORK/run6w" "$WORK/r18d"; xval crops --run "$WORK/r18d"
+printf '{"answers": {"z01.png": {"value": false}}}\n' > "$WORK/r18d/zoom_claude.json"; xval seal --run "$WORK/r18d" --zoom
+rm -f "$WORK/r18d/profile.json"; rm -f "$WORK/mock.log"; ask_with "$WORK/zoom_reply.md" "$WORK/r18d" zoom
+assert_contains "$RUN_OUT" "profile.json was removed" "a profile entered and then removed is named as removed (T3)"
+assert_no_file "$WORK/mock.log" "and nothing is sent (T3)"
+rm -rf "$WORK/r18e"; SEQ= new_run "$WORK/r18e"; rm -f "$WORK/r18e/runtime.txt"; mkfifo "$WORK/r18e/runtime.txt"
+xval_t python3 ask --run "$WORK/r18e" --round 1
+assert_contains "$RUN_OUT" '"error": "runtime_unavailable"' "a FIFO at runtime.txt is no runtime: ask answers instead of waiting on it (T6)"
+
+# Round 18 audit (T4): under Python 3.9 a SIGTERM to the result step is answered as a SIGINT is, kept in the history,
+# and leaves no temporary file behind; "interrupted" in the spec means either signal.
+if [ -x "$OLDPY" ] && "$OLDPY" -c 'import sys; sys.exit(0 if sys.version_info < (3, 10) else 1)' 2>/dev/null; then
+  rm -rf "$WORK/r18f" "$WORK/r18f_out"; SEQ= new_run "$WORK/r18f"; mkdir -p "$WORK/r18f_out"
+  RUN_OUT=$(cd "$WORK/project" && "$OLDPY" - "$SCRIPTS/xval.py" "$WORK/r18f" "$WORK/r18f_out/r.md" <<'PY' 2>&1
+import os, runpy, signal, sys
+script, run, out = sys.argv[1:4]
+real = os.replace
+def terminated(*a, **k):   # a SIGTERM as the result file is moved into place
+    os.replace = real
+    os.kill(os.getpid(), signal.SIGTERM)
+    return real(*a, **k)
+os.replace = terminated
+sys.argv = [script, "result", "--run", run, "--out", out]
+runpy.run_path(script, run_name="__main__")
+PY
+)
+  assert_contains "$RUN_OUT" '"error": "internal_error"' "an old Python's result step stopped by SIGTERM answers in structure too (T4)"
+  assert_contains "$(tail -1 "$WORK/r18f/errors.jsonl" 2>/dev/null)" "internal_error" "and keeps that error in the history (T4)"
+  assert_eq "" "$(ls -A "$WORK/r18f_out")" "and leaves no temporary file next to the result file's name (T4)"
+  rm -rf "$WORK/r18g"; SEQ= new_run "$WORK/r18g"
+  before=$(cat "$WORK/r18g/errors.jsonl" 2>/dev/null)
+  RUN_OUT=$(cd "$WORK/project" && "$OLDPY" "$SCRIPTS/xval.py" result --run "$WORK/r18g" --out "$WORK/r18g_result.md" 2>&1)
+  assert_contains "$RUN_OUT" '"error": "runtime_unavailable"' "an old Python's result step answers with the path it wrote and runtime_unavailable"
+  assert_eq "$before" "$(cat "$WORK/r18g/errors.jsonl" 2>/dev/null)" "and adds nothing to the error history when it writes the file"
+  assert_contains "$(cat "$WORK/r18g_result.md")" "whether it was started fresh" \
+    "an old Python's fixed-text result file names the zoom subagent's limitation"
+  assert_contains "$(cat "$WORK/r18g_result.md")" "compared by count only" \
+    "and the count-only limitation, which is true of any run"
+  assert_contains "$(cat "$WORK/r18g_result.md")" "if it was not a Claude model" \
+    "and the first-side limitation, said as a condition: this path does not read who the first side was"
+else
+  skip "an old Python's result step stopped by SIGTERM answers in structure too" "no Python older than 3.10 at $OLDPY"
+  skip "and keeps that error in the history" "no Python older than 3.10 at $OLDPY"
+  skip "and leaves no temporary file next to the result file's name" "no Python older than 3.10 at $OLDPY"
+  skip "an old Python's result step answers with the path it wrote and runtime_unavailable" "no Python older than 3.10 at $OLDPY"
+  skip "and adds nothing to the error history when it writes the file" "no Python older than 3.10 at $OLDPY"
+  skip "an old Python's fixed-text result file names the zoom subagent's limitation" "no Python older than 3.10 at $OLDPY"
+  skip "and the count-only limitation, which is true of any run" "no Python older than 3.10 at $OLDPY"
+  skip "and the first-side limitation, said as a condition: this path does not read who the first side was" "no Python older than 3.10 at $OLDPY"
+fi
+# The last resort carries the same two limitations: both read no record.
+assert_contains "$(cat "$WORK/run9x_result.md")" "whether it was started fresh" \
+  "the last-resort result file names the zoom subagent's limitation"
+assert_contains "$(cat "$WORK/run9x_result.md")" "compared by count only" "and the count-only limitation"
+assert_contains "$(cat "$WORK/run9x_result.md")" "if it was not a Claude model" "and the first-side limitation, said as a condition"
 
 # Round 6 (Q1): the steps that write into a directory are a closed list.
 rm -rf "$WORK/typo"

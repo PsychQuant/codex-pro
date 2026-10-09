@@ -9,7 +9,7 @@ Issue: [#23](https://github.com/PsychQuant/codex-pro/issues/23)
   `codex-call --image` 盲答，請求只含圖片（中性檔名）、詞彙表與 schema。分歧分數量、位置、關係三類，
   只由放大輪、SAM 2.1 量測或物理約束裁決，不用多數決；結果寫入 `.codex-pro/visual-xval-<ts>.md`。
 - 內建 SAM 2.1 追蹤：`sam_env.sh` 在使用者同意後安裝到 `~/.codex-pro/sam-env/`（約 1 GB，版本鎖定），
-  每段一致影格各自錨定，兩物件遮罩 IoU > 0.5 的格不當證據，量測值離門檻不到 1% 不算證據。
+  每段一致影格各自錨定，兩物件遮罩 IoU > 0.5 的格不當證據，量測值離門檻在 SAM margin 以內（含剛好等於；預設 1%，詞彙表的 `sam_margin_pct` 可改）不算證據。
 - 重新 vendor `codex-call`（parallel-ai-agents `19564c1`，PR #88）：支援 `--image`，並拒絕不認得的旗標。
   provenance 改以 `references/codex-call-provenance.json` 為唯一來源，測試從它讀取，不再寫死指紋。
 - `/codex-pro:codex-status` 的 `--skill` 與 `/codex-pro:codex-result` 的 `--latest` 接受 `visual-xval`；
@@ -23,7 +23,8 @@ Issue: [#23](https://github.com/PsychQuant/codex-pro/issues/23)
   程式無法檢查。Codex 的放大輪請求不帶任何一方的答案。
 - 只比數量的類別（詞彙表沒有給關鍵點）沒有放大題、SAM 也不追蹤，它們的數量分歧無法裁決。
 - 放大輪的關係題只用來證明「距離小於門檻」；SAM 的位置與關係證據要詞彙表宣告 `track_point: tip` 才採用。
-- 影格複本由 sips 重新編碼（sRGB、長邊 ≤ 2048、JPEG 品質 95）後才清除 metadata，與原圖相比有一次有損壓縮。
+- 第一輪的影格複本由 sips 重新編碼（sRGB、長邊 ≤ 2048；放大輪用的原解析度複本不縮）後才清除 metadata；JPEG 原圖以品質 95
+  重新壓縮一次（有損），PNG、WebP、GIF 寫成 PNG（壓縮無損，但色彩轉換與縮圖會改動像素）。
 - `codex-call` 的任何失敗都當成已送出（錯誤字樣證明不了什麼都沒送出）；是否登入改在呼叫前自己檢查，看的是
   `codex-call` 讀的那一份 token 檔（帳號家目錄，或 `CFFIXED_USER_HOME`）。離線、refresh token 已失效，或 `codex-call` 自己的送出前檢查失敗時，
   這一輪也會用掉，要另開一個 run。上游改進：PsychQuant/parallel-ai-agents#89 要求「主請求的 body（圖片）一個位元組都沒送出」時
@@ -52,27 +53,29 @@ Issue: [#23](https://github.com/PsychQuant/codex-pro/issues/23)
   呈現時，結果檔只寫固定內容與 run 自己的錯誤類別；result 自己失敗不取代 run 原本的錯誤。
 - 只有 codex-call 根本沒能啟動時才撤回這一輪的紀錄（連同為它登記的 profile）；啟動之後的任何事（含輸出無法解碼）都不
   撤回。`ask` 在 codex-call 執行中被 SIGINT 或 SIGTERM 中斷時，codex-call 跟著終止，記為 `backend_error`（算作已送出）；
-  從記下請求到 codex-call 啟動之間中斷會先被擋住，這段期間不論因為什麼停下（含啟動失敗）都在擋住的狀態下撤回，訊息寫
-  nothing was sent；撤回本身失敗時改說這一輪已用掉。一步停下或完成之後，記錄期間的中斷一律忽略，剛進入處理時收到的中斷
+  從記下請求到 codex-call 啟動之間的中斷先被擋住，等啟動之後才處理（啟動成功就算已送出，記為 `backend_error`）；
+  這段期間因其他原因停下（含啟動失敗）時，在擋住的狀態下撤回，訊息寫 nothing was sent；撤回本身失敗時改說這一輪已用掉；`ask` 的 `internal_error` 一律附上請求的狀態。一步停下或完成之後，記錄期間的中斷一律忽略，剛進入處理時收到的中斷
   也會被回答並記下。其他時候被中斷記為 `internal_error`，已寫出的檔照樣登記。回覆不是 UTF-8 時為 `parse_failed`。工具的輸出一律以 UTF-8 解碼，Big5、Shift-JIS 的 locale 下
   檔名含中日文的圖也量得到尺寸。
 - `--vocab` 可以是管線或程序替換（`--vocab <(...)`）；run 的紀錄仍只讀一般檔案。
 - 「已經做過」以帳本為準，不讀沒核對過的內容：封存、被拒的放大輪答案與隱私確認看帳本條目（有紀錄沒條目時停下，說它不在
-  帳本上，也不換掉；FIFO、dangling symlink 不是紀錄），這一輪的請求看核對過的請求紀錄，init 的嘗試看那些名字上有沒有東西或
-  條目；移開再放回不會讓一步重來。「還不能做」的判斷也用同一個紀錄判斷。除了 `init`、`confirm-privacy`、`adjudicate` 與 `result`，每一步都要求 init 完成。
+  帳本上，也不換掉；FIFO、dangling symlink、目錄都不是紀錄；要寫這個名字的步驟換掉前兩者、遇到目錄停下），這一輪的請求看核對過的請求紀錄，init 的嘗試看那些名字上有沒有東西或
+  條目；移開再放回不會讓一步重來。「還不能做」的判斷（init 是否嘗試過除外，那看名字上有沒有任何東西）、封存與比對結果在不在，也用同一個紀錄判斷。除了 `init`、`confirm-privacy`、`adjudicate` 與 `result`，每一步都要求 init 完成。
 - 被拒絕而不取代 run 錯誤的指令列成四組的封閉清單：已經做過、還不能做或沒有事可做、Claude 的放大輪答案沒通過檢查、
   指令沒有指到一步。
 - run 的錯誤若與帳本不符，或永遠解不開（init 嘗試記下之後的 init 錯誤、請求記下之後那一輪的錯誤），不會被其他步驟取代或
   清除；用掉與否在寫下錯誤的當下判定、記在錯誤裡。`ask` 送出前停下的錯誤，在重跑時請求一記下就清除，所以這一輪之後
   即使被 SIGKILL，結果檔也照紀錄推出這個失敗。
-- Python 3.9 等舊版只回答 `runtime_unavailable`、記進錯誤歷史並寫自己的結果檔（固定內容，不讀 run 的任何紀錄，設定與張數
-  都留空），不改 run 的
-  錯誤與帳本；run 照原樣，改用 3.10 以上重跑那一步即可，之後寫的結果檔照紀錄呈現 run，舊版的停下只留在歷史。
+- Python 3.9 等舊版先套用同一條 `--run` 進入點規則（含 `..` 或是 symlink 時回答 `target_invalid`、什麼都不寫），其餘步驟只回答
+  `runtime_unavailable` 並記進錯誤歷史；`result` 寫自己的結果檔（固定內容，不讀 run 的任何紀錄，設定與張數
+  都留空），不記歷史，被 SIGINT 或 SIGTERM 中斷或意外失敗時回答 `internal_error` 並記進歷史、不留暫存檔；兩者都不改 run 的
+  錯誤與帳本；run 照原樣，改用 3.10 以上重跑那一步即可，之後寫的結果檔照紀錄呈現 run，`result` 以外的舊版停下只留在歷史。
 - 外來文字的封閉清單是六種（含 Claude 答案裡的文字與 Codex 的回覆），不進結果檔；推導出來的紀錄（比對結果、裁決）要連
   來源一起核對過才呈現；訊息以位置稱呼使用者給的圖，`--run`、`--vocab`、`--out` 以角色稱呼。
 - 原生 bundle 的 preflight 失敗在登入檢查之前回報；沒有送過請求時，結果檔從 `runtime_error.txt` 取錯誤類別。
 - 結果檔的路徑過濾只是後備，它在反引號、全形標點等邊界上的殘留是接受的風險。
-- 在 Claude Code 裡呼叫 `ask` 時 Bash 工具的 timeout 要設成 600000；它的上限等於預設的 `max_time`，`timeout` 類別出不來。
+- 在 Claude Code 裡呼叫 `ask` 時 Bash 工具的 timeout 要設成 600000；它的上限等於預設的 `max_time`，所以 `max_time` 用預設值或更大時 harness 先到期、`timeout` 類別出不來；
+  profile 的 `max_time` 小於 600 時 codex-call 先逾時，照常是 `timeout`。
   harness 以 SIGKILL 結束時結果檔仍顯示這一輪失敗：沒有其他紀錄不符時從請求紀錄推出 `backend_error`，否則是
   `target_invalid`（#26 追蹤）。
 - 結果檔的路徑過濾只保留 http、https 網址；`file://`、`smb://` 等其他網址與本機路徑一樣縮成最後一段。

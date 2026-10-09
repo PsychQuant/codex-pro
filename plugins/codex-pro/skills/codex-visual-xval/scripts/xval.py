@@ -47,9 +47,12 @@ sys.path.insert(0, HERE)
 def _older_python(argv):
     """Stop under Python < 3.10 before anything below is defined: those definitions use 3.10
     syntax and would crash at import, leaving no result file (#23 verify B10). This function
-    must itself stay 3.9-compatible. It keeps no copy of the run's rules: it reads none of the
-    run's records and writes neither the run's error nor its ledger; it answers, keeps a line in
-    the error history and writes a result file in fixed text (round 14, K2; round 16, Q5)."""
+    must itself stay 3.9-compatible. It keeps no copy of the rules for the run's error and ledger:
+    it reads none of the run's records and writes neither the run's error nor its ledger; it
+    answers, keeps a line in the error history and writes a result file in fixed text (round 14,
+    K2; round 16, Q5). The entry rule for --run, the run-directory test and the not-into---run
+    check are the main path's, restated here in 3.9 syntax so both interpreters apply them alike
+    (round 17, R1)."""
     found = "%d.%d.%d" % tuple(sys.version_info[:3])
     # the interpreter by its name only: its directory can be a person's (round 8, K6)
     detail = "Python 3.10 or later is required; this is Python %s (%s)" % (found, os.path.basename(sys.executable))
@@ -147,51 +150,79 @@ def _older_python(argv):
         print(json.dumps({"error": "runtime_unavailable", "detail": detail}))
         sys.exit(5)
     now = datetime.datetime.now().astimezone()
-    fm = [("skill", "visual-xval"), ("target", ""), ("model", ""), ("effort", ""), ("profile_source", ""),
-          ("first_side_model", ""), ("timestamp", now.isoformat(timespec="seconds")), ("n_images", ""),
-          ("n_claims", ""), ("agreement_rate", ""), ("claude_answers_sha256", ""), ("sealed_at", ""),
-          ("seal_broken", "true"), ("codex_requested_at", ""), ("codex_reply_sha256", ""), ("sam_status", ""),
-          ("error", "runtime_unavailable")]
-    # Fixed text, true of any run: this Python reads none of the run's records, so it shows none of their values, the
-    # image count and the settings included, and a seal it did not check is not shown as intact (round 15, N5;
-    # round 16, Q5)
-    lines = ["---"] + ["%s: %s" % kv for kv in fm] + ["---", "", "# Visual cross-validation", "",
-             "The result step stopped: `runtime_unavailable`. It does not read the run's records under this Python, so "
-             "nothing from them is shown; they are in the run directory. Write the result file again with Python 3.10 "
-             "or later.", "", "Runtime preflight detail: " + detail, "",
-             "## Agreement", "", "Not shown.", "", "## Disagreements", "", "Not shown.", "",
-             "## SAM evidence", "", "Not shown.", "", "## Seal", "", "Not checked.", "",
-             "## Limitations", "", "- Agreement between the two models does not establish that either is correct; "
-             "only a human reference can."]
-    out = argv[argv.index("--out") + 1] if "--out" in argv and argv.index("--out") + 1 < len(argv) else None
-    data = ("\n".join(lines) + "\n").encode("utf-8", "replace")
-    default = out is None
-    if default:
-        out = os.path.join(".codex-pro", "visual-xval-%s.md" % now.astimezone(datetime.timezone.utc).strftime("%Y%m%dT%H%M%SZ"))
+    def write_result():   # its own failures answer in structure below; SystemExit passes through
+        fm = [("skill", "visual-xval"), ("target", ""), ("model", ""), ("effort", ""), ("profile_source", ""),
+              ("first_side_model", ""), ("timestamp", now.isoformat(timespec="seconds")), ("n_images", ""),
+              ("n_claims", ""), ("agreement_rate", ""), ("claude_answers_sha256", ""), ("sealed_at", ""),
+              ("seal_broken", "true"), ("codex_requested_at", ""), ("codex_reply_sha256", ""), ("sam_status", ""),
+              ("error", "runtime_unavailable")]
+        # Fixed text, true of any run: this Python reads none of the run's records, so it shows none of their values, the
+        # image count and the settings included, and a seal it did not check is not shown as intact (round 15, N5;
+        # round 16, Q5)
+        lines = ["---"] + ["%s: %s" % kv for kv in fm] + ["---", "", "# Visual cross-validation", "",
+                 "The result step stopped: `runtime_unavailable`. It does not read the run's records under this Python, so "
+                 "nothing from them is shown; they are in the run directory. Write the result file again with Python 3.10 "
+                 "or later.", "", "Runtime preflight detail: " + detail, "",
+                 "## Agreement", "", "Not shown.", "", "## Disagreements", "", "Not shown.", "",
+                 "## SAM evidence", "", "Not shown.", "", "## Seal", "", "Not checked.", "",
+                 "## Limitations", "", "- Agreement between the two models does not establish that either is correct; "
+                 "only a human reference can.",
+                 "- Zoom-round answers on Claude's side come from a subagent; whether it was started fresh, and whether "
+                 "its answers were sealed before they were read, depend on the skill being followed.",
+                 "- Classes without a key point, if the vocabulary has any, are compared by count only, so count "
+                 "disagreements on them cannot be settled.",
+                 "- The model that gave the first side's answers is not shown here; if it was not a Claude model, "
+                 "both sides may come from one model family, whose errors are not independent."]
+        out = argv[argv.index("--out") + 1] if "--out" in argv and argv.index("--out") + 1 < len(argv) else None
+        data = ("\n".join(lines) + "\n").encode("utf-8", "replace")
+        default = out is None
+        if default:
+            out = os.path.join(".codex-pro", "visual-xval-%s.md" % now.astimezone(datetime.timezone.utc).strftime("%Y%m%dT%H%M%SZ"))
+        try:
+            # never into the directory --run names (round 13, J1; round 14, L1, L3; round 16, Q4): the default location
+            # by the working directory before anything is created (B5), then the path as the system resolves it
+            if default and inside(os.path.realpath(os.getcwd())):
+                raise OSError(0, "it would be written into the directory --run names")
+            if default:   # .codex-pro is created only for the default location (round 6, Q1)
+                os.makedirs(".codex-pro", exist_ok=True)
+            folder, target = resolved(out)   # the check and the write use what it gave (round 15, M1)
+            if inside(folder):
+                raise OSError(0, "it would be written into the directory --run names")
+            if os.path.lexists(target) and (os.path.islink(target) or not os.path.isfile(target)):   # the user's (round 11, F1)
+                raise OSError(0, "not a regular file")
+            put(target, data, users=True)
+        except OSError as exc:   # a structured answer, not a traceback (round 7, Y3), kept in the history (round 9, B5)
+            entry = {"error": "target_invalid", "detail": "cannot write the result file: %s" % (exc.strerror or type(exc).__name__),
+                     "step": "result", "at": now.isoformat(timespec="seconds"), "source": "xval"}   # by role (round 12, H8)
+            try:
+                history(run, entry)
+            except OSError:
+                pass
+            print(json.dumps({"error": entry["error"], "detail": entry["detail"]}))
+            sys.exit(5)
+        print(json.dumps({"result": target, "error": "runtime_unavailable"}))   # the file written (round 16, Q3)
+        sys.exit(0)
+    def stopped(signum, frame):   # SIGTERM answered as SIGINT is, as on the main path (round 18 audit)
+        raise KeyboardInterrupt
+    signal.signal(signal.SIGTERM, stopped)
+    if signal.getsignal(signal.SIGINT) is signal.default_int_handler:   # an ignored SIGINT stays ignored
+        signal.signal(signal.SIGINT, stopped)
     try:
-        # never into the directory --run names (round 13, J1; round 14, L1, L3; round 16, Q4): the default location
-        # by the working directory before anything is created (B5), then the path as the system resolves it
-        if default and inside(os.path.realpath(os.getcwd())):
-            raise OSError(0, "it would be written into the directory --run names")
-        if default:   # .codex-pro is created only for the default location (round 6, Q1)
-            os.makedirs(".codex-pro", exist_ok=True)
-        folder, target = resolved(out)   # the check and the write use what it gave (round 15, M1)
-        if inside(folder):
-            raise OSError(0, "it would be written into the directory --run names")
-        if os.path.lexists(target) and (os.path.islink(target) or not os.path.isfile(target)):   # the user's (round 11, F1)
-            raise OSError(0, "not a regular file")
-        put(target, data, users=True)
-    except OSError as exc:   # a structured answer, not a traceback (round 7, Y3), kept in the history (round 9, B5)
-        entry = {"error": "target_invalid", "detail": "cannot write the result file: %s" % (exc.strerror or type(exc).__name__),
-                 "step": "result", "at": now.isoformat(timespec="seconds"), "source": "xval"}   # by role (round 12, H8)
+        write_result()
+    except (KeyboardInterrupt, Exception) as exc:
+        # interrupted, or an unexpected failure: answered in structure and kept in the history, as the result file's
+        # list (5) says for both interpreters (round 18, T4); put() has already taken its temporary file away, and a
+        # second interrupt is ignored from here so it cannot cut the history line short (round 18 audit)
+        signal.signal(signal.SIGTERM, signal.SIG_IGN)
+        signal.signal(signal.SIGINT, signal.SIG_IGN)
+        entry = {"error": "internal_error", "detail": "the result step stopped partway (%s)" % type(exc).__name__,
+                 "step": "result", "at": now.isoformat(timespec="seconds"), "source": "xval"}
         try:
             history(run, entry)
-        except OSError:
+        except (OSError, KeyboardInterrupt):
             pass
         print(json.dumps({"error": entry["error"], "detail": entry["detail"]}))
         sys.exit(5)
-    print(json.dumps({"result": target, "error": "runtime_unavailable"}))   # the file written (round 16, Q3)
-    sys.exit(0)
 
 
 if sys.version_info < (3, 10):
@@ -409,7 +440,7 @@ def preflight_error(run: str) -> None:
 def runtime(run: str) -> str:
     preflight_error(run)
     path = open(os.path.join(run, "runtime.txt"), encoding="utf-8").read().strip() \
-        if os.path.exists(os.path.join(run, "runtime.txt")) else ""
+        if os.path.isfile(os.path.join(run, "runtime.txt")) else ""   # a FIFO there would stall (round 18, T6)
     if not path or not os.access(path, os.X_OK):
         raise Stop("runtime_unavailable", "codex-call not found or not executable"
                    + (f" ({os.path.basename(path)})" if path else "") + " remediation=install parallel-ai-agents or run codex-setup")
@@ -475,6 +506,8 @@ def profile(run: str) -> tuple[dict, str]:
     that digest, so a change after it was read shows (#23 verify round 12, H6). Shell variables do not survive
     between the skill's Bash calls, and a missing value used to fall back to a default in silence (B11)."""
     path, raw = os.path.join(run, "profile.json"), None
+    if "profile.json" in ledger(run):   # entered: removed or changed is said as such, by the ledger (round 18, T3)
+        checked(run, ("profile.json",), then="nothing was sent")
     if os.path.isfile(path):   # only a regular file is read (round 8, K1)
         try:
             with open(path, "rb") as fh:
@@ -561,8 +594,8 @@ def call_codex(run: str, prompt: str, images: list[str], tag: str, argv: list[st
             withdrawn = False
             try:
                 withdraw_request(run, rnd)
+                withdrawn = True   # the request's state alone decides what the answer says (round 18, T2)
                 files.release("profile.json")   # the profile was not used: pending again (round 12, H6; round 13, J2)
-                withdrawn = True
             except (OSError, Stop):
                 pass
             # what the answer says follows what happened to the request (round 17, R2)
@@ -989,16 +1022,23 @@ def main(argv: list[str]) -> None:
             return
         stopping.append(signum)
         raise KeyboardInterrupt
-    signal.signal(signal.SIGTERM, interrupted)
-    if signal.getsignal(signal.SIGINT) is signal.default_int_handler:   # an ignored SIGINT stays ignored
-        signal.signal(signal.SIGINT, interrupted)
-    def unsent() -> str:   # an ask that stopped with no request on record sent nothing (round 16, Q7; round 17, R2)
-        return "; nothing was sent" if command == "ask" and is_run_dir(run) and not uses_up(run, step) else ""
+    def request_note() -> str:
+        """What happened to an ask's request, for an internal_error: none on record means nothing was sent; one still
+        on record (a withdrawal that failed, or a call that ran) means the round counts as used up (round 16, Q7;
+        round 17, R2; round 18, T2)."""
+        if command != "ask" or not is_run_dir(run):
+            return ""
+        if uses_up(run, step):
+            return "; the request is on record, so this round counts as used up"
+        return "; nothing was sent"
     def stopped_by_interrupt() -> None:
         stopping.append(0)
         commit_written(files)
         stop_run(run, step, "internal_error", "interrupted: the step was stopped partway; what it wrote is entered in "
-                 "the run's ledger" + unsent(), command != "result", refused=False, files=files)
+                 "the run's ledger" + request_note(), command != "result", refused=False, files=files)
+    signal.signal(signal.SIGTERM, interrupted)   # installed last, right before the outer net (round 18, T6)
+    if signal.getsignal(signal.SIGINT) is signal.default_int_handler:   # an ignored SIGINT stays ignored
+        signal.signal(signal.SIGINT, interrupted)
     try:
         try:
             if command not in ("init", "confirm-privacy", "result") and not is_run_dir(run):
@@ -1040,7 +1080,7 @@ def main(argv: list[str]) -> None:
         except Exception as exc:   # an unexpected failure still leaves a record and a result file
             stopping.append(0)
             commit_written(files)
-            stop_run(run, step, "internal_error", f"{type(exc).__name__}: {failure(exc)}" + unsent(), command != "result",
+            stop_run(run, step, "internal_error", f"{type(exc).__name__}: {failure(exc)}" + request_note(), command != "result",
                      refused=False, source="python", files=files)
         clear_error(run, step, files)
     except KeyboardInterrupt:

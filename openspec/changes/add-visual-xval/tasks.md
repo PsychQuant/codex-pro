@@ -482,3 +482,16 @@
 - [x] 22.5 真實後端端到端（第十七次）。
   - 驗證：紀錄寫進 e2e-checklist §F。
   - [after: 22.4]
+
+## 23. Verify 第十八輪修正：字面要成立，訊息跟著請求走（#23 第十八輪 report 的 S1、S2、T1–T6）
+
+- [x] 23.1 規格與 design（design「第十八輪」；Interpreter requirement 與 scenario 的進入點例外；目錄不是紀錄；「一個判斷」的封閉清單；3.9 的第 (5) 類）。
+  - 驗證：`spectra validate` 與 `spectra analyze` 無 warning。
+- [x] 23.2 `withdrawn` 只看請求、`internal_error` 一律附上請求的狀態（T2）；`profile()` 先看帳本條目（T3）；3.9 `result` 的中斷與意外失敗（T4）；處理函式先於訊號處理、`runtime()` 只讀一般檔（T6）。
+  - [after: 23.1]
+- [x] 23.3 文件：SKILL Step 1、3、4.2、5，CHANGELOG（S1、T1、T2、T5）；送 verify 前由一組 agent 逐句對照程式找反例，照它確認的 20 項改（3.9 `result` 的 SIGTERM、固定內容結果檔的 Limitations 改程式；其餘改文字）；B3、C4 的等待放寬到 60 秒。
+  - 驗證：`bash tests/run.sh` 只剩 #24。
+  - [after: 23.2]
+- [ ] 23.4 真實後端端到端（第十八次）。
+  - 驗證：紀錄寫進 e2e-checklist §F。
+  - [after: 23.3]

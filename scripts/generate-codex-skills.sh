@@ -707,7 +707,9 @@ native preflight failure 的 result body 另寫一行 `Runtime preflight detail:
 `error.json`），這一行只說它保存在哪裡；它也不得放進 YAML frontmatter。跳過 `ask` 時，`result` 從
 `runtime_error.txt` 的第一行取錯誤類別寫進 frontmatter（只取類別）。
 """
-    sub_exact(r"(?=\n\n\*\*所有 failure 仍寫 result file\*\*)",
+    # visual-xval says the result step's own failures are not followed by a file (#23 round 18), so its
+    # sentence opens with the retry half; the anchor takes either opening
+    sub_exact(r"(?=\n\n\*\*所有 failure (?:仍寫 result file|都不 retry)\*\*)",
               "\n" + runtime_failure_rows + runtime_failure_contract, 1,
               "producer native preflight failure rows")
     text, error_enum_count = re.subn(
