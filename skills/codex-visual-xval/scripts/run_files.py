@@ -54,26 +54,45 @@ def _where(folder: str) -> str:
     return f"{name}/" if name in ("frames", "hires", "crops") else "the directory"
 
 
+def resolved(path: str) -> tuple[str, str]:
+    """Where `path` is written: its directory as the operating system reaches it, each symbolic link followed before
+    the '..' after it, and its last name. Resolved once, from the string as given and never respelled first, so a
+    check made on the directory and the write into it are about the same directory (#23 verify round 15, M1)."""
+    name = os.path.basename(path)
+    if name in ("", ".", ".."):
+        raise Stop("target_invalid", "the path does not name a file; nothing was written")
+    folder = os.path.realpath(os.path.dirname(_joined(path)))
+    return folder, os.path.join(folder, name)
+
+
+def _joined(path: str) -> str:
+    """`path` made absolute by joining, never by respelling; the working directory is asked only for a relative path,
+    so a run given by its absolute path works from a working directory that no longer exists."""
+    return path if os.path.isabs(path) else os.path.join(os.getcwd(), path)
+
+
 def write_bytes(path: str, data: bytes, refuse_links: bool = False) -> None:
     """The one way xval writes a file: to a new temporary file in the same directory, then moved over the name.
     A symbolic link, a hard link or a FIFO at the name is replaced and never written through, and no check is made
     before an open that could change in between. A directory that is itself a symbolic link is not written into
     (#23 verify round 12, H1). `refuse_links` is for the result file at --out, the user's own path: a link or
-    anything but a regular file there is refused rather than replaced."""
-    folder = os.path.dirname(os.path.abspath(path))
+    anything but a regular file there is refused rather than replaced. The temporary file and the name are both in
+    the directory `resolved` gives, so it is the one written into (round 15, M1)."""
     # the run's own directories only: --out's folder is the user's, reached as the user chose (round 13, J3)
-    if not refuse_links and os.path.islink(folder):
-        raise Stop("target_invalid", f"{_where(folder)} is a symbolic link; nothing was written into it")
-    if refuse_links and os.path.lexists(path) and (os.path.islink(path) or not os.path.isfile(path)):
+    spelled = os.path.dirname(_joined(path))
+    if not refuse_links and os.path.islink(spelled):
+        raise Stop("target_invalid", f"{_where(spelled)} is a symbolic link; nothing was written into it")
+    folder, target = resolved(path)
+    if refuse_links and os.path.lexists(target) and (os.path.islink(target) or not os.path.isfile(target)):
         raise OSError(0, "not a regular file")
-    if os.path.isdir(path) and not os.path.islink(path):
-        raise Stop("target_invalid", f"{os.path.basename(path)} is a directory; nothing was written to it")
+    if os.path.isdir(target) and not os.path.islink(target):
+        raise Stop("target_invalid", f"{os.path.basename(target)} is a directory; nothing was written to it")
     fd, tmp = tempfile.mkstemp(dir=folder, prefix=".xval-", suffix=".tmp")
     try:
         with os.fdopen(fd, "wb") as fh:
             fh.write(data)
         os.chmod(tmp, 0o666 & ~_UMASK)
-        os.replace(tmp, path)
+        os.replace(tmp, target)
     except BaseException:
         try:
             os.unlink(tmp)
@@ -92,6 +111,13 @@ def scratch(folder: str, suffix: str) -> str:
     fd, tmp = tempfile.mkstemp(dir=folder, prefix=".xval-", suffix=suffix)
     os.close(fd)
     return tmp
+
+
+def discard(path: str) -> None:
+    """Remove a temporary file of xval's own, made by `scratch`. It is never a record, so nothing is noted; any other
+    name is left alone (#23 verify round 15, N6)."""
+    if os.path.basename(path).startswith(".xval-") and os.path.lexists(path):
+        os.remove(path)
 
 
 def write_text(path: str, text: str) -> None:
@@ -214,9 +240,9 @@ TRACKED = ("vocab.json", "frames.json", "meta.json", "init_attempt.json", "priva
            "zoom_skipped.json", "zoom_rejected.json", "anchors.json", "sam_frames.json", "track.json", "sam.json",
            "adjudication.json")
 TRACKED_DIRS = ("frames/", "hires/", "crops/")
-# The only records that may exist without an entry, each until the record named beside it exists: Claude's
-# answers of a round not yet sealed, and the profile Step 4.1 wrote, which becomes a record when the first request
-# is recorded (#23 verify round 10, C2; round 11, F6). The files that are not records are listed in the spec.
+# The only records that may exist without an entry: Claude's answers of a round until its seal exists, and the
+# profile Step 4.1 wrote until a request is recorded, which a withdrawn request is not (see pending(); #23 verify
+# round 10, C2; round 11, F6; round 15). The files that are not records are listed in the spec.
 PENDING = {"claude.json": "seal.json", "zoom_claude.json": "zoom_seal.json",
            "profile.json": "requests.json"}   # the profile: pending until a request is recorded in it (see pending())
 INPUTS = ("vocab.json", "frames.json", "meta.json", "frames/", "hires/")
@@ -449,8 +475,22 @@ def checked(run: str, names: Any = None, then: str = "") -> None:
                    records=[name for name, _ in found])
 
 
+def done(run: str, name: str, then: str = "") -> bool:
+    """Whether the record that marks a step done is there. It counts by its ledger entry, so a record moved away does
+    not let the step be done again (round 10, C1), and nothing unchecked is read to decide. A regular file at the name
+    without an entry stops the step as not entered, rather than being taken for the step done; a FIFO or a link at
+    the name is not a record (round 11, F1) and does not count (#23 verify round 15, N1)."""
+    if name in ledger(run):
+        return True
+    path = os.path.join(run, name)
+    if os.path.isfile(path) and not os.path.islink(path):
+        checked(run, (name,), then=then)
+    return False
+
+
 def initialised(run: str) -> None:
-    """Every step but init, confirm-privacy and result needs init to have completed (#23 verify round 12, G2).
+    """Every step but init, confirm-privacy, adjudicate and result needs init to have completed (#23 verify round 12,
+    G2). adjudicate runs after any stop, a failed init included, to record that there is no comparison (round 15, N8).
     Before any attempt it cannot be done yet, which keeps the run's own error; after an attempt that did not
     complete the run is used up, and that is init's error."""
     if not isinstance(load(os.path.join(run, LEDGER)), dict):

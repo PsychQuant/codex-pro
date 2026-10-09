@@ -12,7 +12,8 @@ import tempfile
 from typing import Any
 
 import compare_claims
-from run_files import Stop, differences, explain, is_run_dir, ledger, lies_inside, safe_digest, write_bytes
+from run_files import (Stop, differences, explain, is_run_dir, ledger, lies_inside, resolved, safe_digest,
+                       write_bytes)
 
 
 def load(path: str, default: Any = None) -> Any:
@@ -233,9 +234,14 @@ def emit(text: str, error: str | None, argv: list[str], run: str | None = None) 
     if default:   # the default location, decided before anything is created (round 14, L1)
         stamp = datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
         out = os.path.join(".codex-pro", f"visual-xval-{stamp}.md")
-    if run and lies_inside(os.path.dirname(os.path.abspath(out)), run):
+    try:   # once, as the operating system resolves it: the check below and the write use this (round 15, M1)
+        folder, target = resolved(out)
+    except (OSError, Stop) as exc:
+        reason = exc.detail if isinstance(exc, Stop) else exc.strerror or type(exc).__name__
+        raise Stop("target_invalid", f"cannot write the result file: {reason}")
+    if run and lies_inside(folder, run):
         # never into the run, where it would take a record's place: by the directory itself, not its spelling, and for
-        # the default location too (round 13, J1; round 14, L1, L2)
+        # the default location too (round 13, J1; round 14, L1, L2; round 15, M1)
         raise Stop("target_invalid", "the result file is not written into the run directory; give --out a path "
                    "outside it, or run the step from outside the run directory")
     data = text.encode("utf-8", "replace")   # encoded before the file is opened: no empty file is left (A1)
@@ -244,7 +250,7 @@ def emit(text: str, error: str | None, argv: list[str], run: str | None = None) 
             os.makedirs(".codex-pro", exist_ok=True)
         # through the write entry; --out is the user's own path, so a link or a FIFO there is refused, not replaced
         # (round 11, F1; round 12, H1)
-        write_bytes(out, data, refuse_links=True)
+        write_bytes(target, data, refuse_links=True)
     except (OSError, Stop) as exc:   # the result step's own error, kept out of the run's (round 8, K1)
         reason = exc.detail if isinstance(exc, Stop) else exc.strerror or type(exc).__name__
         raise Stop("target_invalid", f"cannot write the result file: {reason}")   # F5

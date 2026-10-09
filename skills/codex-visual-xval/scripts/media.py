@@ -33,7 +33,7 @@ import struct
 import zlib
 import subprocess
 
-from run_files import scratch, write_bytes
+from run_files import discard, scratch, write_bytes
 
 PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
 PNG_KEEP = {b"IHDR", b"PLTE", b"IDAT", b"IEND", b"tRNS", b"cHRM", b"gAMA", b"iCCP", b"sBIT", b"sRGB",
@@ -383,6 +383,6 @@ def prepare_copy(src: str, frames_dir: str, stem: str, max_edge: int | None = MA
         write_bytes(target, stripped(encoded or staged, out))
     finally:
         for work in (staged, encoded):
-            if work and os.path.lexists(work):
-                os.remove(work)
+            if work:
+                discard(work)
     return os.path.basename(target)

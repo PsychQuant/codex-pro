@@ -437,3 +437,18 @@
 - [x] 19.5 真實後端端到端（第十四次）。
   - 驗證：紀錄寫進 e2e-checklist §F。
   - [after: 19.4]
+
+## 20. Verify 第十五輪修正：路徑只解析一次，撤回在擋住中斷時完成（#23 第十五輪 report 的 M1、M2、N1–N8）
+
+- [x] 20.1 規格與 design（design「第十五輪」；結果檔路徑只解析一次；「已經做過」的三種封閉清單；中斷從記下請求擋到啟動、之後的中斷忽略；結果檔要求的例外；Interpreter requirement 的 3.9 停下）。
+  - 驗證：`spectra validate` 與 `spectra analyze` 無 warning。
+- [x] 20.2 路徑只解析一次：`resolved()` 供判斷與寫入共用，寫入入口的暫存檔建在實際目錄；主路徑與 3.9 路徑；工作目錄只在相對路徑時讀（M1）。
+  - [after: 20.1]
+- [x] 20.3 從記下請求到 codex-call 啟動擋住中斷、啟動失敗（含 `SubprocessError`）在擋住時撤回、第一個中斷之後忽略其餘（M2）；「已經做過」以 `done()` 判斷（N1）；3.9 結果檔的固定內容（N5）；`discard()` 與語法樹掃描（N6）；測試（N7）。
+  - [after: 20.2]
+- [x] 20.4 文件：SKILL Step 1、3、5、9，xval 的模組 docstring，CHANGELOG，design 的指向（N2、N3、N4、N8）。
+  - 驗證：`bash tests/run.sh` 只剩 #24。
+  - [after: 20.3]
+- [ ] 20.5 真實後端端到端（第十五次）。
+  - 驗證：紀錄寫進 e2e-checklist §F。
+  - [after: 20.4]

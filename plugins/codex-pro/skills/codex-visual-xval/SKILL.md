@@ -69,7 +69,8 @@ allowed-tools:
 - `--sequence`：圖片是**同一支影片依時間排序的影格**。只有這時才跑 SAM 追蹤。
 
 腳本需要 **Python 3.10 以上**的 `python3`。macOS 內建的 `/usr/bin/python3` 是 3.9；用它執行時，`xval.py`
-會在載入其他模組之前停下，回答 `runtime_unavailable` 並記進錯誤歷史（不改 run 的錯誤與帳本），`result` 照樣寫出結果檔。
+會在載入其他模組之前停下，回答 `runtime_unavailable` 並記進錯誤歷史（不改 run 的錯誤與帳本，run 照原樣，改用 3.10 以上
+重跑那一步即可），`result` 照樣寫出結果檔，但讀不了 run 的紀錄，只寫固定內容；要完整的結果檔就用 3.10 以上再寫一次。
 
 以本 skill 的目錄設定 `SKILL_DIR`（Claude Code 會在載入時顯示 base directory；不得從目前工作目錄猜），
 並建立 run 目錄：
@@ -134,11 +135,13 @@ python3 "$SKILL_DIR/scripts/xval.py" seal --run "$RUN"
 `error.json`；帳本不見或讀不到時，不會寫一份新的蓋過去。xval 寫任何檔都先寫到同一目錄下的暫存檔再換上：名字上的
 symlink、硬連結或 FIFO 會被換掉，不會被寫穿到 run 外；run 目錄與它的 `frames/`、`hires/`、`crops/` 本身是 symlink 時
 不寫進去（`--out` 是使用者自己的路徑：那裡是 symlink 或 FIFO 時改為拒絕，它的上層目錄由使用者決定；結果檔不寫進 run 目錄，
-`result` 也不登記任何東西，結果檔是否落在 run 裡以目錄本身判斷，預設位置也一樣）。例外只有兩種：尚未封存的那一輪 Claude 答案，以及請求記下之前的
+`result` 也不登記任何東西，結果檔是否落在 run 裡以目錄本身判斷，預設位置也一樣；路徑照作業系統的方式只解析一次，先跟隨
+symlink 再處理後面的 `..`，判斷與寫入都用這一個目錄）。例外只有兩種：尚未封存的那一輪 Claude 答案，以及請求記下之前的
 `profile.json`。不是紀錄的檔只有這些：`ledger.json` 本身、`.gitignore`、`errors.jsonl`、
 `claude_source.json`、`runtime.txt`、`runtime_error.txt`，以及 `frames/`、`hires/`、`crops/` 與 run 目錄裡以點開頭的檔案
-（Finder 的 `.DS_Store`、xval 自己的暫存檔）。「已經做過」（隱私確認過、封存過、這一輪送過、放大輪答案被拒過、init 嘗試過）以檔案或它在帳本上
-的條目為準，任一存在就算；把檔案移開再放回不會讓一步重來。帳本也在 run 目錄裡：它防的是誤改與事後的手動修改，
+（Finder 的 `.DS_Store`、xval 自己的暫存檔）。「已經做過」的判斷只有三種，不讀帳本沒核對過的內容：封存過、放大輪答案被拒過，以帳本條目為準（那裡有檔案卻沒有
+條目時停在 `target_invalid`，訊息寫 not entered，不當成做過；FIFO 或 symlink 不算紀錄）；這一輪送過，以核對過的請求紀錄
+為準；隱私確認過、init 嘗試過，檔案或條目任一存在就算，不讀內容。把檔案移開再放回不會讓一步重來。帳本也在 run 目錄裡：它防的是誤改與事後的手動修改，
 不是能寫入 run 目錄的人。
 
 ## Step 4: Invoke codex-call
@@ -206,7 +209,8 @@ init 還沒嘗試就拒絕，沒完成就停在 init 的錯誤；放大輪另外
 放大輪確認裁切圖都在 run 的 crops 目錄內；`$RUN/profile.json` 有效（第一次請求之後還要與帳本相符）。任一不符就停下，
 **不送任何請求**，訊息寫 nothing was sent。接著確認 runtime 存在、確認 `codex-call --help` 列出 `--image`（沒有就
 `runtime_unsupported`）；寫好 prompt 檔，記下請求時間（這一步先前在送出前停下的錯誤，此時清除）後送出、
-驗證回覆、記下回覆的 SHA-256。它只印出狀態，Codex 的答案寫在 `$RUN/codex.json`。
+驗證回覆、記下回覆的 SHA-256。從記下請求到 codex-call 啟動之間擋住中斷，codex-call 沒能啟動時在擋住的狀態下撤回請求；
+第一個中斷之後的中斷，在這一步停下期間一律忽略。它只印出狀態，Codex 的答案寫在 `$RUN/codex.json`。
 
 **每一輪只送一次**：同一輪再跑一次 `ask` 會被拒絕，已記錄的答案不會被取代。這是「不 retry」與
 「不用重問來湊一致」的程式保證。
@@ -221,7 +225,8 @@ init 還沒嘗試就拒絕，沒完成就停在 init 的錯誤；放大輪另外
 
 ## Step 5: Handle exit code
 
-`xval.py` 任何一步以 exit 5 結束，代表這一步沒有完成；stdout 有 `error` 與 `detail`。兩種情況要分開：
+`xval.py` 任何一步以 exit 5 結束，代表這一步沒有完成；stdout 有 `error` 與 `detail`，`errors.jsonl` 也記一行。
+寫進 `$RUN/error.json` 的只有 run 的錯誤。三種情況要分開：
 
 - **指令被拒**：只有下面四組，不得依性質相似類推：
   - 這一步已經做過：再一次隱私確認、同一輪再封、Codex 問過那一輪之後封存、放大輪答案被拒後再封、重新 init、同一輪再送、
@@ -232,7 +237,12 @@ init 還沒嘗試就拒絕，沒完成就停在 init 的錯誤；放大輪另外
   - Claude 的放大輪答案沒通過檢查：放大輪不採用，run 照常繼續。
   - 指令沒有指到一步：未知的 `--round`，或 `--run` 不是 run 目錄。
   這不是 run 的錯誤，`$RUN/error.json` 不會改變，run 照原本的狀態繼續；只記在 `errors.jsonl`。
-- **run 停止**：`$RUN/error.json` 記下錯誤。照下表回報，然後直接跳到 Step 9 寫結果檔。
+- **這一步跑不起來或寫不出檔，但 run 沒有停**：`python3` 比 3.10 舊時，`result` 以外的每一步都停在 `runtime_unavailable`
+  （run 照原樣，改用 3.10 以上重跑那一步）；以及 `result` 自己的失敗（`target_invalid`：結果檔的位置會落在 run 目錄裡，
+  或寫不出去）。
+  `$RUN/error.json` 不會改變；照訊息修好（換 Python、給 `--out` 一個 run 外的路徑）之後重跑同一步。
+- **run 停止**：`$RUN/error.json` 記下錯誤（run 已有一個與帳本不符或永遠解不開的錯誤時，這次只記進歷史，原本的錯誤留著）。
+  照下表回報，然後直接跳到 Step 9 寫結果檔。
 
 「同一個 run 可以再送」只在 `xval.py` 自己在呼叫 `codex-call` 之前就停下時成立：訊息寫 nothing was sent
 （沒登入的 `oauth_invalid`、封存或隱私確認不齊、輸入被改過的 `target_invalid`、寫不進 prompt 檔），或 `runtime_unsupported`、
@@ -345,7 +355,8 @@ python3 "$SKILL_DIR/scripts/xval.py" result --run "$RUN"
 ```
 
 run 停在 Step 5 時也要跑這兩步：沒有比對結果時 `adjudicate` 照樣正常結束，`result` 讀 `$RUN/error.json`
-寫出失敗的結果檔。model、effort 與 profile 來源取自 `$RUN/profile.json`。同一步之後重跑成功時，它先前留下的
+寫出失敗的結果檔。`result` 不把結果檔寫進 run 目錄：在 run 目錄裡執行而沒給 `--out`，或 `--out` 指到 run 裡時，它停在
+`target_invalid`、什麼都不寫，改給 run 外的路徑重跑即可。model、effort 與 profile 來源取自 `$RUN/profile.json`。同一步之後重跑成功時，它先前留下的
 錯誤會被清除，歷史留在 `$RUN/errors.jsonl`。被拒絕的指令（見 Step 5 的四組）只記進歷史，
 不會取代這個 run 原本的錯誤。用掉的 run 或一輪的錯誤（init 嘗試記下之後的 init 錯誤、請求記下之後那一輪的錯誤）
 永遠解不開：之後別的步驟停下只記進歷史，不會取代它，也不會被清除；萬一它不見了，結果檔也會從紀錄推出這個失敗。用掉與否在

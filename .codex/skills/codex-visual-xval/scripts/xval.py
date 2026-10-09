@@ -15,9 +15,13 @@ one run directory, because each Bash call in the skill starts a fresh shell.
 The runtime comes from RUN/runtime.txt and any native preflight error from
 RUN/runtime_error.txt; both are written by the skill's runtime-resolution step.
 
-Exit status 5 means the run stopped with a structured error: {"error", "detail"} on stdout
-and in RUN/error.json. Nothing is retried. Steps that see Codex's answers print only counts
-and identifiers, never answer values, so Claude can still answer the zoom round blind.
+Exit status 5 means the step stopped with a structured error: {"error", "detail"} on stdout,
+and a line in RUN/errors.jsonl. It becomes the run's error in RUN/error.json only when it is
+one: not when the step refused something already done or not yet possible, not when the run
+keeps an error that does not match its ledger or can never be resolved, not for the result
+step's own failure, and never under Python older than 3.10. Nothing is retried. Steps that see
+Codex's answers print only counts and identifiers, never answer values, so Claude can still
+answer the zoom round blind.
 """
 import datetime
 import hashlib
@@ -50,11 +54,19 @@ def _older_python(argv):
     if not run:
         print(__doc__, file=sys.stderr)
         sys.exit(64)
+    def joined(path):   # made absolute by joining, never respelled; the working directory only for a relative path
+        return path if os.path.isabs(path) else os.path.join(os.getcwd(), path)
+    def resolved(path):   # once, as the operating system resolves it, as on the main path (round 15, M1); 3.9-compatible
+        name = os.path.basename(path)
+        if name in ("", ".", ".."):
+            raise OSError(0, "the path does not name a file")
+        folder = os.path.realpath(os.path.dirname(joined(path)))
+        return folder, os.path.join(folder, name)
     def put(path, data, users=False):   # a new temporary file moved over the name: no link written through (round 12, H1)
         import tempfile
-        folder = os.path.dirname(os.path.abspath(path))
-        if not users and os.path.islink(folder):   # the run's own directory; --out's folder is the user's (round 14, L3)
-            raise OSError(0, "a symbolic link")
+        if not users and os.path.islink(os.path.dirname(joined(path))):
+            raise OSError(0, "a symbolic link")   # the run's own directory; --out's folder is the user's (round 14, L3)
+        folder, path = resolved(path)   # the temporary file and the name in the one directory (round 15, M1)
         fd, tmp = tempfile.mkstemp(dir=folder, prefix=".xval-", suffix=".tmp")
         try:
             with os.fdopen(fd, "wb") as fh:
@@ -85,14 +97,13 @@ def _older_python(argv):
                 return fh.readline().strip() == "# copies of the images given to /codex-pro:codex-visual-xval"
         except OSError:
             return False
-    def inside_run(path):   # by device and inode, as on the main path (round 14, L2, L3); 3.9-compatible
+    def inside_run(folder):   # by device and inode, as on the main path (round 14, L2, L3); 3.9-compatible
         if not is_run(run):
             return False
         try:
             target = os.stat(run)
         except OSError:
             return False
-        folder = os.path.realpath(os.path.dirname(os.path.abspath(path)))
         while True:
             try:
                 if os.path.samestat(os.stat(folder), target):
@@ -172,13 +183,16 @@ def _older_python(argv):
           ("effort", form(r"[a-z]{1,20}", profile.get("effort"))),
           ("profile_source", form(r"default|global|project|mixed", profile.get("profile_source"))),
           ("first_side_model", form(model_id, meta.get("first_side_model"))), ("timestamp", now.isoformat(timespec="seconds")),
-          ("n_images", len(frames)), ("n_claims", 0), ("agreement_rate", ""), ("claude_answers_sha256", ""),
+          ("n_images", len(frames)), ("n_claims", ""), ("agreement_rate", ""), ("claude_answers_sha256", ""),
           ("sealed_at", ""), ("seal_broken", "true"), ("codex_requested_at", ""), ("codex_reply_sha256", ""),
-          ("sam_status", "not_run"), ("error", "runtime_unavailable")]
+          ("sam_status", ""), ("error", "runtime_unavailable")]
+    # Fixed text, true of any run: this Python reads none of the steps a newer one may have run (round 15, N5)
     lines = ["---"] + ["%s: %s" % kv for kv in fm] + ["---", "", "# Visual cross-validation — %d images" % len(frames), "",
-             "Run stopped: `runtime_unavailable`. No retry.", "", "Runtime preflight detail: " + detail, "",
-             "## Agreement", "", "No comparison was made.", "", "## Disagreements", "", "None.", "",
-             "## SAM evidence", "", "Status: `not_run`.", "", "## Seal", "", "Not checked: the run stopped first.", "",
+             "The result step stopped: `runtime_unavailable`. It cannot read the run's records under this Python, so "
+             "nothing from them is shown; they are in the run directory. Write the result file again with Python 3.10 "
+             "or later.", "", "Runtime preflight detail: " + detail, "",
+             "## Agreement", "", "Not shown.", "", "## Disagreements", "", "Not shown.", "",
+             "## SAM evidence", "", "Not shown.", "", "## Seal", "", "Not checked.", "",
              "## Limitations", "", "- Agreement between the two models does not establish that either is correct; "
              "only a human reference can."]
     out = argv[argv.index("--out") + 1] if "--out" in argv and argv.index("--out") + 1 < len(argv) else None
@@ -187,13 +201,14 @@ def _older_python(argv):
     if default:
         out = os.path.join(".codex-pro", "visual-xval-%s.md" % now.astimezone(datetime.timezone.utc).strftime("%Y%m%dT%H%M%SZ"))
     try:
-        if inside_run(out):   # never into the run (round 13, J1; round 14, L1, L3)
+        folder, target = resolved(out)   # the check and the write use this one directory (round 15, M1)
+        if inside_run(folder):   # never into the run (round 13, J1; round 14, L1, L3)
             raise OSError(0, "it would be written into the run directory")
         if default:   # .codex-pro is created only for the default location (round 6, Q1), inside the try (B5)
             os.makedirs(".codex-pro", exist_ok=True)
-        if os.path.lexists(out) and (os.path.islink(out) or not os.path.isfile(out)):   # the user's own path (round 11, F1)
+        if os.path.lexists(target) and (os.path.islink(target) or not os.path.isfile(target)):   # the user's (round 11, F1)
             raise OSError(0, "not a regular file")
-        put(out, data, users=True)
+        put(target, data, users=True)
     except OSError as exc:   # a structured answer, not a traceback (round 7, Y3), kept in the history (round 9, B5)
         entry = {"error": "target_invalid", "detail": "cannot write the result file: %s" % (exc.strerror or type(exc).__name__),
                  "step": "result", "at": now.isoformat(timespec="seconds"), "source": "xval"}   # by role (round 12, H8)
@@ -216,7 +231,8 @@ import compare_claims  # noqa: E402
 import media  # noqa: E402
 import result_file  # noqa: E402
 from run_files import (Stop, Step, INPUTS, adopt_run_dir, append_text, checked, checked_comparison,  # noqa: E402
-                       checked_inputs, dump, failure, initialised, is_run_dir, keeps_error, ledger, ledger_usable,
+                       checked_inputs, discard, done, dump, failure, initialised, is_run_dir, keeps_error, ledger,
+                       ledger_usable,
                        load, neutral_names, now_iso, remove, requested, run_dir, scratch, uses_up, write_bytes,
                        write_text)
 from codex_errors import classify, login_problem  # noqa: E402
@@ -359,16 +375,15 @@ def seal_answers(run: str, zoom: bool, files: Step) -> None:
     # A seal is written once. Re-sealing, or sealing after Codex has answered, would make a
     # late seal look exactly like an early one (#23 verify B1). These refusals come first, so a
     # step that is already done is never reported as a new failure (round 3, T6).
-    # Each of these counts by its record or its ledger entry, whichever exists: moving a record away and back
-    # does not reset a step (round 10, C1). What they read is checked against the ledger first.
+    # Each of these counts by its ledger entry: moving a record away and back does not reset a step (round 10, C1),
+    # and a record there without an entry is said as such, not taken for the step done (round 15, N1).
     entries = ledger(run)
-    previous = load(record)
-    if previous or os.path.basename(record) in entries:   # its fields are not repeated: unchecked here (F9)
+    if done(run, os.path.basename(record), then="nothing was sealed"):   # its fields are not read (F9)
         raise Stop("target_invalid", "already sealed; a seal is not rewritten", record=False)
     checked(run, ("requests.json",))
     if load(os.path.join(run, "requests.json"), {}).get("zoom" if zoom else "1"):
         raise Stop("target_invalid", "Codex has already been asked this round; answers sealed now prove nothing", record=False)
-    if zoom and (load(os.path.join(run, "zoom_rejected.json")) or "zoom_rejected.json" in entries):
+    if zoom and done(run, "zoom_rejected.json", then="nothing was sealed"):
         raise Stop("target_invalid", "Claude's zoom answers already failed the checks, so the zoom round is not used; "
                    "answers fixed afterwards are not sealed", record=False)
     initialised(run)   # after the refusals of what is done (T6), before anything else (round 12, G2)
@@ -542,47 +557,50 @@ def call_codex(run: str, prompt: str, images: list[str], tag: str, argv: list[st
     except (OSError, Stop) as exc:
         reason = exc.detail if isinstance(exc, Stop) else failure(exc)
         raise Stop("runtime_unavailable", f"cannot write the prompt file: {reason}; nothing was sent")
-    first = not requested(run)   # before this request is recorded (round 14, L5)
-    record_request(run, rnd, requested_at=now_iso(), requested_epoch=datetime.datetime.now().timestamp())
-    retire_error(run, "ask --round 1" if rnd == "1" else "ask --round zoom")
-    files.expect(os.path.basename(output))   # codex-call's reply: entered only if it writes it (round 12, G3)
-    if first and "profile.json" not in ledger(run):   # pending only until a request is recorded (F6; H6; L5)
-        files.adopt("profile.json", profile_digest)
-    files.commit()   # the prompt, the request and the profile, before codex-call starts (round 12, G3; round 13, I2, J2)
     cmd = [path, "--output", output, "--model", settings["model"],
            "--effort", settings["effort"], "--max-time", str(settings["max_time"]),
            "--instructions", INSTRUCTIONS, "--prompt-file", prompt_file]
     for image in images:
         cmd += ["--image", image]
-    # Interrupts are held while it starts, so none can arrive between its start and the guard below; codex-call gets
-    # the mask as it was (round 14, L4). Only starting the process can fail before anything is sent (round 7, Y6).
+    # Interrupts are held from the request record to codex-call's start, so the record, its withdrawal when the start
+    # fails, and the start itself are each done whole; codex-call gets the mask as it was (round 14, L4; round 15, M2).
+    # Only starting the process can fail before anything is sent (round 7, Y6).
     held = {signal.SIGINT, signal.SIGTERM}
     previous = signal.pthread_sigmask(signal.SIG_BLOCK, held)
     try:
-        proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, encoding="utf-8", errors="replace",
-                                preexec_fn=lambda: signal.pthread_sigmask(signal.SIG_SETMASK, previous))
-    except BaseException as exc:
-        signal.pthread_sigmask(signal.SIG_SETMASK, previous)
-        if not isinstance(exc, (OSError, ValueError, TypeError)):
-            raise
-        withdraw_request(run, rnd)
-        files.release("profile.json")   # the profile was not used, so it is pending again (round 12, H6; round 13, J2)
-        raise Stop("runtime_unavailable", f"cannot run codex-call: {failure(exc)}; nothing was sent")
+        first = not requested(run)   # before this request is recorded (round 14, L5)
+        record_request(run, rnd, requested_at=now_iso(), requested_epoch=datetime.datetime.now().timestamp())
+        retire_error(run, "ask --round 1" if rnd == "1" else "ask --round zoom")
+        files.expect(os.path.basename(output))   # codex-call's reply: entered only if it writes it (round 12, G3)
+        if first and "profile.json" not in ledger(run):   # pending only until a request is recorded (F6; H6; L5)
+            files.adopt("profile.json", profile_digest)
+        files.commit()   # the prompt, the request and the profile, before codex-call starts (G3; round 13, I2, J2)
+        try:
+            proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, encoding="utf-8",
+                                    errors="replace",
+                                    preexec_fn=lambda: signal.pthread_sigmask(signal.SIG_SETMASK, previous))
+        except (OSError, ValueError, TypeError, subprocess.SubprocessError) as exc:
+            # nothing was executed, a failure in preexec_fn included (round 15, M2): withdrawn while still held
+            withdraw_request(run, rnd)
+            files.release("profile.json")   # the profile was not used: pending again (round 12, H6; round 13, J2)
+            raise Stop("runtime_unavailable", f"cannot run codex-call: {failure(exc)}; nothing was sent")
+    except BaseException:
+        signal.pthread_sigmask(signal.SIG_SETMASK, previous)   # an interrupt held until now arrives after the above
+        raise
     # It started: from here on nothing withdraws the record, and nothing runs outside this guard, so an interrupt
-    # always stops codex-call too (round 9, B3; round 13, I2). SIGTERM takes the path SIGINT takes (main). Its
-    # output is read only now, and bytes that are not UTF-8 are replaced rather than raised, since a decoding error
-    # here once withdrew a call that had already run (round 8, Z1). Foreground; the hard timeout is codex-call's.
+    # always stops codex-call too (round 9, B3; round 13, I2). SIGTERM takes the path SIGINT takes, and once one has
+    # arrived the next are ignored (main), so the cleanup below is never cut short (round 15, M2). Its output is read
+    # only now, and bytes that are not UTF-8 are replaced rather than raised, since a decoding error here once
+    # withdrew a call that had already run (round 8, Z1). Foreground; the hard timeout is codex-call's.
     try:
         signal.pthread_sigmask(signal.SIG_SETMASK, previous)   # one held during the start arrives here, in the guard
         _, stderr = proc.communicate()
     except KeyboardInterrupt:
-        signal.pthread_sigmask(signal.SIG_BLOCK, held)   # a second interrupt cannot cut the cleanup short (L4)
         proc.kill()
         proc.wait()   # what it wrote before it stopped is entered as the step ends (round 10, C4; round 12, G3)
         raise Stop("backend_error", "interrupted: codex-call was stopped; the request is counted as sent, so this "
                    "round is used up")
     except BaseException:
-        signal.pthread_sigmask(signal.SIG_BLOCK, held)
         proc.kill()
         proc.wait()
         raise
@@ -639,7 +657,7 @@ def before_request(run: str, rnd: str) -> None:
         raise Stop("target_invalid", f"round {rnd} was already requested at {earlier.get('requested_at')}; "
                    "a recorded answer is not replaced and requests are not retried", record=False)
     entries = ledger(run)
-    if rnd == "zoom" and (load(os.path.join(run, "zoom_rejected.json")) or "zoom_rejected.json" in entries):
+    if rnd == "zoom" and done(run, "zoom_rejected.json", then="nothing was sent"):
         # done: refused before any other check (T6; round 13, J9)
         raise Stop("target_invalid", "the zoom round is not used, because Claude's zoom answers failed the checks; "
                    "nothing was sent", record=False)
@@ -772,8 +790,7 @@ def compare(run: str) -> None:
 
 
 def crops(run: str) -> None:
-    entries = ledger(run)
-    if any(load(os.path.join(run, n)) or n in entries for n in ("zoom_seal.json", "zoom_rejected.json")):   # C1
+    if any(done(run, n, then="no crops were made") for n in ("zoom_seal.json", "zoom_rejected.json")):   # C1; N1
         raise Stop("target_invalid", "Claude's zoom answers are already sealed or dropped; the crops are not made again",
                    record=False)
     initialised(run)   # round 12, G2
@@ -830,8 +847,7 @@ def crops(run: str) -> None:
         except (OSError, subprocess.CalledProcessError, media.MediaError, struct.error) as exc:
             raise Stop("target_invalid", f"cannot crop {item['frame']}: {failure(exc)}")
         finally:
-            if os.path.lexists(work):
-                os.remove(work)
+            discard(work)
         if item["kind"] == "position":
             item = {**item, "key_point": vocab.get("key_points", {}).get(item["class"], "its key point")}
         elif item["kind"] == "relation":   # the subagent sees only the question file (round 3, T7)
@@ -969,9 +985,17 @@ def main(argv: list[str]) -> None:
     step = (f"ask --round {option(argv, '--round')}" if command == "ask"
             else "seal --zoom" if command == "seal" and "--zoom" in argv else command)
     files = Step(run, enters=command != "result")   # the one entry to the ledger (round 12, G3); result: none (J1)
-    def terminated(signum: int, frame: Any) -> None:   # every step stops on SIGTERM as on SIGINT (round 12, G2)
+    stopping = []
+    def interrupted(signum: int, frame: Any) -> None:
+        """Every step stops on SIGTERM as on SIGINT (round 12, G2). Only the first one stops it: the ones after it
+        arrive while it records what happened and stops codex-call, and are ignored (round 15, M2)."""
+        if stopping:
+            return
+        stopping.append(signum)
         raise KeyboardInterrupt
-    signal.signal(signal.SIGTERM, terminated)
+    signal.signal(signal.SIGTERM, interrupted)
+    if signal.getsignal(signal.SIGINT) is signal.default_int_handler:   # an ignored SIGINT stays ignored
+        signal.signal(signal.SIGINT, interrupted)
     try:
         if command not in ("init", "confirm-privacy", "result") and not is_run_dir(run):
             # the steps that may write into a directory that is not a run are a closed list (round 6, Q1)

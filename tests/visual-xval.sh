@@ -2762,13 +2762,13 @@ if [ -x "$OLDPY" ] && "$OLDPY" -c 'import sys; sys.exit(0 if sys.version_info < 
     MOCK_PROMPTS="$WORK/prompts.txt" PATH="$WORK/stubbin:$PATH" python3 "$SCRIPTS/xval.py" ask --run "$WORK/r12k" --round 1 2>&1)
   ( cd "$WORK" && HOME="$WORK/home" "$OLDPY" "$SCRIPTS/xval.py" confirm-privacy --run "$WORK/r12k" >/dev/null 2>&1 )
   xval confirm-privacy --run "$WORK/r12k"
-  assert_eq "rate_limit" "$(json_get "$(cat "$WORK/r12k/error.json")" 'd["error"]')" "an old Python does not replace a used-up round's error (G1)"
+  assert_eq "rate_limit" "$(json_get "$(cat "$WORK/r12k/error.json")" 'd["error"]')" "an old Python leaves a used-up round's error as it is: it never writes the run's error (G1; K2)"
   rm -rf "$WORK/r12l"; SEQ= new_run "$WORK/r12l"; printf 'not json {' > "$WORK/r12l/ledger.json"
   ( cd "$WORK" && HOME="$WORK/home" "$OLDPY" "$SCRIPTS/xval.py" compare --run "$WORK/r12l" >/dev/null 2>&1 )
-  assert_eq "not json {" "$(cat "$WORK/r12l/ledger.json")" "an old Python does not write over an unreadable ledger (H2)"
+  assert_eq "not json {" "$(cat "$WORK/r12l/ledger.json")" "an old Python leaves an unreadable ledger as it is: it never writes the ledger (H2; K2)"
 else
-  skip "an old Python does not replace a used-up round's error" "no Python older than 3.10 at $OLDPY"
-  skip "an old Python does not write over an unreadable ledger" "no Python older than 3.10 at $OLDPY"
+  skip "an old Python leaves a used-up round's error as it is: it never writes the run's error" "no Python older than 3.10 at $OLDPY"
+  skip "an old Python leaves an unreadable ledger as it is: it never writes the ledger" "no Python older than 3.10 at $OLDPY"
 fi
 
 # Round 12 (G2): a failed or interrupted init uses up the run.
@@ -2877,13 +2877,13 @@ if [ -x "$OLDPY" ] && "$OLDPY" -c 'import sys; sys.exit(0 if sys.version_info < 
   rm -rf "$WORK/r13c"; mkdir -p "$WORK/r13c"; xval confirm-privacy --run "$WORK/r13c"
   ( cd "$WORK" && HOME="$WORK/home" "$OLDPY" "$SCRIPTS/xval.py" init --run "$WORK/r13c" --vocab "$WORK/vocab.json" "$WORK"/imgs/*.png >/dev/null 2>&1 )
   xval init --run "$WORK/r13c" --vocab "$WORK/vocab.json" "$WORK"/imgs/*.png
-  assert_no_file "$WORK/r13c/error.json" "an init error with no init attempt does not use up the run (I1)"
+  assert_no_file "$WORK/r13c/error.json" "an old Python's stop at init leaves the run open for init on 3.10 or later (I1; K2)"
   rm -rf "$WORK/r13g"; SEQ= new_run "$WORK/r13g"
   ( cd "$WORK" && HOME="$WORK/home" "$OLDPY" "$SCRIPTS/xval.py" ask --run "$WORK/r13g" --round 1 >/dev/null 2>&1 )
   assert_eq "ask --round 1" "$(tail -1 "$WORK/r13g/errors.jsonl" | python3 -c 'import json,sys; print(json.load(sys.stdin)["step"])')" \
     "an old Python names the step with its round in the history (J6)"
 else
-  skip "an init error with no init attempt does not use up the run" "no Python older than 3.10 at $OLDPY"
+  skip "an old Python's stop at init leaves the run open for init on 3.10 or later" "no Python older than 3.10 at $OLDPY"
   skip "an old Python names the step with its round" "no Python older than 3.10 at $OLDPY"
 fi
 
@@ -3007,7 +3007,7 @@ fi
 
 # Round 14 (L4): codex-call is started with interrupts held, so none can arrive between its start and the guard.
 rm -rf "$WORK/r14e"; SEQ= new_run "$WORK/r14e"
-assert_eq "held child-restores" "$(printf '%s\n' "$(HOME="$WORK/home" python3 -B - "$WORK/r14e" "$SCRIPTS" "$WORK/stubbin/codex-call" <<'PY' 2>/dev/null
+assert_eq "held" "$(printf '%s\n' "$(HOME="$WORK/home" python3 -B - "$WORK/r14e" "$SCRIPTS" "$WORK/stubbin/codex-call" <<'PY' 2>/dev/null
 import signal, sys
 run, scripts, stub = sys.argv[1:4]; sys.path.insert(0, scripts)
 import xval
@@ -3022,7 +3022,6 @@ class Proc:
         pass
 def start(*a, **k):
     seen["held"] = signal.SIGINT in signal.pthread_sigmask(signal.SIG_BLOCK, [])
-    seen["child"] = callable(k.get("preexec_fn"))
     return Proc()
 xval.runtime = lambda r: stub
 xval.subprocess.Popen = start
@@ -3030,9 +3029,9 @@ try:
     xval.main(["ask", "--run", run, "--round", "1"])
 except SystemExit:
     pass
-print(("held" if seen.get("held") else "open"), ("child-restores" if seen.get("child") else "child-inherits"))
+print("held" if seen.get("held") else "open")
 PY
-)" | tail -1)" "interrupts are held while codex-call starts, and released for it (L4)"
+)" | tail -1)" "interrupts are held while codex-call starts (L4); r15g checks what codex-call itself gets"
 
 # Round 14 (L5): after the first request, a profile without an entry stops the next request; it is not entered again.
 rm -rf "$WORK/r14f"; cp -R "$WORK/run6w" "$WORK/r14f"; xval crops --run "$WORK/r14f"
@@ -3049,38 +3048,6 @@ assert_contains "$(ledger_changed "$WORK/r14f")" "profile.json" "and stays detec
 rm -rf "$WORK/r14g"; SEQ= new_run "$WORK/r14g"; rm -f "$WORK/r14g/privacy.json"
 ask_with "$WORK/codex_reply.md" "$WORK/r14g" 1
 assert_contains "$RUN_OUT" "privacy.json was removed" "a removed privacy confirmation is named as removed (L6)"
-
-# Round 14 (L8): a syntax-level scan for any write outside the two entries, over every module but run_files and SAM's.
-assert_eq "0" "$(python3 - "$SCRIPTS" <<'PY'
-import ast, os, sys
-WRITES = {("os", "replace"), ("os", "rename"), ("os", "link"), ("os", "symlink"), ("os", "truncate"), ("os", "write"),
-          ("os", "open"), ("os", "fdopen"), ("shutil", None), ("tempfile", "NamedTemporaryFile"),
-          ("tempfile", "mkstemp"), ("io", "open")}
-found = []
-for name in sorted(os.listdir(sys.argv[1])):
-    if not name.endswith(".py") or name in ("run_files.py", "sam_track.py"):
-        continue
-    tree = ast.parse(open(os.path.join(sys.argv[1], name), encoding="utf-8").read())
-    skip = set()
-    for node in ast.walk(tree):   # the Python 3.9 path is its own, 3.9-compatible copy
-        if isinstance(node, ast.FunctionDef) and node.name == "_older_python":
-            skip |= {id(n) for n in ast.walk(node)}
-    for node in ast.walk(tree):
-        if id(node) in skip or not isinstance(node, ast.Call):
-            continue
-        f = node.func
-        if isinstance(f, ast.Name) and f.id == "open":
-            mode = node.args[1] if len(node.args) > 1 else next((k.value for k in node.keywords if k.arg == "mode"), None)
-            if mode is not None and not (isinstance(mode, ast.Constant) and mode.value in ("r", "rb")):
-                found.append(f"{name}:{node.lineno}")
-        elif isinstance(f, ast.Attribute) and isinstance(f.value, ast.Name):
-            if (f.value.id, f.attr) in WRITES or (f.value.id, None) in WRITES:
-                found.append(f"{name}:{node.lineno}")
-            elif f.attr in ("write_text", "write_bytes") and f.value.id not in ("run_files",):
-                found.append(f"{name}:{node.lineno}")
-print(len(found), *found)
-PY
-)" "no module but run_files writes a file, by any call form (L8)"
 
 # Security review after 8cd6987: every path writes within the user's umask, so a private umask keeps files private.
 rm -rf "$WORK/r14p"; mkdir -p "$WORK/r14p"
@@ -3102,6 +3069,259 @@ if [ -x "$OLDPY" ] && "$OLDPY" -c 'import sys; sys.exit(0 if sys.version_info < 
 else
   skip "an old Python writes its result file within a private umask" "no Python older than 3.10 at $OLDPY"
 fi
+
+# Round 15 (M1): a path is resolved once, as the operating system resolves it — each symbolic link before the '..'
+# after it — and the check and the write use that one directory, on the main path and the Python 3.9 path alike.
+rm -rf "$WORK/r15a" "$WORK/r15a_out" "$WORK/r15a_else"; SEQ= new_run "$WORK/r15a"
+mkdir -p "$WORK/r15a_out" "$WORK/r15a_else/sub"
+ln -s "$WORK/r15a/frames" "$WORK/r15a_out/link"; ln -s "$WORK/r15a_else/sub" "$WORK/r15a_out/away"
+cp "$WORK/r15a/.gitignore" "$WORK/r15a_gitignore"
+( cd "$WORK/project" && HOME="$WORK/home" python3 "$SCRIPTS/xval.py" result --run "$WORK/r15a" \
+    --out "$WORK/r15a_out/link/../.gitignore" > "$WORK/r15a.out" 2>&1 )
+assert_eq "same" "$(cmp -s "$WORK/r15a_gitignore" "$WORK/r15a/.gitignore" && echo same || echo changed)" \
+  "a symbolic link followed by '..' does not let the result file into the run (M1)"
+assert_contains "$(cat "$WORK/r15a.out")" "not written into the run directory" "and the result step says why (M1)"
+( cd "$WORK/project" && HOME="$WORK/home" python3 "$SCRIPTS/xval.py" result --run "$WORK/r15a" \
+    --out "$WORK/r15a_out/away/../r.md" >/dev/null 2>&1 )
+assert_file "$WORK/r15a_else/r.md" "outside the run, the file is written where the operating system resolves the path (M1)"
+assert_no_file "$WORK/r15a_out/r.md" "not where the path's spelling points (M1)"
+( cd "$WORK/project" && HOME="$WORK/home" python3 "$SCRIPTS/xval.py" result --run "$WORK/r15a" \
+    --out "$WORK/r15a_out/away/.." > "$WORK/r15a_dir.out" 2>&1 )
+assert_contains "$(cat "$WORK/r15a_dir.out")" '"error": "target_invalid"' "a path whose last name is '..' names no file (M1)"
+if [ -x "$OLDPY" ] && "$OLDPY" -c 'import sys; sys.exit(0 if sys.version_info < (3, 10) else 1)' 2>/dev/null; then
+  ( cd "$WORK/project" && "$OLDPY" "$SCRIPTS/xval.py" result --run "$WORK/r15a" \
+      --out "$WORK/r15a_out/link/../.gitignore" >/dev/null 2>&1 )
+  assert_eq "same" "$(cmp -s "$WORK/r15a_gitignore" "$WORK/r15a/.gitignore" && echo same || echo changed)" \
+    "an old Python does not let a symbolic link followed by '..' into the run either (M1)"
+  ( cd "$WORK/project" && "$OLDPY" "$SCRIPTS/xval.py" result --run "$WORK/r15a" \
+      --out "$WORK/r15a_out/away/../r39.md" >/dev/null 2>&1 )
+  assert_file "$WORK/r15a_else/r39.md" "an old Python writes where the operating system resolves the path (M1)"
+else
+  skip "an old Python does not let a symbolic link followed by '..' into the run either" "no Python older than 3.10 at $OLDPY"
+  skip "an old Python writes where the operating system resolves the path" "no Python older than 3.10 at $OLDPY"
+fi
+
+rm -rf "$WORK/r15c" "$WORK/r15c_gone"; mkdir -p "$WORK/r15c" "$WORK/r15c_gone"
+( cd "$WORK/r15c_gone" && rmdir "$WORK/r15c_gone" && HOME="$WORK/home" python3 "$SCRIPTS/xval.py" confirm-privacy \
+    --run "$WORK/r15c" >/dev/null 2>&1 )
+assert_file "$WORK/r15c/privacy.json" "a run given by its absolute path is written from a working directory that is gone (M1)"
+
+# Round 15 (M2): from the request record to codex-call's start, interrupts are held, and a start that fails is
+# withdrawn while they are still held; after the first interrupt, xval ignores the next ones while it stops.
+rm -rf "$WORK/r15d"; SEQ= new_run "$WORK/r15d"
+assert_eq "withdrawn released internal_error unused" "$(printf '%s\n' "$(HOME="$WORK/home" python3 -B - "$WORK/r15d" "$SCRIPTS" "$WORK/stubbin/codex-call" <<'PY' 2>/dev/null
+import json, os, signal, sys
+run, scripts, stub = sys.argv[1:4]; sys.path.insert(0, scripts)
+signal.signal(signal.SIGINT, signal.default_int_handler)
+import xval
+def start(*a, **k):   # an interrupt arrives while the start fails
+    os.kill(os.getpid(), signal.SIGINT)
+    raise OSError(8, "Exec format error")
+xval.runtime = lambda r: stub
+xval.subprocess.Popen = start
+try:
+    xval.main(["ask", "--run", run, "--round", "1"])
+except SystemExit:
+    pass
+requests = json.load(open(f"{run}/requests.json")) if os.path.exists(f"{run}/requests.json") else {}
+ledger = json.load(open(f"{run}/ledger.json"))
+error = json.load(open(f"{run}/error.json"))
+print("withdrawn" if "1" not in requests else "kept", "released" if "profile.json" not in ledger else "entered",
+      error.get("error"), "used" if error.get("used_up") else "unused")
+PY
+)" | tail -1)" "an interrupt during a failed start arrives after the request is withdrawn (M2)"
+rm -rf "$WORK/r15e"; SEQ= new_run "$WORK/r15e"
+assert_eq "runtime_unavailable withdrawn" "$(printf '%s\n' "$(HOME="$WORK/home" python3 -B - "$WORK/r15e" "$SCRIPTS" "$WORK/stubbin/codex-call" <<'PY' 2>/dev/null
+import json, os, sys
+run, scripts, stub = sys.argv[1:4]; sys.path.insert(0, scripts)
+import xval
+def start(*a, **k):   # what Popen raises when preexec_fn fails in the child, before anything is executed
+    raise xval.subprocess.SubprocessError("Exception occurred in preexec_fn.")
+xval.runtime = lambda r: stub
+xval.subprocess.Popen = start
+try:
+    xval.main(["ask", "--run", run, "--round", "1"])
+except SystemExit:
+    pass
+requests = json.load(open(f"{run}/requests.json")) if os.path.exists(f"{run}/requests.json") else {}
+print(json.load(open(f"{run}/error.json")).get("error"), "withdrawn" if "1" not in requests else "kept")
+PY
+)" | tail -1)" "a start that fails in preexec_fn is a start that failed: nothing was sent (M2)"
+rm -rf "$WORK/r15f"; SEQ= new_run "$WORK/r15f"
+assert_eq "killed waited backend_error" "$(printf '%s\n' "$(HOME="$WORK/home" python3 -B - "$WORK/r15f" "$SCRIPTS" "$WORK/stubbin/codex-call" <<'PY' 2>/dev/null
+import json, os, signal, sys
+run, scripts, stub = sys.argv[1:4]; sys.path.insert(0, scripts)
+signal.signal(signal.SIGINT, signal.default_int_handler)
+import xval
+seen = []
+class Proc:
+    returncode = 0
+    def communicate(self):   # Ctrl-C, then SIGTERM right behind it, both pending when the guard sees the first
+        held = {signal.SIGINT, signal.SIGTERM}
+        signal.pthread_sigmask(signal.SIG_BLOCK, held)
+        os.kill(os.getpid(), signal.SIGINT)
+        os.kill(os.getpid(), signal.SIGTERM)
+        signal.pthread_sigmask(signal.SIG_UNBLOCK, held)
+    def kill(self):
+        seen.append("killed")
+    def wait(self):
+        seen.append("waited")
+xval.runtime = lambda r: stub
+xval.subprocess.Popen = lambda *a, **k: Proc()
+try:
+    xval.main(["ask", "--run", run, "--round", "1"])
+except SystemExit:
+    pass
+print(*seen, json.load(open(f"{run}/error.json")).get("error"))
+PY
+)" | tail -1)" "a second interrupt cannot cut short stopping codex-call (M2)"
+rm -rf "$WORK/r15g"; SEQ= new_run "$WORK/r15g"; mkdir -p "$WORK/maskbin"
+cat > "$WORK/maskbin/codex-call" <<'STUB'
+#!/usr/bin/env python3
+import os, signal, sys
+with open(os.environ["MASK_FILE"], "w") as fh:
+    fh.write(" ".join(str(int(s)) for s in sorted(signal.pthread_sigmask(signal.SIG_BLOCK, []))) or "none")
+sys.exit(1)
+STUB
+chmod +x "$WORK/maskbin/codex-call"; rm -f "$WORK/r15g_mask"
+HOME="$WORK/home" MASK_FILE="$WORK/r15g_mask" python3 -B - "$WORK/r15g" "$SCRIPTS" "$WORK/maskbin/codex-call" <<'PY' >/dev/null 2>&1
+import sys
+run, scripts, stub = sys.argv[1:4]; sys.path.insert(0, scripts)
+import xval
+xval.runtime = lambda r: stub
+try:
+    xval.main(["ask", "--run", run, "--round", "1"])
+except SystemExit:
+    pass
+PY
+assert_eq "none" "$(cat "$WORK/r15g_mask" 2>/dev/null || echo missing)" \
+  "codex-call itself starts with no interrupt held, so Ctrl-C reaches it as before (M2; round 14, L4)"
+
+# Round 15 (N1): a record that marks a step done counts by its ledger entry; one there without an entry is said as
+# such, not taken for a step already done; a FIFO or a link at the name is not a record at all.
+rm -rf "$WORK/r15h"; cp -R "$WORK/run6w" "$WORK/r15h"; xval crops --run "$WORK/r15h"
+printf '{"at": "x", "detail": "y"}\n' > "$WORK/r15h/zoom_rejected.json"
+printf '{"answers": {"z01.png": {"value": false}}}\n' > "$WORK/r15h/zoom_claude.json"
+xval seal --run "$WORK/r15h" --zoom
+assert_contains "$RUN_OUT" "zoom_rejected.json" "a zoom rejection placed without an entry is named (N1)"
+refute_contains "$RUN_OUT" "already failed the checks" "and is not taken for a zoom round already dropped (N1)"
+rm -rf "$WORK/r15i"; cp -R "$WORK/run6w" "$WORK/r15i"; printf '{}\n' > "$WORK/r15i/zoom_rejected.json"
+xval crops --run "$WORK/r15i"
+assert_contains "$RUN_OUT" "zoom_rejected.json" "crops names an unentered zoom rejection too, whatever it holds (N1)"
+assert_no_file "$WORK/r15i/zoom_plan.json" "and makes no crops (N1)"
+
+# Round 15 (N5): the Python 3.9 result file does not say a run went no further than it did.
+rm -rf "$WORK/r15n"; cp -R "$WORK/run6w" "$WORK/r15n"
+if [ -x "$OLDPY" ] && "$OLDPY" -c 'import sys; sys.exit(0 if sys.version_info < (3, 10) else 1)' 2>/dev/null; then
+  ( cd "$WORK/project" && "$OLDPY" "$SCRIPTS/xval.py" result --run "$WORK/r15n" --out "$WORK/r15n_result.md" >/dev/null 2>&1 )
+  refute_contains "$(cat "$WORK/r15n_result.md")" "No comparison was made" "an old Python does not say no comparison was made (N5)"
+  refute_contains "$(cat "$WORK/r15n_result.md")" "the run stopped first" "nor that the run stopped before the seal (N5)"
+  assert_contains "$(cat "$WORK/r15n_result.md")" "Not shown" "it says the records are not shown (N5)"
+else
+  skip "an old Python does not say no comparison was made" "no Python older than 3.10 at $OLDPY"
+  skip "nor that the run stopped before the seal" "no Python older than 3.10 at $OLDPY"
+  skip "it says the records are not shown" "no Python older than 3.10 at $OLDPY"
+fi
+
+# Round 15 (N6): one write entry, checked by a scanner that is itself shown to see every write form.
+assert_eq "16 0 0" "$(python3 - "$SCRIPTS" <<'PY'
+import ast, os, sys
+WRITES = {"os": {"replace", "rename", "renames", "link", "symlink", "truncate", "write", "open", "fdopen", "remove",
+                 "unlink", "rmdir", "removedirs", "mkfifo", "mknod"},
+          "shutil": None, "io": {"open", "FileIO"}, "builtins": {"open"}, "codecs": {"open"},
+          "tempfile": {"NamedTemporaryFile", "TemporaryFile", "SpooledTemporaryFile", "mkstemp"}}
+PATH_WRITES = {"write_text", "write_bytes", "touch", "unlink", "rename", "replace", "symlink_to", "hardlink_to", "rmdir"}
+ANY_RECEIVER = {"write_text", "write_bytes", "touch", "symlink_to", "hardlink_to"}
+def writing(mode):
+    return mode is not None and not (isinstance(mode, ast.Constant) and mode.value in ("r", "rb", "rt"))
+def mode_of(node, at):
+    return node.args[at] if len(node.args) > at else next((k.value for k in node.keywords if k.arg == "mode"), None)
+def scan(source, skip_fn=None):
+    tree = ast.parse(source)
+    names = {}   # local name -> (module, attribute or None), through every import and alias
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for a in node.names:
+                names[a.asname or a.name.split(".")[0]] = (a.name.split(".")[0] if not a.asname else a.name, None)
+        elif isinstance(node, ast.ImportFrom) and node.module:
+            for a in node.names:
+                names[a.asname or a.name] = (node.module.split(".")[0], a.name)
+    skip = set()
+    if skip_fn:
+        for node in ast.walk(tree):
+            if isinstance(node, ast.FunctionDef) and node.name == skip_fn:
+                skip |= {id(n) for n in ast.walk(node)}
+    found = []
+    for node in ast.walk(tree):
+        if id(node) in skip or not isinstance(node, ast.Call):
+            continue
+        f = node.func
+        target = None
+        if isinstance(f, ast.Name):
+            target = names.get(f.id, ("builtins", f.id) if f.id == "open" else None)
+        elif isinstance(f, ast.Attribute) and isinstance(f.value, ast.Name) and f.value.id in names \
+                and names[f.value.id][1] is None:
+            target = (names[f.value.id][0], f.attr)
+        if target:
+            module, attr = target
+            if module == "builtins" and attr == "open" or (module, attr) in (("io", "open"), ("codecs", "open")):
+                if writing(mode_of(node, 1)):
+                    found.append(node.lineno)
+                continue
+            if module in WRITES and (WRITES[module] is None or attr in WRITES[module]):
+                found.append(node.lineno)
+            continue
+        if isinstance(f, ast.Attribute):
+            receiver = f.value
+            on_path = isinstance(receiver, ast.Call) and (
+                (isinstance(receiver.func, ast.Name) and names.get(receiver.func.id) == ("pathlib", "Path")) or
+                (isinstance(receiver.func, ast.Attribute) and isinstance(receiver.func.value, ast.Name)
+                 and names.get(receiver.func.value.id) == ("pathlib", None)))
+            if f.attr in ANY_RECEIVER or (on_path and f.attr in PATH_WRITES) or (f.attr == "open" and writing(mode_of(node, 0))):
+                found.append(node.lineno)
+    return found
+SAMPLE = '''
+import os as o, shutil as sh, builtins, pathlib, io
+from os import replace
+from pathlib import Path
+from tempfile import mkstemp as ms
+def f(p, q, x):
+    Path(p).write_text("x")
+    pathlib.Path(p).open("w")
+    replace(p, q)
+    sh.copy(p, q)
+    builtins.open(p, "w")
+    o.remove(p)
+    open(p, mode="w")
+    open(p, "wb")
+    ms()
+    Path(p).unlink()
+    x.write_bytes(b"")
+    io.open(p, "a")
+    o.unlink(p)
+    Path(p).replace(q)
+    x.open(mode="x")
+    o.fdopen(3, "w")
+'''
+CLEAN = '''
+import os, json
+import run_files
+def g(p, name):
+    open(p)
+    open(p, "rb")
+    name[:-5].replace("_", " ")
+    run_files.write_text(p, "x")
+    os.path.join(p, name)
+    json.dumps({}).replace("a", "b")
+'''
+real = []
+for name in sorted(os.listdir(sys.argv[1])):
+    if name.endswith(".py") and name not in ("run_files.py", "sam_track.py"):
+        source = open(os.path.join(sys.argv[1], name), encoding="utf-8").read()
+        real += [f"{name}:{n}" for n in scan(source, "_older_python")]   # the Python 3.9 path is its own copy
+print(len(scan(SAMPLE)), len(scan(CLEAN)), len(real), *real)
+PY
+)" "the scanner sees every write form, none in a harmless one, and no module but run_files writes a file (N6)"
 
 # Round 6 (Q1): the steps that write into a directory are a closed list.
 rm -rf "$WORK/typo"

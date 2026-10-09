@@ -41,25 +41,28 @@ Issue: [#23](https://github.com/PsychQuant/codex-pro/issues/23)
   目錄的人。
 - 登記與寫入各只有一個入口：每一步經同一個 `Step` 登記它自己寫的檔（含 codex-call、SAM 為它寫的那一個），中途停下或被
   中斷時也一樣；帳本已經發現不符的紀錄不會被登記、重新登記或移除條目，帳本不見時不重建；`result` 不登記任何東西，也不把
-  結果檔寫進 run 目錄。所有寫入（含影格複本、裁切圖、封存檔）先寫暫存檔再以 `os.replace` 換上，名字上的 symlink、硬連結
-  與 FIFO 都會被換掉而不會被寫穿；run 自己的目錄是 symlink 時不寫進去；`--out` 是使用者的路徑，那裡是 symlink 或 FIFO
+  結果檔寫進 run 目錄（路徑照作業系統的方式只解析一次，先跟隨 symlink 再處理 `..`，判斷與寫入用同一個目錄）。所有寫入
+  （含影格複本、裁切圖、封存檔）先寫到實際目錄下的暫存檔再以 `os.replace` 換上，名字上的 symlink、硬連結與 FIFO 都會被換掉
+  而不會被寫穿；run 自己的目錄是 symlink 時不寫進去；`--out` 是使用者的路徑，那裡是 symlink 或 FIFO
   時改為拒絕。
 - 結果檔只用帳本核對過的紀錄產生，沒通過的只列名一次，frontmatter 記為 `target_invalid`（run 已因別的錯誤停下時保留
   那個錯誤）；frontmatter 每個欄位只寫自己的格式，否則寫 `invalid`；`seal_broken` 只有 true／false。核對過的紀錄仍無法
   呈現時，結果檔只寫固定內容與 run 自己的錯誤類別；result 自己失敗不取代 run 原本的錯誤。
 - 只有 codex-call 根本沒能啟動時才撤回這一輪的紀錄（連同為它登記的 profile）；啟動之後的任何事（含輸出無法解碼）都不
   撤回。`ask` 在 codex-call 執行中被 SIGINT 或 SIGTERM 中斷時，codex-call 跟著終止，記為 `backend_error`（算作已送出）；
-  codex-call 啟動期間中斷會先被擋住。其他時候被中斷記為 `internal_error`，已寫出的檔照樣登記。回覆不是 UTF-8 時為 `parse_failed`。工具的輸出一律以 UTF-8 解碼，Big5、Shift-JIS 的 locale 下
+  從記下請求到 codex-call 啟動之間中斷會先被擋住，啟動失敗（含子行程在執行 codex-call 之前失敗）時在擋住的狀態下撤回；
+  第一個中斷之後的中斷在停下期間一律忽略。其他時候被中斷記為 `internal_error`，已寫出的檔照樣登記。回覆不是 UTF-8 時為 `parse_failed`。工具的輸出一律以 UTF-8 解碼，Big5、Shift-JIS 的 locale 下
   檔名含中日文的圖也量得到尺寸。
 - `--vocab` 可以是管線或程序替換（`--vocab <(...)`）；run 的紀錄仍只讀一般檔案。
-- 「已經做過」以帳本為準：隱私確認、封存、這一輪的請求、被拒的放大輪答案、init 的嘗試，檔案或它的帳本條目任一存在就算，
-  移開再放回不會讓一步重來。除了 `init`、`confirm-privacy`、`adjudicate` 與 `result`，每一步都要求 init 完成。
+- 「已經做過」以帳本為準，不讀沒核對過的內容：封存與被拒的放大輪答案看帳本條目（有檔案沒條目時停在 not entered），
+  這一輪的請求看核對過的請求紀錄，隱私確認與 init 的嘗試看檔案或條目是否存在；移開再放回不會讓一步重來。除了 `init`、`confirm-privacy`、`adjudicate` 與 `result`，每一步都要求 init 完成。
 - 被拒絕而不取代 run 錯誤的指令列成四組的封閉清單：已經做過、還不能做或沒有事可做、Claude 的放大輪答案沒通過檢查、
   指令沒有指到一步。
 - run 的錯誤若與帳本不符，或永遠解不開（init 嘗試記下之後的 init 錯誤、請求記下之後那一輪的錯誤），不會被其他步驟取代或
   清除；用掉與否在寫下錯誤的當下判定、記在錯誤裡。`ask` 送出前停下的錯誤，在重跑時請求一記下就清除，所以這一輪之後
   即使被 SIGKILL，結果檔也照紀錄推出這個失敗。
-- Python 3.9 等舊版只回答 `runtime_unavailable`、記進錯誤歷史並寫自己的結果檔，不改 run 的錯誤與帳本。
+- Python 3.9 等舊版只回答 `runtime_unavailable`、記進錯誤歷史並寫自己的結果檔（固定內容，不讀 run 的紀錄），不改 run 的
+  錯誤與帳本；run 照原樣，改用 3.10 以上重跑那一步即可，之後寫的結果檔照紀錄呈現 run，舊版的停下只留在歷史。
 - 外來文字的封閉清單是六種（含 Claude 答案裡的文字與 Codex 的回覆），不進結果檔；推導出來的紀錄（比對結果、裁決）要連
   來源一起核對過才呈現；訊息以位置稱呼使用者給的圖，`--run`、`--vocab`、`--out` 以角色稱呼。
 - 原生 bundle 的 preflight 失敗在登入檢查之前回報；沒有送過請求時，結果檔從 `runtime_error.txt` 取錯誤類別。
