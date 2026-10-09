@@ -479,6 +479,6 @@
 - [x] 22.4 文件：SKILL Step 3、5，xval 的模組 docstring，CHANGELOG（R5）。
   - 驗證：`bash tests/run.sh` 只剩 #24。
   - [after: 22.3]
-- [ ] 22.5 真實後端端到端（第十七次）。
+- [x] 22.5 真實後端端到端（第十七次）。
   - 驗證：紀錄寫進 e2e-checklist §F。
   - [after: 22.4]

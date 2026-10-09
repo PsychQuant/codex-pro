@@ -379,6 +379,14 @@ f01 是 PIL 寫出的 3000×1875 PNG，f02 是 PIL 寫出的 JPEG（品質 92）
 - 在這個 run 的複本把 `.gitignore` 第一行前加一行註解，再以 `--out <複本>/ledger.json` 寫結果檔：停在 `target_invalid`，帳本沒有改變。
 - 帳本 29 筆，跑完後沒有任何不符、沒有 `error.json`、沒有暫存檔；複本與裁切圖的權限依使用者的 umask（022 時為 0644），不含 EXIF、XMP 或文字區塊；結果檔沒有 error、`invalid`、「not shown」「never sealed」、外來文字、資料夾名稱、撇號或 `<!--`。
 
+第十七次紀錄：2026-10-09，codex-pro `b587337`（第十七輪 verify 的修正：兩個直譯器在進入點用同一條規則拒絕含 `..` 或是 symlink 的 `--run`、撤回與 nothing was sent 一致、紀錄只有一個判斷），
+同一個 runtime 與 profile、同一組 PIL 合成圖，資料夾名稱含撇號、括號與 `<!--`；`confirm-privacy` 以結尾帶 `/.` 的 `--run` 執行。
+
+- 第一輪 8 秒、放大輪 8 秒，各一次請求；放大輪題目檔與全新 subagent 作答的那份逐字相同。
+- 分歧三筆全是植入的錯誤；裁決為兩筆 `resolved_codex`、一筆無法裁決，與前幾次相同；`result` 回報的路徑打得開。
+- 對這個 run 建一個 symlink，以它當 `--run` 跑 `result`（Python 3.13 與 macOS 內建的 3.9 各一次）與 `crops`：三次都停在 `target_invalid`（--run 是 symlink），沒有寫出結果檔，run 裡每個檔的 SHA 前後相同。
+- 帳本 29 筆，跑完後沒有任何不符、沒有 `error.json`、沒有暫存檔；複本與裁切圖的權限依使用者的 umask（022 時為 0644），不含 EXIF、XMP 或文字區塊；結果檔沒有 error、`invalid`、「not shown」「never sealed」、外來文字、資料夾名稱、撇號或 `<!--`。
+
 ## Post-test cleanup checklist
 
 - [ ] B 段使用的 disposable account／VM 沒有污染日常 Codex home
