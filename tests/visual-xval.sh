@@ -3082,6 +3082,27 @@ print(len(found), *found)
 PY
 )" "no module but run_files writes a file, by any call form (L8)"
 
+# Security review after 8cd6987: every path writes within the user's umask, so a private umask keeps files private.
+rm -rf "$WORK/r14p"; mkdir -p "$WORK/r14p"
+assert_eq "600 600" "$(cd "$WORK/r14p" && umask 077 && python3 -B - "$SCRIPTS" "$WORK/r14p" <<'PY'
+import os, sys, stat
+sys.path.insert(0, sys.argv[1])
+import run_files, sam_track
+run_files.write_bytes(os.path.join(sys.argv[2], "a.json"), b"{}")
+sam_track.write_track(os.path.join(sys.argv[2], "track.json"), {"sam_status": "ok"})
+print(oct(stat.S_IMODE(os.stat(os.path.join(sys.argv[2], "a.json")).st_mode))[2:],
+      oct(stat.S_IMODE(os.stat(os.path.join(sys.argv[2], "track.json")).st_mode))[2:])
+PY
+)" "xval's write entry and SAM's track follow a private umask"
+if [ -x "$OLDPY" ] && "$OLDPY" -c 'import sys; sys.exit(0 if sys.version_info < (3, 10) else 1)' 2>/dev/null; then
+  rm -rf "$WORK/r14q"; mkdir -p "$WORK/r14q"; xval confirm-privacy --run "$WORK/r14q"
+  ( cd "$WORK/project" && umask 077 && "$OLDPY" "$SCRIPTS/xval.py" result --run "$WORK/r14q" --out "$WORK/r14q_result.md" >/dev/null 2>&1 )
+  assert_eq "600" "$(python3 -c 'import os,stat,sys; print(oct(stat.S_IMODE(os.stat(sys.argv[1]).st_mode))[2:])' "$WORK/r14q_result.md")" \
+    "an old Python writes its result file within a private umask"
+else
+  skip "an old Python writes its result file within a private umask" "no Python older than 3.10 at $OLDPY"
+fi
+
 # Round 6 (Q1): the steps that write into a directory are a closed list.
 rm -rf "$WORK/typo"
 xval confirm-privacy --run "$WORK/typo/deep/run"

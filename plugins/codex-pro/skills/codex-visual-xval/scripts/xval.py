@@ -59,7 +59,9 @@ def _older_python(argv):
         try:
             with os.fdopen(fd, "wb") as fh:
                 fh.write(data)
-            os.chmod(tmp, 0o644)   # as the main path writes them (round 13, J6)
+            mask = os.umask(0)   # this path runs one thread, so reading the umask this way is safe
+            os.umask(mask)
+            os.chmod(tmp, 0o666 & ~mask)   # within the user's umask, as the main path writes (round 13, J6)
             os.replace(tmp, path)
         except BaseException:
             try:

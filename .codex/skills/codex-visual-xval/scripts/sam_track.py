@@ -27,6 +27,11 @@ from typing import Any
 sys.dont_write_bytecode = True   # no __pycache__ next to the bundled scripts
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
+# The user's umask, read once at import, before torch starts any thread: setting it later to read it would race.
+# Files are written within it, so a private umask keeps the track private (background security review after 8cd6987).
+_UMASK = os.umask(0)
+os.umask(_UMASK)
+
 COLLAPSE_IOU = 0.5
 MODEL_ID = "facebook/sam2.1-hiera-large"
 MODEL_REVISION = "665f8e2ad61cf5f53d65644ff27c8ee525124610"   # the revision tracking was verified with (2026-10-07)
@@ -262,23 +267,27 @@ def track(frames_path: str, anchors_path: str, out_path: str) -> None:
             distance = round(min(math.hypot(a[0] - b[0], (a[1] - b[1]) * height / width) for a, b in pairs), 2) if pairs else None
             results[name] = {"anchor": anchor["frame"], "invalid": iou > COLLAPSE_IOU, "max_iou": round(iou, 3),
                              "objects": objects, "distance_pct": distance}
-    # Written to a new temporary file and moved over the name, as xval writes its records, so a link at the
-    # name is replaced and never written through (#23 verify round 12, H1). This runs in SAM's own Python,
-    # which does not load xval's modules.
+    write_track(out_path, {"sam_status": "ok", "model": MODEL_ID, "revision": MODEL_REVISION, "class": plan["class"],
+                           "device": device, "frames": results,
+                           "invalid_frames": sorted(f for f, r in results.items() if r["invalid"])})
+    print(json.dumps({"sam_status": "ok", "frames": len(results)}))
+
+
+def write_track(out_path: str, data: dict) -> None:
+    """Written to a new temporary file and moved over the name, as xval writes its records, so a link at the name is
+    replaced and never written through (#23 verify round 12, H1), with the mode the user's umask allows. This runs in
+    SAM's own Python, which does not load xval's modules."""
     import tempfile
     fd, tmp = tempfile.mkstemp(dir=os.path.dirname(os.path.abspath(out_path)), prefix=".xval-", suffix=".tmp")
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as fh:
-            json.dump({"sam_status": "ok", "model": MODEL_ID, "revision": MODEL_REVISION, "class": plan["class"],
-                       "device": device, "frames": results,
-                       "invalid_frames": sorted(f for f, r in results.items() if r["invalid"])}, fh, indent=1)
-        os.chmod(tmp, 0o644)   # as xval writes its records; the umask is not touched in a threaded process (round 14)
+            json.dump(data, fh, indent=1)
+        os.chmod(tmp, 0o666 & ~_UMASK)
         os.replace(tmp, out_path)
     except BaseException:
         if os.path.lexists(tmp):
             os.remove(tmp)
         raise
-    print(json.dumps({"sam_status": "ok", "frames": len(results)}))
 
 
 def option(argv: list[str], name: str) -> str | None:
