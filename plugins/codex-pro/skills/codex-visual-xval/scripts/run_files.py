@@ -73,12 +73,15 @@ def resolved(path: str) -> tuple[str, str]:
 def named_run(run: str) -> str:
     """The run directory as named on the command line, settled once where a step starts, so every path of the run is
     built from it (#23 verify round 16, Q1). A name with '..' is refused: its spelling and the directory the system
-    reaches can differ. A trailing '/' or '/.' is dropped, so a run directory that is a symbolic link is judged by
-    its own name, however it is written."""
+    reaches can differ. A trailing '/' or '/.' is dropped, so a run directory that is a symbolic link is seen by its
+    own name, however it is written, and refused: every step, the result step included, writes nothing through it, so a
+    step that writes a subdirectory first (crops) cannot write into the link's target either (round 17, R1, R3)."""
     if ".." in run.split(os.sep):
         raise Stop("target_invalid", "the --run directory is named with '..'; name it without '..'", record=False)
     while len(run) > 1 and (run.endswith(os.sep) or run.endswith(os.sep + ".")):
         run = run[:-1] if run.endswith(os.sep) else (run[:-2] or os.sep)
+    if os.path.islink(run):
+        raise Stop("target_invalid", "the --run directory is a symbolic link; name the directory itself, not a link to it", record=False)
     return run
 
 
@@ -292,12 +295,20 @@ def requested(run: str) -> bool:
     return isinstance(requests, dict) and any(isinstance(r, dict) and r.get("requested_at") for r in requests.values())
 
 
+def present(run: str, name: str, entries: dict | None = None) -> bool:
+    """Whether the record `name` is there: by its ledger entry, or by what the ledger sees as a record at the name (a
+    regular file, or a link to one). The one test of a record, as done() and differences() make it; a FIFO, a dangling
+    link or a directory at the name is not one (#23 verify round 17, R4)."""
+    entries = ledger(run) if entries is None else entries
+    return name in entries or safe_digest(os.path.join(run, name)) is not None
+
+
 def pending(run: str, name: str) -> bool:
-    """Whether a record of PENDING may still be without an entry: Claude's answers until their seal exists, the
+    """Whether a record of PENDING may still be without an entry: Claude's answers until their seal is there, the
     profile until a request is recorded."""
     if name == "profile.json":
         return not requested(run)
-    return not os.path.exists(os.path.join(run, PENDING[name]))
+    return not present(run, PENDING[name])
 
 
 def ledger(run: str) -> dict:
@@ -385,6 +396,7 @@ class Step:
     def release(self, name: str) -> None:
         """Take back an entry this step adopted, as when the request the profile was entered for is withdrawn because
         codex-call could not start: the profile is pending again (round 13, J2)."""
+        self.pending.pop(name, None)   # not entered later either, when the step's own commit failed (round 17, R2)
         if name in self.adopted:
             entries = ledger(self.run)
             if entries.pop(name, None) is not None:
@@ -558,8 +570,8 @@ def checked_inputs(run: str) -> None:
 
 def checked_comparison(run: str) -> dict:
     """The comparison and both answer files as `compare` read and wrote them (L3; round 6, W2)."""
-    if not os.path.exists(os.path.join(run, "comparison.json")) and "comparison.json" not in ledger(run):
-        # nothing to work on yet, which is no new failure of the run: its own error stays (round 10, D7)
+    if not present(run, "comparison.json"):
+        # nothing to work on yet, which is no new failure of the run: its own error stays (round 10, D7; round 17, R4)
         raise Stop("target_invalid", "no comparison: run `compare` first", record=False)
     checked(run, ANSWERS + ("comparison.json",))
     return load(os.path.join(run, "comparison.json"))

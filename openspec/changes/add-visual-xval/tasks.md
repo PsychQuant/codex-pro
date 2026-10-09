@@ -467,3 +467,18 @@
 - [x] 21.5 真實後端端到端（第十六次）。
   - 驗證：紀錄寫進 e2e-checklist §F。
   - [after: 21.4]
+
+## 22. Verify 第十七輪修正：兩個直譯器在進入點用同一條規則（#23 第十七輪 report 的 R1–R6）
+
+- [x] 22.1 規格與 design（design「第十七輪」；`--run` 的進入點規則含 symlink；結果檔第 6 類與空的 `--out`；拒絕第四組；Blind Codex 的句子；紀錄只有一個判斷）。
+  - 驗證：`spectra validate` 與 `spectra analyze` 無 warning。
+- [x] 22.2 `named_run()` 也拒絕 symlink；3.9 路徑在進入點用同一條規則；主路徑 `--out ""` 照第 2 類拒絕（R1、R3）。
+  - [after: 22.1]
+- [x] 22.3 撤回與訊息一致、`release()` 拿掉待登記的 profile（R2）；`present()` 取代各處的 `exists()`（R4）；`main` 的外層中斷網、`write_track` 的目錄檢查（R6）。
+  - [after: 22.2]
+- [x] 22.4 文件：SKILL Step 3、5，xval 的模組 docstring，CHANGELOG（R5）。
+  - 驗證：`bash tests/run.sh` 只剩 #24。
+  - [after: 22.3]
+- [ ] 22.5 真實後端端到端（第十七次）。
+  - 驗證：紀錄寫進 e2e-checklist §F。
+  - [after: 22.4]

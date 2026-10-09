@@ -16,12 +16,14 @@ The runtime comes from RUN/runtime.txt and any native preflight error from
 RUN/runtime_error.txt; both are written by the skill's runtime-resolution step.
 
 Exit status 5 means the step stopped with a structured error: {"error", "detail"} on stdout.
-When --run names a run directory, a line also goes to RUN/errors.jsonl (skipped when that file
-is not a regular file). The stop becomes the run's error in RUN/error.json except in these
-cases, and only these: one of the four groups of refusals the spec lists (a step already done;
-a step that cannot be done yet or has nothing to do; Claude's zoom answers failing the checks;
-a command that names no step); the run already keeps an error that does not match its ledger
-or can never be resolved; the ledger cannot take the entry; the result step's own failure; and
+A --run named with '..', or that is a symbolic link, is refused before anything else and
+nothing at all is written. Otherwise, when --run names a run directory, a line also goes to
+RUN/errors.jsonl, unless that file is not a regular file or cannot be written. The stop
+becomes the run's error in RUN/error.json except in these cases, and only these: one of the
+four groups of refusals the spec lists (a step already done; a step that cannot be done yet
+or has nothing to do; Claude's zoom answers failing the checks; a command that names no step);
+the run already keeps an error that does not match its ledger or can never be resolved; the
+ledger cannot take the entry; error.json cannot be written; the result step's own failure; and
 any step under Python older than 3.10. Nothing is retried. Steps that see Codex's answers print
 only counts and identifiers, never answer values, so Claude can still answer the zoom round
 blind.
@@ -63,7 +65,12 @@ def _older_python(argv):
     # names no run this path writes into
     while len(run) > 1 and (run.endswith(os.sep) or run.endswith(os.sep + ".")):
         run = run[:-1] if run.endswith(os.sep) else (run[:-2] or os.sep)
-    named = ".." not in run.split(os.sep)
+    refusal = ("the --run directory is named with '..'; name it without '..'" if ".." in run.split(os.sep)
+               else "the --run directory is a symbolic link; name the directory itself, not a link to it" if os.path.islink(run) else None)
+    if refusal:   # the same rule and words as the main path, for every step, the result step included (round 17, R1)
+        print(json.dumps({"error": "target_invalid", "detail": refusal}))
+        sys.exit(5)
+    named = True
     def joined(path):   # made absolute by joining, never respelled; the working directory only for a relative path
         return path if os.path.isabs(path) else os.path.join(os.getcwd(), path)
     def resolved(path):   # as on the main path (round 15, M1; round 16, Q3); 3.9-compatible
@@ -196,7 +203,7 @@ import media  # noqa: E402
 import result_file  # noqa: E402
 from run_files import (Stop, Step, INPUTS, adopt_run_dir, append_text, checked, checked_comparison,  # noqa: E402
                        checked_inputs, discard, done, dump, failure, initialised, is_run_dir, keeps_error, ledger,
-                       ledger_usable, named_run,
+                       ledger_usable, named_run, present,
                        load, neutral_names, now_iso, remove, requested, run_dir, scratch, uses_up, write_bytes,
                        write_text)
 from codex_errors import classify, login_problem  # noqa: E402
@@ -352,7 +359,7 @@ def seal_answers(run: str, zoom: bool, files: Step) -> None:
         raise Stop("target_invalid", "Claude's zoom answers already failed the checks, so the zoom round is not used; "
                    "answers fixed afterwards are not sealed", record=False)
     initialised(run)   # after the refusals of what is done (T6), before anything else (round 12, G2)
-    if zoom and not os.path.exists(os.path.join(run, "zoom_plan.json")) and "zoom_plan.json" not in entries:
+    if zoom and not present(run, "zoom_plan.json", entries):   # the one test of a record (round 17, R4)
         # nothing to answer yet: no rejection is written and the run's error stays (round 11, F8)
         raise Stop("target_invalid", "no zoom plan yet: run `crops` first; nothing was sealed", record=False)
     if zoom:
@@ -551,16 +558,22 @@ def call_codex(run: str, prompt: str, images: list[str], tag: str, argv: list[st
             # before it was executed included: the request is withdrawn and the profile entry taken back while the
             # interrupts are still held (round 15, M2; round 16, Q7). If that fails too, the request stays recorded and
             # the round counts as used up, the safe direction.
+            withdrawn = False
             try:
                 withdraw_request(run, rnd)
                 files.release("profile.json")   # the profile was not used: pending again (round 12, H6; round 13, J2)
+                withdrawn = True
             except (OSError, Stop):
                 pass
-            if starting and isinstance(exc, OSError):
-                raise Stop("runtime_unavailable", f"cannot run codex-call: {failure(exc)}; nothing was sent")
-            if starting and isinstance(exc, (ValueError, TypeError, subprocess.SubprocessError)):
-                raise Stop("runtime_unavailable", "cannot run codex-call: the new process could not be started; "
-                           "nothing was sent")   # in xval's own words, not the interpreter's (round 16, Q7)
+            # what the answer says follows what happened to the request (round 17, R2)
+            tail = ("nothing was sent" if withdrawn
+                    else "the request could not be withdrawn, so this round counts as used up")
+            if starting and isinstance(exc, (OSError, ValueError, TypeError, subprocess.SubprocessError)):
+                why = failure(exc) if isinstance(exc, OSError) else "the new process could not be started"
+                raise Stop("runtime_unavailable", f"cannot run codex-call: {why}; {tail}")   # xval's own words (Q7)
+            if isinstance(exc, Stop) and "nothing was sent" not in exc.detail:
+                raise Stop(exc.error, f"{exc.detail}; {tail}", record=exc.record, source=exc.source, records=exc.records,
+                           step=exc.step)
             raise
     except BaseException:
         signal.pthread_sigmask(signal.SIG_SETMASK, previous)   # an interrupt held until now arrives after the above
@@ -642,7 +655,7 @@ def before_request(run: str, rnd: str) -> None:
     initialised(run)   # round 12, G2
     if rnd == "zoom":   # what cannot be done yet keeps the run's own error (round 11, F8)
         for name, step in (("comparison.json", "compare"), ("zoom_plan.json", "crops")):
-            if not os.path.exists(os.path.join(run, name)) and name not in entries:
+            if not present(run, name, entries):   # the one test of a record (round 17, R4)
                 raise Stop("target_invalid", f"no {name[:-5].replace('_', ' ')} yet: run `{step}` first; nothing was sent",
                            record=False)
         checked(run, ("zoom_plan.json",), then="nothing was sent")
@@ -654,7 +667,7 @@ def before_request(run: str, rnd: str) -> None:
         raise Stop("target_invalid", "the privacy reminder has not been confirmed for this run "
                    "(run `confirm-privacy` after the user agrees); nothing was sent")
     answers, seal = ("zoom_claude.json", "zoom_seal.json") if rnd == "zoom" else ("claude.json", "seal.json")
-    if not os.path.isfile(os.path.join(run, seal)) and seal not in ledger(run):
+    if not present(run, seal):
         raise Stop("target_invalid", "Claude's answers are not sealed; nothing was sent")
     # what is sent is what was sealed, asked about the inputs as init wrote them (U6; round 9); a reply file there
     # before the request is not codex-call's, so it stops the request (round 12, G3)
@@ -740,8 +753,8 @@ def zoom_answers(plan: dict, data: Any, error: str, who: str) -> dict:
 def compare(run: str) -> None:
     initialised(run)   # round 12, G2
     entries = ledger(run)
-    sealed = os.path.exists(os.path.join(run, "seal.json")) or "seal.json" in entries
-    if not os.path.exists(os.path.join(run, "codex.json")) and "codex.json" not in entries:
+    sealed = present(run, "seal.json", entries)   # the one test of a record (round 17, R4)
+    if not present(run, "codex.json", entries):
         # nothing to compare yet, which is no new failure of the run: a failed request keeps its error (B7)
         raise Stop("target_invalid", "no Codex answer to compare: "
                    + ("`ask --round 1` has not completed" if sealed else "Claude's answers were never sealed (K1)"),
@@ -903,10 +916,10 @@ def zoom_evidence(run: str) -> tuple[dict, dict]:
     edited after the fact to settle a disagreement (#23 verify B2): adjudicate has checked every record
     against the ledger before this runs, and Claude's side must have been sealed."""
     plan = load(os.path.join(run, "zoom_plan.json"), {})
-    if not plan or not os.path.exists(os.path.join(run, "zoom_codex.json")):
+    if not plan or not present(run, "zoom_codex.json"):
         return {}, {"zoom_run": False}
     status = {"zoom_run": True, "zoom_seal_broken": False}
-    if not os.path.isfile(os.path.join(run, "zoom_seal.json")):
+    if not present(run, "zoom_seal.json"):
         return {}, {**status, "zoom_seal_broken": True}
     try:
         mine = zoom_answers(plan, load(os.path.join(run, "zoom_claude.json")), "target_invalid", "Claude's zoom answers")
@@ -927,7 +940,7 @@ def zoom_evidence(run: str) -> tuple[dict, dict]:
 
 def adjudicate(run: str) -> None:
     # no init check: after any stop, a failed init included, it records that there is no comparison (SKILL Step 9)
-    if not os.path.exists(os.path.join(run, "comparison.json")) and "comparison.json" not in ledger(run):
+    if not present(run, "comparison.json"):   # the one test of a record (round 17, R4)
         # the run stopped before comparing: nothing to settle. A comparison that was entered and is gone
         # is a removed record, not "no comparison" (round 6, W2; round 9)
         dump(os.path.join(run, "adjudication.json"), {"counts": {}, "adjudications": [], "note": "no comparison"})
@@ -979,54 +992,61 @@ def main(argv: list[str]) -> None:
     signal.signal(signal.SIGTERM, interrupted)
     if signal.getsignal(signal.SIGINT) is signal.default_int_handler:   # an ignored SIGINT stays ignored
         signal.signal(signal.SIGINT, interrupted)
+    def unsent() -> str:   # an ask that stopped with no request on record sent nothing (round 16, Q7; round 17, R2)
+        return "; nothing was sent" if command == "ask" and is_run_dir(run) and not uses_up(run, step) else ""
+    def stopped_by_interrupt() -> None:
+        stopping.append(0)
+        commit_written(files)
+        stop_run(run, step, "internal_error", "interrupted: the step was stopped partway; what it wrote is entered in "
+                 "the run's ledger" + unsent(), command != "result", refused=False, files=files)
     try:
-        if command not in ("init", "confirm-privacy", "result") and not is_run_dir(run):
-            # the steps that may write into a directory that is not a run are a closed list (round 6, Q1)
-            raise Stop("target_invalid", "the --run directory is not a run directory", record=False)   # F5
-        if command == "confirm-privacy":
-            confirm_privacy(run)
-        elif command == "init":
-            skip = {"--run", "--vocab", "--first-side"}
-            images = [a for i, a in enumerate(argv[1:], 1)
-                      if a not in ("--run", "--vocab", "--sequence", "--first-side") and argv[i - 1] not in skip]
-            init(run, option(argv, "--vocab") or "", images, "--sequence" in argv, option(argv, "--first-side") or "", files)
-        elif command == "seal":
-            seal_answers(run, "--zoom" in argv, files)
-        elif command == "ask":
-            ask(run, argv, files)
-        elif command == "compare":
-            compare(run)
-        elif command == "crops":
-            crops(run)
-        elif command == "sam":
-            sam(run, files)
-        elif command == "adjudicate":
-            adjudicate(run)
-        elif command == "result":
-            result(run, argv)
-        else:
-            print(__doc__, file=sys.stderr)
-            sys.exit(64)
-        stopping.append(0)   # done: recording it is not cut short by an interrupt (round 16, Q7)
-        files.commit()   # what the step wrote, entered as it ends (round 12, G3)
-    except Stop as stop:   # result's own failure goes to the history only: the run's error stays (round 7, Y3)
-        stopping.append(0)   # stopping: recording it is not cut short by an interrupt (round 16, Q7)
-        commit_written(files)
-        stop_run(run, stop.step or step, stop.error, stop.detail, stop.record and command != "result",
-                 refused=not stop.record, records=stop.records, source=stop.source, files=files)
-    except KeyboardInterrupt:   # SIGINT or SIGTERM: what it wrote is entered, and the error says so (round 12, G2)
-        stopping.append(0)
-        commit_written(files)
-        detail = "interrupted: the step was stopped partway; what it wrote is entered in the run's ledger"
-        if command == "ask" and is_run_dir(run) and not uses_up(run, step):   # no request on record (round 16, Q7)
-            detail += "; nothing was sent"
-        stop_run(run, step, "internal_error", detail, command != "result", refused=False, files=files)
-    except Exception as exc:   # an unexpected failure still leaves a record and a result file
-        stopping.append(0)
-        commit_written(files)
-        stop_run(run, step, "internal_error", f"{type(exc).__name__}: {failure(exc)}", command != "result", refused=False,
-                 source="python", files=files)
-    clear_error(run, step, files)
+        try:
+            if command not in ("init", "confirm-privacy", "result") and not is_run_dir(run):
+                # the steps that may write into a directory that is not a run are a closed list (round 6, Q1)
+                raise Stop("target_invalid", "the --run directory is not a run directory", record=False)   # F5
+            if command == "confirm-privacy":
+                confirm_privacy(run)
+            elif command == "init":
+                skip = {"--run", "--vocab", "--first-side"}
+                images = [a for i, a in enumerate(argv[1:], 1)
+                          if a not in ("--run", "--vocab", "--sequence", "--first-side") and argv[i - 1] not in skip]
+                init(run, option(argv, "--vocab") or "", images, "--sequence" in argv, option(argv, "--first-side") or "", files)
+            elif command == "seal":
+                seal_answers(run, "--zoom" in argv, files)
+            elif command == "ask":
+                ask(run, argv, files)
+            elif command == "compare":
+                compare(run)
+            elif command == "crops":
+                crops(run)
+            elif command == "sam":
+                sam(run, files)
+            elif command == "adjudicate":
+                adjudicate(run)
+            elif command == "result":
+                result(run, argv)
+            else:
+                print(__doc__, file=sys.stderr)
+                sys.exit(64)
+            stopping.append(0)   # done: recording it is not cut short by an interrupt (round 16, Q7)
+            files.commit()   # what the step wrote, entered as it ends (round 12, G3)
+        except Stop as stop:   # result's own failure goes to the history only: the run's error stays (round 7, Y3)
+            stopping.append(0)   # stopping: recording it is not cut short by an interrupt (round 16, Q7)
+            commit_written(files)
+            stop_run(run, stop.step or step, stop.error, stop.detail, stop.record and command != "result",
+                     refused=not stop.record, records=stop.records, source=stop.source, files=files)
+        except KeyboardInterrupt:   # SIGINT or SIGTERM: what it wrote is entered, and the error says so (round 12, G2)
+            stopped_by_interrupt()
+        except Exception as exc:   # an unexpected failure still leaves a record and a result file
+            stopping.append(0)
+            commit_written(files)
+            stop_run(run, step, "internal_error", f"{type(exc).__name__}: {failure(exc)}" + unsent(), command != "result",
+                     refused=False, source="python", files=files)
+        clear_error(run, step, files)
+    except KeyboardInterrupt:
+        # one that arrived as a stop or the end began, before `stopping` was set, is answered and recorded too
+        # (round 17, R6); from then on `stopping` is set, so no later interrupt reaches this far
+        stopped_by_interrupt()
 
 
 def commit_written(files: Step) -> None:

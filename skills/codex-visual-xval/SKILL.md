@@ -139,9 +139,11 @@ python3 "$SKILL_DIR/scripts/xval.py" seal --run "$RUN"
 `error.json`；帳本不見或讀不到時，不會寫一份新的蓋過去。xval 寫任何檔都先寫到同一目錄下的暫存檔再換上：名字上的
 symlink、硬連結或 FIFO 會被換掉，不會被寫穿到 run 外；run 目錄與它的 `frames/`、`hires/`、`crops/` 本身是 symlink 時
 不寫進去（`--out` 是使用者自己的路徑：那裡是 symlink 或 FIFO 時改為拒絕，它的上層目錄由使用者決定；結果檔不寫進 run 目錄，
-`result` 也不登記任何東西，結果檔是否落在 run 裡以目錄本身判斷，預設位置也一樣；路徑照作業系統的方式只解析一次，先跟隨
+`result` 也不登記任何東西，結果檔是否落在 run 裡以目錄本身判斷，預設位置也一樣；路徑照作業系統的方式解析，先跟隨
 symlink 再處理後面的 `..`，作業系統到不了的目錄不算目錄，判斷與寫入都用這一個結果，回報的也是它；`--run` 指的目錄不論是不是 run 都不寫進去）。
-`--run` 在每一步開始時只定一次：含 `..` 的名字直接拒絕，結尾的 `/`、`/.` 去掉，所以 run 目錄是 symlink 時不論怎麼寫都不寫進去。例外只有兩種：尚未封存的那一輪 Claude 答案，以及請求記下之前的
+`--run` 在每一步開始時只定一次（兩個直譯器同一條規則）：含 `..` 的名字直接拒絕，結尾的 `/`、`/.` 去掉之後是 symlink 也直接拒絕；
+這兩種拒絕在任何事之前，什麼都不寫（連錯誤歷史也不記），所以 run 目錄是 symlink 時不論怎麼寫、哪一步（包括先寫子目錄的
+`crops`、以及 `result`）都不寫進去。例外只有兩種：尚未封存的那一輪 Claude 答案，以及請求記下之前的
 `profile.json`。不是紀錄的檔只有這些：`ledger.json` 本身、`.gitignore`、`errors.jsonl`、
 `claude_source.json`、`runtime.txt`、`runtime_error.txt`，以及 `frames/`、`hires/`、`crops/` 與 run 目錄裡以點開頭的檔案
 （Finder 的 `.DS_Store`、xval 自己的暫存檔）。「已經做過」的判斷只有三種，不讀帳本沒核對過的內容：封存過、放大輪答案被拒過、隱私確認過，以帳本條目為準（那裡有
@@ -287,8 +289,8 @@ init 還沒嘗試就拒絕，沒完成就停在 init 的錯誤；放大輪另外
 
 ## Step 5: Handle exit code
 
-`xval.py` 任何一步以 exit 5 結束，代表這一步沒有完成；stdout 有 `error` 與 `detail`。`--run` 是 run 目錄時
-`errors.jsonl` 也記一行（它不是一般檔時略過）。寫進 `$RUN/error.json` 的只有 run 的錯誤。三種情況要分開，訊息都照後面的表回報：
+`xval.py` 任何一步以 exit 5 結束，代表這一步沒有完成；stdout 有 `error` 與 `detail`。`--run` 含 `..` 或是 symlink 時
+一開始就拒絕，什麼都不寫；其餘情況下 `--run` 是 run 目錄時 `errors.jsonl` 也記一行（它不是一般檔或寫不出去時略過）。寫進 `$RUN/error.json` 的只有 run 的錯誤。三種情況要分開，訊息都照後面的表回報：
 
 - **指令被拒**：只有下面四組，不得依性質相似類推：
   - 這一步已經做過：再一次隱私確認、同一輪再封、Codex 問過那一輪之後封存、放大輪答案被拒後再封、重新 init、同一輪再送、
@@ -297,15 +299,18 @@ init 還沒嘗試就拒絕，沒完成就停在 init 的錯誤；放大輪另外
     Codex 還沒回答第一輪時的 compare、沒有比對結果時的 crops、需要比對結果卻沒有時的 sam、沒有比對結果或計畫裡
     沒有題目時的放大輪，以及計畫裡沒有題目時的 `seal --zoom`。
   - Claude 的放大輪答案沒通過檢查：放大輪不採用，run 照常繼續。
-  - 指令沒有指到一步：未知的 `--round`、`--run` 的名字含 `..`，或 `--run` 不是 run 目錄。
-  這不是 run 的錯誤，`$RUN/error.json` 不會改變，run 照原本的狀態繼續；只記在 `errors.jsonl`。
+  - 指令沒有指到一步：未知的 `--round`、`--run` 的名字含 `..` 或是 symlink，或 `--run` 不是 run 目錄。
+  這不是 run 的錯誤，`$RUN/error.json` 不會改變，run 照原本的狀態繼續；前三組只記在 `errors.jsonl`，第四組什麼都不記
+  （沒有可以寫的 run）。
 - **這一步跑不起來或寫不出檔，但 run 沒有停**：`python3` 比 3.10 舊時，`result` 以外的每一步都停在 `runtime_unavailable`
   （run 照原樣，改用 3.10 以上重跑那一步）；以及 `result` 自己的失敗（`target_invalid`：位置會落在 `--run` 指的目錄裡、
-  路徑沒有指名檔案或它的目錄不存在、`--out` 是 symlink 或不是一般檔、寫不出去；被中斷或意外失敗時是 `internal_error`）。
+  路徑沒有指名檔案（含空的 `--out`）或它的目錄不存在、`--out` 是 symlink 或不是一般檔、寫不出去；被中斷或意外失敗時是
+  `internal_error`；`--run` 含 `..` 或是 symlink 時屬於上面的第四組，什麼都不寫）。
   `$RUN/error.json` 不會改變；照訊息修好（換 Python、給 `--out` 一個 run 外的路徑）之後重跑同一步。
 - **run 停止**：`$RUN/error.json` 記下錯誤（run 已有一個與帳本不符或永遠解不開的錯誤，或帳本不見、讀不到時，這次只記進歷史，
-  原本的錯誤留著）。`ask` 在 codex-call 啟動之前被中斷時是 `internal_error`，訊息寫 nothing was sent，這一輪沒有用掉，修好後在
-  同一個 run 重跑。
+  原本的錯誤留著；error.json 寫不出去時也只剩歷史）。`ask` 在記下請求之後、codex-call 啟動之前停下時（啟動失敗、被中斷、
+  登記失敗或意外例外），請求會撤回，訊息寫 nothing was sent，這一輪沒有用掉，修好後在同一個 run 重跑；撤回本身失敗時，訊息
+  改說這一輪已經用掉，要另開一個 run。
   照下表回報，然後直接跳到 Step 9 寫結果檔。
 
 「同一個 run 可以再送」只在 `xval.py` 自己在呼叫 `codex-call` 之前就停下時成立：訊息寫 nothing was sent

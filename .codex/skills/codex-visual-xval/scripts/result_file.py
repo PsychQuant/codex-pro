@@ -12,7 +12,7 @@ import tempfile
 from typing import Any
 
 import compare_claims
-from run_files import (Stop, differences, explain, is_run_dir, ledger, lies_inside, resolved, safe_digest,
+from run_files import (Stop, differences, explain, is_run_dir, ledger, lies_inside, present, resolved, safe_digest,
                        write_bytes)
 
 
@@ -230,7 +230,7 @@ def result(run: str, argv: list[str]) -> None:
 
 def emit(text: str, error: str | None, argv: list[str], run: str | None = None) -> None:
     out = option(argv, "--out")
-    default = not out
+    default = out is None   # an empty --out names no file, as on the 3.9 path (round 17, R1)
     if default:   # the default location, decided before anything is created (round 14, L1)
         stamp = datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
         out = os.path.join(".codex-pro", f"visual-xval-{stamp}.md")
@@ -364,7 +364,7 @@ def render(run: str, stopped: dict | None) -> tuple[str, str | None]:
         label = "Runtime preflight detail" if fm["error"] in NATIVE_PREFLIGHT else "Detail"
         lines += [f"{label}: {error_detail(error)}", ""]
     lines += ["## Agreement", ""]
-    compared = os.path.exists(os.path.join(run, "comparison.json")) or "comparison.json" in entries
+    compared = present(run, "comparison.json", entries)   # the one test of a record (round 17, R4)
     if not compared:   # no comparison was made at all: nothing is hidden (round 11, F4)
         lines += ["No comparison was made."]
     elif not compared_ok:

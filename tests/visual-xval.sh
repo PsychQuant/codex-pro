@@ -3549,6 +3549,141 @@ print("ignored" if signal.getsignal(signal.SIGINT) is signal.SIG_IGN else "handl
 PY
 )" "an ignored SIGINT stays ignored (round 15, M2)"
 
+# Round 17 (R1, R3): both interpreters settle --run at the entry by one rule for every step, the result step included: a
+# name with '..', or a run directory that is a symbolic link, is refused and nothing is written; an empty --out names no
+# file on both.
+rm -rf "$WORK/r17a" "$WORK/r17a_out" "$WORK/r17a_link"; SEQ= new_run "$WORK/r17a"; mkdir -p "$WORK/r17a_out"
+ln -s "$WORK/r17a" "$WORK/r17a_link"
+RUN_OUT=$(cd "$WORK/project" && HOME="$WORK/home" python3 "$SCRIPTS/xval.py" result --run "$WORK/r17a/frames/.." --out "$WORK/r17a_out/m.md" 2>&1)
+assert_contains "$RUN_OUT" "'..'" "the result step refuses a --run named with '..' (R1)"
+RUN_OUT=$(cd "$WORK/project" && HOME="$WORK/home" python3 "$SCRIPTS/xval.py" result --run "$WORK/r17a_link" --out "$WORK/r17a_out/l.md" 2>&1)
+assert_contains "$RUN_OUT" "symbolic link" "and a --run that is a symbolic link (R1; R3)"
+RUN_OUT=$(cd "$WORK/project" && HOME="$WORK/home" python3 "$SCRIPTS/xval.py" result --run "$WORK/r17a" --out "" 2>&1)
+assert_contains "$RUN_OUT" '"error": "target_invalid"' "an empty --out names no file (R1)"
+if [ -x "$OLDPY" ] && "$OLDPY" -c 'import sys; sys.exit(0 if sys.version_info < (3, 10) else 1)' 2>/dev/null; then
+  RUN_OUT=$(cd "$WORK/project" && "$OLDPY" "$SCRIPTS/xval.py" result --run "$WORK/r17a/frames/.." --out "$WORK/r17a_out/m39.md" 2>&1)
+  assert_contains "$RUN_OUT" "'..'" "an old Python refuses a --run named with '..' the same way (R1)"
+  RUN_OUT=$(cd "$WORK/project" && "$OLDPY" "$SCRIPTS/xval.py" result --run "$WORK/r17a_link" --out "$WORK/r17a_out/l39.md" 2>&1)
+  assert_contains "$RUN_OUT" "symbolic link" "an old Python refuses a --run that is a symbolic link too (R1; R3)"
+  RUN_OUT=$(cd "$WORK/project" && "$OLDPY" "$SCRIPTS/xval.py" result --run "$WORK/r17a" --out "" 2>&1)
+  assert_contains "$RUN_OUT" '"error": "target_invalid"' "and an empty --out (R1)"
+else
+  skip "an old Python refuses a --run named with '..' the same way" "no Python older than 3.10 at $OLDPY"
+  skip "an old Python refuses a --run that is a symbolic link too" "no Python older than 3.10 at $OLDPY"
+  skip "and an empty --out" "no Python older than 3.10 at $OLDPY"
+fi
+assert_eq "none" "$(ls "$WORK/r17a_out" | wc -l | tr -d ' ' | sed 's/^0$/none/')" "no result file is written for any of them (R1)"
+rm -rf "$WORK/r17b" "$WORK/r17b_link"; cp -R "$WORK/run6w" "$WORK/r17b"; ln -s "$WORK/r17b" "$WORK/r17b_link"
+xval crops --run "$WORK/r17b_link"
+assert_contains "$RUN_OUT" "symbolic link" "crops through a run directory that is a symbolic link is refused (R3)"
+assert_no_file "$WORK/r17b/crops" "and writes nothing into its target, the crops included (R3)"
+
+# Round 17 (R2): "nothing was sent" is said exactly when the request was withdrawn; a withdrawal that fails leaves the
+# round used up and says so; a stop before codex-call starts takes the profile back, also from what is still pending.
+rm -rf "$WORK/r17c"; SEQ= new_run "$WORK/r17c"
+assert_eq "kept used-up-said" "$(printf '%s\n' "$(HOME="$WORK/home" python3 -B - "$WORK/r17c" "$SCRIPTS" "$WORK/stubbin/codex-call" <<'PY' 2>/dev/null
+import io, json, os, sys
+run, scripts, stub = sys.argv[1:4]; sys.path.insert(0, scripts)
+import xval
+def start(*a, **k):
+    raise OSError(8, "Exec format error")
+def withdraw(*a, **k):   # the withdrawal itself fails
+    raise OSError(28, "No space left on device")
+xval.runtime = lambda r: stub
+xval.subprocess.Popen = start
+xval.withdraw_request = withdraw
+buf = io.StringIO(); real = sys.stdout
+try:
+    xval.main(["ask", "--run", run, "--round", "1"])
+except SystemExit:
+    pass
+requests = json.load(open(f"{run}/requests.json"))
+error = json.load(open(f"{run}/error.json"))
+said = "used up" in error.get("detail", "") and "nothing was sent" not in error.get("detail", "")
+print("kept" if "1" in requests else "withdrawn", "used-up-said" if said else "nothing-sent-said")
+PY
+)" | tail -1)" "a withdrawal that fails leaves the round used up, and the answer says so (R2)"
+rm -rf "$WORK/r17d"; SEQ= new_run "$WORK/r17d"
+assert_eq "withdrawn pending nothing-sent" "$(printf '%s\n' "$(HOME="$WORK/home" python3 -B - "$WORK/r17d" "$SCRIPTS" "$WORK/stubbin/codex-call" <<'PY' 2>/dev/null
+import json, os, sys
+run, scripts, stub = sys.argv[1:4]; sys.path.insert(0, scripts)
+import xval, run_files
+xval.runtime = lambda r: stub
+original = run_files.enter
+calls = []
+def enter(*a, **k):   # the ledger cannot take the request's commit once, then works again
+    calls.append(1)
+    if len(calls) == 1:
+        raise OSError(28, "No space left on device")
+    return original(*a, **k)
+run_files.enter = enter
+try:
+    xval.main(["ask", "--run", run, "--round", "1"])
+except SystemExit:
+    pass
+requests = json.load(open(f"{run}/requests.json")) if os.path.exists(f"{run}/requests.json") else {}
+ledger = json.load(open(f"{run}/ledger.json"))
+detail = json.load(open(f"{run}/error.json")).get("detail", "")
+print("withdrawn" if "1" not in requests else "kept", "pending" if "profile.json" not in ledger else "entered",
+      "nothing-sent" if "nothing was sent" in detail else "silent")
+PY
+)" | tail -1)" "a commit that fails before codex-call starts withdraws the request, leaves the profile pending, and says nothing was sent (R2)"
+
+# Round 17 (R4): one test of a record everywhere: a FIFO at a name is not that record in "cannot be done yet" either.
+rm -rf "$WORK/r17e"; cp -R "$WORK/run6w" "$WORK/r17e"; rm -f "$WORK/r17e/comparison.json"
+python3 -B - "$WORK/r17e" <<'PY'
+import json, sys
+p = f"{sys.argv[1]}/ledger.json"; d = json.load(open(p)); d.pop("comparison.json", None); json.dump(d, open(p, "w"))
+PY
+mkfifo "$WORK/r17e/comparison.json"
+xval_t python3 crops --run "$WORK/r17e"
+assert_contains "$RUN_OUT" "no comparison" "a FIFO at comparison.json is no comparison for crops, not an internal error (R4)"
+xval_t python3 adjudicate --run "$WORK/r17e"
+assert_contains "$RUN_OUT" "no comparison" "nor for adjudicate, which records that there is none (R4)"
+rm -rf "$WORK/r17f"; xval init --run "$WORK/r17f" --vocab "$WORK/vocab.json" "$WORK"/imgs/*.png
+cp "$WORK/claude_marked.json" "$WORK/r17f/claude.json"; mkfifo "$WORK/r17f/seal.json"
+assert_eq "[]" "$(python3 -B - "$SCRIPTS" "$WORK/r17f" <<'PY' 2>/dev/null
+import sys; sys.path.insert(0, sys.argv[1]); import run_files
+print(run_files.differences(sys.argv[2], ("claude.json",)))
+PY
+)" "a FIFO at seal.json is no seal, so Claude's unsealed answers are still pending (R4)"
+
+# Round 17 (R6): an interrupt that arrives as a stop begins is still answered and recorded; SAM's track takes only a folder
+# the system reaches.
+rm -rf "$WORK/r17g"; xval init --run "$WORK/r17g" --vocab "$WORK/vocab.json" "$WORK"/imgs/*.png
+assert_eq "answered" "$(printf '%s\n' "$(HOME="$WORK/home" python3 -B - "$WORK/r17g" "$SCRIPTS" <<'PY' 2>/dev/null
+import sys
+run, scripts = sys.argv[1:3]; sys.path.insert(0, scripts)
+import xval
+original = xval.commit_written
+calls = []
+def commit_written(files):   # an interrupt raised inside the handler of another stop
+    calls.append(1)
+    if len(calls) == 1:
+        raise KeyboardInterrupt
+    return original(files)
+xval.commit_written = commit_written
+try:
+    xval.main(["seal", "--run", run])
+    print("finished")
+except SystemExit:
+    print("answered")
+except KeyboardInterrupt:
+    print("escaped")
+PY
+)" | tail -1)" "an interrupt inside the handling of a stop is still answered with exit 5 (R6)"
+rm -rf "$WORK/r17h"; mkdir -p "$WORK/r17h"
+assert_eq "refused" "$(python3 -B - "$SCRIPTS" "$WORK/r17h" <<'PY' 2>/dev/null
+import os, sys
+sys.path.insert(0, sys.argv[1]); import sam_track
+try:
+    sam_track.write_track(os.path.join(sys.argv[2], "missing", "..", "track.json"), {"sam_status": "ok"})
+    print("written")
+except OSError:
+    print("refused")
+PY
+)" "SAM's track refuses a folder the system does not reach (R6)"
+
 # Round 6 (Q1): the steps that write into a directory are a closed list.
 rm -rf "$WORK/typo"
 xval confirm-privacy --run "$WORK/typo/deep/run"

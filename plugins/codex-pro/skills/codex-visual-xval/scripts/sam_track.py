@@ -283,6 +283,8 @@ def write_track(out_path: str, data: dict) -> None:
     spelled = os.path.dirname(out_path if os.path.isabs(out_path) else os.path.join(os.getcwd(), out_path))
     if os.path.islink(spelled):
         raise OSError(0, "the run directory is a symbolic link; nothing was written into it")
+    if not os.path.isdir(spelled):   # a folder the system does not reach is no folder, as in resolved() (round 17, R6)
+        raise OSError(0, "the folder of the path does not exist; nothing was written")
     folder = os.path.realpath(spelled)
     target = os.path.join(folder, os.path.basename(out_path))
     fd, tmp = tempfile.mkstemp(dir=folder, prefix=".xval-", suffix=".tmp")
