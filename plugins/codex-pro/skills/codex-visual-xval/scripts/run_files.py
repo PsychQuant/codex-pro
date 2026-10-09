@@ -19,7 +19,7 @@ class Stop(Exception):
     request in one round). That is about the command, not the run, so it must not replace the run's
     error: a completed run stays completed, a rate_limit stays a rate_limit (#23 verify round 2, R6)."""
     def __init__(self, error: str, detail: str, record: bool = True, source: str = "xval",
-                 records: list[str] | None = None, step: str | None = None):
+                 records: list[str] | None = None, step: str | None = None, note: bool = False):
         super().__init__(detail)
         # source: who wrote the detail. Only xval's own text reaches the result file; codex-call's
         # messages, the runtime check's detail, Python's exception text and SAM's output stay in the
@@ -28,6 +28,9 @@ class Stop(Exception):
         # when it is not the command's own, as for an init that did not complete (round 12, G2).
         self.error, self.detail, self.record, self.source = error, detail, record, source
         self.records, self.step = records or [], step
+        # note: an ask that stopped between recording its request and codex-call's start; main adds what happened to
+        # the request once what the step wrote is entered (round 19, B2)
+        self.note = note
 
 
 def load(path: str, default: Any = None) -> Any:
@@ -175,9 +178,9 @@ def is_run_dir(run: str) -> bool:
     if not os.path.isfile(os.path.join(run, ".gitignore")):   # a FIFO there would stall every step (round 9, B2)
         return False
     try:
-        with open(os.path.join(run, ".gitignore"), encoding="utf-8") as fh:
-            return fh.readline().strip() == RUN_MARK
-    except OSError:
+        with open(os.path.join(run, ".gitignore"), "rb") as fh:   # the first line alone is decoded (round 19 audit)
+            return fh.readline().decode("utf-8").strip() == RUN_MARK
+    except (OSError, ValueError):   # a first line that is not UTF-8: not a run, answered in structure (round 19, L1)
         return False
 
 

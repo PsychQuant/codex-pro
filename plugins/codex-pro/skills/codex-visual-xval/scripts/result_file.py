@@ -453,20 +453,30 @@ def render(run: str, stopped: dict | None) -> tuple[str, str | None]:
               "- Each round is asked once per run. A new run on the same images is a fresh attempt the program cannot "
               "link to this one, and it is no longer blind to what this run showed."]
     vocab = record("vocab.json", {})
-    if vocab.get("relations"):
-        lines.append("- A SAM distance settles a relation both ways only when SAM measured as many tips as both sides "
+    unverified_vocab = "vocab.json" in bad   # nothing is said of it as a fact; conditions instead (round 19 audit)
+    if vocab.get("relations") or unverified_vocab:
+        lines.append(("- If the vocabulary has relations, a" if unverified_vocab else "- A")
+                     + " SAM distance settles a relation both ways only when SAM measured as many tips as both sides "
                      "counted, which treats the agreed count as the true count; both sides can miss the same object.")
-    if fm["sam_status"] == "ok" and vocab.get("track_point") != "tip":
+    if fm["sam_status"] == "ok" and unverified_vocab:
+        lines.append("- SAM gave count evidence only if the vocabulary does not declare `track_point: tip`: its point is "
+                     "the mask tip, which may not be the key point.")
+    elif fm["sam_status"] == "ok" and vocab.get("track_point") != "tip":
         lines.append("- The vocabulary does not declare `track_point: tip`, so SAM gave count evidence only: its point "
                      "is the mask tip, which may not be the key point.")
     count_only = sorted(set(vocab.get("classes", {})) - set(vocab.get("key_points", {})))
-    if count_only:   # no zoom question and no SAM evidence for them (#23 verify round 3, T8)
+    if "vocab.json" in bad or not vocab.get("classes"):   # not shown, for any reason: a condition (round 19, L7; audit)
+        lines.append("- Classes without a key point, if the vocabulary has any, are compared by count only, so count "
+                     "disagreements on them cannot be settled.")
+    elif count_only:   # no zoom question and no SAM evidence for them (#23 verify round 3, T8)
         lines.append(f"- Classes without a key point ({', '.join(count_only)}) are compared by count only: a count "
                      "disagreement on them gets no zoom question and no SAM evidence, so it cannot be settled.")
     first = fm["first_side_model"]
-    if first in ("", "invalid"):
-        lines.append("- The model that gave the first side's answers was not recorded"
-                     + (" in a valid form." if first else "."))
+    if "meta.json" in bad or first in ("", "invalid"):
+        # not shown, for any reason (not a run, not verified, absent, not a model identifier): a condition true of any
+        # run, never a claim about the record (round 19, L7; audit)
+        lines.append("- The model that gave the first side's answers is not shown here; if it was not a Claude model, both "
+                     "sides may come from one model family, whose errors are not independent.")
     elif not first.lower().startswith("claude"):
         lines.append(f"- The first side's answers came from `{first}`, not a Claude model. Both sides may then come from "
                      "one model family, whose errors are not independent, so agreement says less than it would across families.")

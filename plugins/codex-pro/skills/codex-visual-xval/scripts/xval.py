@@ -48,14 +48,20 @@ def _older_python(argv):
     """Stop under Python < 3.10 before anything below is defined: those definitions use 3.10
     syntax and would crash at import, leaving no result file (#23 verify B10). This function
     must itself stay 3.9-compatible. It keeps no copy of the rules for the run's error and ledger:
-    it reads none of the run's records and writes neither the run's error nor its ledger; it
-    answers, keeps a line in the error history and writes a result file in fixed text (round 14,
-    K2; round 16, Q5). The entry rule for --run, the run-directory test and the not-into---run
-    check are the main path's, restated here in 3.9 syntax so both interpreters apply them alike
-    (round 17, R1)."""
+    it reads none of the run's records and writes neither the run's error nor its ledger; every
+    step but result answers and keeps a line in the error history, and result writes a result file
+    in fixed text (round 14, K2; round 16, Q5; round 18, S1). The entry rule for --run, the
+    run-directory test and the not-into---run check are the main path's, restated here in 3.9
+    syntax so both interpreters apply them alike (round 17, R1). It holds SIGINT and SIGTERM from
+    its start until it exits, so it is never stopped partway (round 19, B1)."""
+    # held until the process exits, where a held signal is dropped: this path writes one history line or one small
+    # fixed-text file, so nothing it does is left half done and no temporary file is left behind (round 19, B1)
+    signal.pthread_sigmask(signal.SIG_BLOCK, {signal.SIGINT, signal.SIGTERM})
     found = "%d.%d.%d" % tuple(sys.version_info[:3])
-    # the interpreter by its name only: its directory can be a person's (round 8, K6)
+    # the interpreter by its name only: its directory can be a person's (round 8, K6); the result file shows the version
+    # alone, since a name is outside text (round 19, L8)
     detail = "Python 3.10 or later is required; this is Python %s (%s)" % (found, os.path.basename(sys.executable))
+    shown = "Python 3.10 or later is required; this is Python %s" % found
     command = argv[0] if argv else ""
     run = argv[argv.index("--run") + 1] if "--run" in argv and argv.index("--run") + 1 < len(argv) else None
     round_ = argv[argv.index("--round") + 1] if "--round" in argv and argv.index("--round") + 1 < len(argv) else None
@@ -108,9 +114,9 @@ def _older_python(argv):
         if not os.path.isfile(os.path.join(path, ".gitignore")):   # a FIFO would stall (round 9, B2)
             return False
         try:
-            with open(os.path.join(path, ".gitignore"), encoding="utf-8") as fh:
-                return fh.readline().strip() == "# copies of the images given to /codex-pro:codex-visual-xval"
-        except OSError:
+            with open(os.path.join(path, ".gitignore"), "rb") as fh:   # the first line alone is decoded
+                return fh.readline().decode("utf-8").strip() == "# copies of the images given to /codex-pro:codex-visual-xval"
+        except (OSError, ValueError):   # a first line that is not UTF-8: not a run (round 19, L1)
             return False
     def inside(folder):   # in the directory --run names, run or not, by device and inode (round 14, L2; round 16, Q4)
         try:
@@ -162,7 +168,7 @@ def _older_python(argv):
         lines = ["---"] + ["%s: %s" % kv for kv in fm] + ["---", "", "# Visual cross-validation", "",
                  "The result step stopped: `runtime_unavailable`. It does not read the run's records under this Python, so "
                  "nothing from them is shown; they are in the run directory. Write the result file again with Python 3.10 "
-                 "or later.", "", "Runtime preflight detail: " + detail, "",
+                 "or later.", "", "Runtime preflight detail: " + shown, "",
                  "## Agreement", "", "Not shown.", "", "## Disagreements", "", "Not shown.", "",
                  "## SAM evidence", "", "Not shown.", "", "## Seal", "", "Not checked.", "",
                  "## Limitations", "", "- Agreement between the two models does not establish that either is correct; "
@@ -202,24 +208,16 @@ def _older_python(argv):
             sys.exit(5)
         print(json.dumps({"result": target, "error": "runtime_unavailable"}))   # the file written (round 16, Q3)
         sys.exit(0)
-    def stopped(signum, frame):   # SIGTERM answered as SIGINT is, as on the main path (round 18 audit)
-        raise KeyboardInterrupt
-    signal.signal(signal.SIGTERM, stopped)
-    if signal.getsignal(signal.SIGINT) is signal.default_int_handler:   # an ignored SIGINT stays ignored
-        signal.signal(signal.SIGINT, stopped)
     try:
         write_result()
     except (KeyboardInterrupt, Exception) as exc:
-        # interrupted, or an unexpected failure: answered in structure and kept in the history, as the result file's
-        # list (5) says for both interpreters (round 18, T4); put() has already taken its temporary file away, and a
-        # second interrupt is ignored from here so it cannot cut the history line short (round 18 audit)
-        signal.signal(signal.SIGTERM, signal.SIG_IGN)
-        signal.signal(signal.SIGINT, signal.SIG_IGN)
+        # an unexpected failure: answered in structure and kept in the history, as the result file's list (5) says for
+        # both interpreters (round 18, T4); put() has already taken its temporary file away
         entry = {"error": "internal_error", "detail": "the result step stopped partway (%s)" % type(exc).__name__,
                  "step": "result", "at": now.isoformat(timespec="seconds"), "source": "xval"}
         try:
             history(run, entry)
-        except (OSError, KeyboardInterrupt):
+        except Exception:   # the answer goes out whatever the history does (round 19, L1)
             pass
         print(json.dumps({"error": entry["error"], "detail": entry["detail"]}))
         sys.exit(5)
@@ -233,7 +231,8 @@ import compare_claims  # noqa: E402
 import media  # noqa: E402
 import result_file  # noqa: E402
 from run_files import (Stop, Step, INPUTS, adopt_run_dir, append_text, checked, checked_comparison,  # noqa: E402
-                       checked_inputs, discard, done, dump, failure, initialised, is_run_dir, keeps_error, ledger,
+                       checked_inputs, differences, discard, done, dump, failure, initialised, is_run_dir, keeps_error,
+                       ledger,
                        ledger_usable, named_run, present,
                        load, neutral_names, now_iso, remove, requested, run_dir, scratch, uses_up, write_bytes,
                        write_text)
@@ -574,9 +573,11 @@ def call_codex(run: str, prompt: str, images: list[str], tag: str, argv: list[st
     previous = signal.pthread_sigmask(signal.SIG_BLOCK, held)
     try:
         first = not requested(run)   # before this request is recorded (round 14, L5)
-        record_request(run, rnd, requested_at=now_iso(), requested_epoch=datetime.datetime.now().timestamp())
         starting = False
         try:
+            # inside, so a request record that cannot be written is a stop before the start like any other: its answer
+            # says what the record shows once entered (round 19 audit)
+            record_request(run, rnd, requested_at=now_iso(), requested_epoch=datetime.datetime.now().timestamp())
             retire_error(run, "ask --round 1" if rnd == "1" else "ask --round zoom")
             files.expect(os.path.basename(output))   # codex-call's reply: entered only if it writes it (round 12, G3)
             if first and "profile.json" not in ledger(run):   # pending only until a request is recorded (F6; H6; L5)
@@ -591,22 +592,19 @@ def call_codex(run: str, prompt: str, images: list[str], tag: str, argv: list[st
             # before it was executed included: the request is withdrawn and the profile entry taken back while the
             # interrupts are still held (round 15, M2; round 16, Q7). If that fails too, the request stays recorded and
             # the round counts as used up, the safe direction.
-            withdrawn = False
             try:
                 withdraw_request(run, rnd)
-                withdrawn = True   # the request's state alone decides what the answer says (round 18, T2)
                 files.release("profile.json")   # the profile was not used: pending again (round 12, H6; round 13, J2)
             except (OSError, Stop):
                 pass
-            # what the answer says follows what happened to the request (round 17, R2)
-            tail = ("nothing was sent" if withdrawn
-                    else "the request could not be withdrawn, so this round counts as used up")
+            # What the answer says about the request is decided by main once what the step wrote is entered, by the
+            # test that decides used_up, so the two cannot disagree (round 17, R2; round 19, B2)
             if starting and isinstance(exc, (OSError, ValueError, TypeError, subprocess.SubprocessError)):
                 why = failure(exc) if isinstance(exc, OSError) else "the new process could not be started"
-                raise Stop("runtime_unavailable", f"cannot run codex-call: {why}; {tail}")   # xval's own words (Q7)
-            if isinstance(exc, Stop) and "nothing was sent" not in exc.detail:
-                raise Stop(exc.error, f"{exc.detail}; {tail}", record=exc.record, source=exc.source, records=exc.records,
-                           step=exc.step)
+                raise Stop("runtime_unavailable", f"cannot run codex-call: {why}", note=True)   # xval's own words (Q7)
+            if isinstance(exc, Stop):
+                raise Stop(exc.error, exc.detail.removesuffix("; nothing was sent"), record=exc.record, source=exc.source,
+                           records=exc.records, step=exc.step, note=True)
             raise
     except BaseException:
         signal.pthread_sigmask(signal.SIG_SETMASK, previous)   # an interrupt held until now arrives after the above
@@ -1023,23 +1021,32 @@ def main(argv: list[str]) -> None:
         stopping.append(signum)
         raise KeyboardInterrupt
     def request_note() -> str:
-        """What happened to an ask's request, for an internal_error: none on record means nothing was sent; one still
-        on record (a withdrawal that failed, or a call that ran) means the round counts as used up (round 16, Q7;
-        round 17, R2; round 18, T2)."""
+        """What happened to an ask's request, read once what the step wrote is entered, by the test that decides
+        used_up (round 16, Q7; round 17, R2; round 18, T2; round 19, B2): none on record means nothing was sent; one on
+        record means the round counts as used up; a request record that does not match the ledger cannot be told
+        either way, and counts as used up too."""
         if command != "ask" or not is_run_dir(run):
             return ""
-        if uses_up(run, step):
-            return "; the request is on record, so this round counts as used up"
-        return "; nothing was sent"
+        if not uses_up(run, step):   # the test that decides used_up decides the answer (round 19 audit)
+            return "; nothing was sent"
+        if differences(run, ("requests.json",)):   # only the wording: on record, or not to be told
+            return "; whether this round's request was sent cannot be told, so this round counts as used up"
+        return "; the request is on record, so this round counts as used up"
     def stopped_by_interrupt() -> None:
         stopping.append(0)
         commit_written(files)
-        stop_run(run, step, "internal_error", "interrupted: the step was stopped partway; what it wrote is entered in "
-                 "the run's ledger" + request_note(), command != "result", refused=False, files=files)
-    signal.signal(signal.SIGTERM, interrupted)   # installed last, right before the outer net (round 18, T6)
+        entered = "; what it wrote is entered in the run's ledger" if command != "result" else ""   # result: none (L5)
+        stop_run(run, step, "internal_error", "interrupted: the step was stopped partway" + entered + request_note(),
+                 command != "result", refused=False, files=files)
+    # Both handlers are installed while both signals are held, and taken only once both are in place, inside the outer
+    # net, so no signal finds one installed and the other not (round 19, B1 and its audit). One that arrives before this,
+    # as Python starts, ends the process with its default action, before anything is written.
+    previous = signal.pthread_sigmask(signal.SIG_BLOCK, {signal.SIGINT, signal.SIGTERM})
+    signal.signal(signal.SIGTERM, interrupted)
     if signal.getsignal(signal.SIGINT) is signal.default_int_handler:   # an ignored SIGINT stays ignored
         signal.signal(signal.SIGINT, interrupted)
     try:
+        signal.pthread_sigmask(signal.SIG_SETMASK, previous)   # a signal held above arrives here, in the net
         try:
             if command not in ("init", "confirm-privacy", "result") and not is_run_dir(run):
                 # the steps that may write into a directory that is not a run are a closed list (round 6, Q1)
@@ -1073,7 +1080,8 @@ def main(argv: list[str]) -> None:
         except Stop as stop:   # result's own failure goes to the history only: the run's error stays (round 7, Y3)
             stopping.append(0)   # stopping: recording it is not cut short by an interrupt (round 16, Q7)
             commit_written(files)
-            stop_run(run, stop.step or step, stop.error, stop.detail, stop.record and command != "result",
+            detail = stop.detail + request_note() if stop.note else stop.detail   # after the entry (round 19, B2)
+            stop_run(run, stop.step or step, stop.error, detail, stop.record and command != "result",
                      refused=not stop.record, records=stop.records, source=stop.source, files=files)
         except KeyboardInterrupt:   # SIGINT or SIGTERM: what it wrote is entered, and the error says so (round 12, G2)
             stopped_by_interrupt()

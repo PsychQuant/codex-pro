@@ -54,10 +54,12 @@ Issue: [#23](https://github.com/PsychQuant/codex-pro/issues/23)
 - 只有 codex-call 根本沒能啟動時才撤回這一輪的紀錄（連同為它登記的 profile）；啟動之後的任何事（含輸出無法解碼）都不
   撤回。`ask` 在 codex-call 執行中被 SIGINT 或 SIGTERM 中斷時，codex-call 跟著終止，記為 `backend_error`（算作已送出）；
   從記下請求到 codex-call 啟動之間的中斷先被擋住，等啟動之後才處理（啟動成功就算已送出，記為 `backend_error`）；
-  這段期間因其他原因停下（含啟動失敗）時，在擋住的狀態下撤回，訊息寫 nothing was sent；撤回本身失敗時改說這一輪已用掉；`ask` 的 `internal_error` 一律附上請求的狀態。一步停下或完成之後，記錄期間的中斷一律忽略，剛進入處理時收到的中斷
+  這段期間因其他原因停下（含啟動失敗）時，在擋住的狀態下撤回；訊息在登記之後才決定，與 `error.json` 的 `used_up` 用同一個
+  判斷：請求不在紀錄上寫 nothing was sent，還在紀錄上或請求紀錄與帳本不符時說這一輪已用掉；`ask` 的 `internal_error` 也一樣。一步停下或完成之後，記錄期間的中斷一律忽略，剛進入處理時收到的中斷
   也會被回答並記下。其他時候被中斷記為 `internal_error`，已寫出的檔照樣登記。回覆不是 UTF-8 時為 `parse_failed`。工具的輸出一律以 UTF-8 解碼，Big5、Shift-JIS 的 locale 下
   檔名含中日文的圖也量得到尺寸。
-- `--vocab` 可以是管線或程序替換（`--vocab <(...)`）；run 的紀錄仍只讀一般檔案。
+- `--vocab` 可以是管線或程序替換（`--vocab <(...)`）；run 的紀錄仍只讀一般檔案。`.gitignore` 第一行讀不成 UTF-8 的目錄不是 run 目錄。
+- 結果檔沒顯示出核對過的有效 first side 模型或詞彙表時（固定內容、不是 run、沒通過核對、值無效），對應的 Limitations 寫成對任何 run 都成立的條件句，不說「沒有記錄」。
 - 「已經做過」以帳本為準，不讀沒核對過的內容：封存、被拒的放大輪答案與隱私確認看帳本條目（有紀錄沒條目時停下，說它不在
   帳本上，也不換掉；FIFO、dangling symlink、目錄都不是紀錄；要寫這個名字的步驟換掉前兩者、遇到目錄停下），這一輪的請求看核對過的請求紀錄，init 的嘗試看那些名字上有沒有東西或
   條目；移開再放回不會讓一步重來。「還不能做」的判斷（init 是否嘗試過除外，那看名字上有沒有任何東西）、封存與比對結果在不在，也用同一個紀錄判斷。除了 `init`、`confirm-privacy`、`adjudicate` 與 `result`，每一步都要求 init 完成。
@@ -67,15 +69,15 @@ Issue: [#23](https://github.com/PsychQuant/codex-pro/issues/23)
   清除；用掉與否在寫下錯誤的當下判定、記在錯誤裡。`ask` 送出前停下的錯誤，在重跑時請求一記下就清除，所以這一輪之後
   即使被 SIGKILL，結果檔也照紀錄推出這個失敗。
 - Python 3.9 等舊版先套用同一條 `--run` 進入點規則（含 `..` 或是 symlink 時回答 `target_invalid`、什麼都不寫），其餘步驟只回答
-  `runtime_unavailable` 並記進錯誤歷史；`result` 寫自己的結果檔（固定內容，不讀 run 的任何紀錄，設定與張數
-  都留空），不記歷史，被 SIGINT 或 SIGTERM 中斷或意外失敗時回答 `internal_error` 並記進歷史、不留暫存檔；兩者都不改 run 的
+  `runtime_unavailable`，`--run` 是 run 目錄時記進錯誤歷史；`result` 寫自己的結果檔（`result` 自己失敗的情況除外；固定內容，不讀 run 的任何紀錄，設定與張數
+  都留空，直譯器只寫版本號），不記歷史；從第一個敘述起到結束都擋住 SIGINT 與 SIGTERM，不會被中途打斷，意外失敗時回答 `internal_error` 並記進歷史、不留暫存檔；兩者都不改 run 的
   錯誤與帳本；run 照原樣，改用 3.10 以上重跑那一步即可，之後寫的結果檔照紀錄呈現 run，`result` 以外的舊版停下只留在歷史。
 - 外來文字的封閉清單是六種（含 Claude 答案裡的文字與 Codex 的回覆），不進結果檔；推導出來的紀錄（比對結果、裁決）要連
   來源一起核對過才呈現；訊息以位置稱呼使用者給的圖，`--run`、`--vocab`、`--out` 以角色稱呼。
 - 原生 bundle 的 preflight 失敗在登入檢查之前回報；沒有送過請求時，結果檔從 `runtime_error.txt` 取錯誤類別。
 - 結果檔的路徑過濾只是後備，它在反引號、全形標點等邊界上的殘留是接受的風險。
 - 在 Claude Code 裡呼叫 `ask` 時 Bash 工具的 timeout 要設成 600000；它的上限等於預設的 `max_time`，所以 `max_time` 用預設值或更大時 harness 先到期、`timeout` 類別出不來；
-  profile 的 `max_time` 小於 600 時 codex-call 先逾時，照常是 `timeout`。
+  `max_time` 加上送出前的檢查時間明顯小於 600 時 codex-call 先逾時：回應標頭已到時記為 `timeout`，還沒到時它印 `HTTP 0`，記為 `backend_error`（PsychQuant/parallel-ai-agents#89）。
   harness 以 SIGKILL 結束時結果檔仍顯示這一輪失敗：沒有其他紀錄不符時從請求紀錄推出 `backend_error`，否則是
   `target_invalid`（#26 追蹤）。
 - 結果檔的路徑過濾只保留 http、https 網址；`file://`、`smb://` 等其他網址與本機路徑一樣縮成最後一段。

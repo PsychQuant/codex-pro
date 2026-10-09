@@ -714,9 +714,11 @@ native preflight failure 的 result body 另寫一行 `Runtime preflight detail:
               "producer native preflight failure rows")
     text, error_enum_count = re.subn(
         r"error: <([^>\n]+)>",
-        lambda match: (
-            f"error: <{match.group(1)} | runtime_unavailable | package_corruption>"
-        ),
+        # only the classes the enum does not name yet: visual-xval's names both already (#23 round 19)
+        lambda match: "error: <" + " | ".join(
+            [match.group(1)] + [c for c in ("runtime_unavailable", "package_corruption")
+                                if c not in [x.strip() for x in match.group(1).split("|")]]
+        ) + ">",
         text,
     )
     if error_enum_count != 1:

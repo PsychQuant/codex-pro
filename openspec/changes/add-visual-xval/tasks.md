@@ -495,3 +495,16 @@
 - [x] 23.4 真實後端端到端（第十八次）。
   - 驗證：紀錄寫進 e2e-checklist §F。
   - [after: 23.3]
+
+## 24. Verify 第十九輪修正：中斷不留窗口，用掉與否只有一個判斷（#23 第十九輪 report 的 B1–B3、L1–L10）
+
+- [x] 24.1 規格與 design（design「第十九輪」；3.9 從開始到結束都擋住中斷、主路徑的處理函式在外層 `try` 內；送出前停下時，請求的狀態在 commit 之後判定；B3 的兩句；L1–L10 的措辭）。
+  - 驗證：`spectra validate` 與 `spectra analyze` 無 warning。
+- [x] 24.2 程式：3.9 全程擋住 SIGINT 與 SIGTERM、主路徑的處理函式進外層 `try`（B1）；請求的狀態在 commit 之後由 `uses_up()` 決定，分成沒送、在紀錄上、判斷不了三種（B2）；`.gitignore` 解碼失敗不是 run 目錄（L1）；`result` 的中斷訊息不說登記（L5）；完整結果檔的條件句（L7）；3.9 的結果檔只寫版本號（L8）。先寫測試，看它失敗。
+  - [after: 24.1]
+- [x] 24.3 文件與產生器：SKILL Step 3、4.2、5，CHANGELOG，原生鏡像的表格列與 enum（L2–L7、L9、L10）；送 verify 前由一組 agent 逐句對照程式找反例。
+  - 驗證：`bash tests/run.sh` 只剩 #24。
+  - [after: 24.2]
+- [ ] 24.4 真實後端端到端（第十九次）。
+  - 驗證：紀錄寫進 e2e-checklist §F。
+  - [after: 24.3]

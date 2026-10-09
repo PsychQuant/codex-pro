@@ -3768,26 +3768,40 @@ rm -rf "$WORK/r18e"; SEQ= new_run "$WORK/r18e"; rm -f "$WORK/r18e/runtime.txt"; 
 xval_t python3 ask --run "$WORK/r18e" --round 1
 assert_contains "$RUN_OUT" '"error": "runtime_unavailable"' "a FIFO at runtime.txt is no runtime: ask answers instead of waiting on it (T6)"
 
-# Round 18 audit (T4): under Python 3.9 a SIGTERM to the result step is answered as a SIGINT is, kept in the history,
-# and leaves no temporary file behind; "interrupted" in the spec means either signal.
+# Round 19 (B1): under Python 3.9 the orchestrator holds SIGINT and SIGTERM from its start until it exits, so a signal that
+# arrives as the result file is written does not stop it partway: the file is written, the answer is its path, no temporary
+# file is left, and the history is unchanged. One SIGTERM, two signals at once, and one as the temporary file is created.
 if [ -x "$OLDPY" ] && "$OLDPY" -c 'import sys; sys.exit(0 if sys.version_info < (3, 10) else 1)' 2>/dev/null; then
-  rm -rf "$WORK/r18f" "$WORK/r18f_out"; SEQ= new_run "$WORK/r18f"; mkdir -p "$WORK/r18f_out"
-  RUN_OUT=$(cd "$WORK/project" && "$OLDPY" - "$SCRIPTS/xval.py" "$WORK/r18f" "$WORK/r18f_out/r.md" <<'PY' 2>&1
-import os, runpy, signal, sys
-script, run, out = sys.argv[1:4]
-real = os.replace
-def terminated(*a, **k):   # a SIGTERM as the result file is moved into place
-    os.replace = real
+  rm -rf "$WORK/r18f"; SEQ= new_run "$WORK/r18f"
+  for inject in replace-term replace-both mkstemp-term; do
+    rm -rf "$WORK/r18f_out"; mkdir -p "$WORK/r18f_out"; before=$(cat "$WORK/r18f/errors.jsonl" 2>/dev/null)
+    RUN_OUT=$(cd "$WORK/project" && "$OLDPY" - "$SCRIPTS/xval.py" "$WORK/r18f" "$WORK/r18f_out/r.md" "$inject" <<'PY' 2>&1
+import os, runpy, signal, sys, tempfile
+script, run, out, inject = sys.argv[1:5]
+real_replace, real_mkstemp = os.replace, tempfile.mkstemp
+def replace(*a, **k):   # signals as the result file is moved into place
+    os.replace = real_replace
     os.kill(os.getpid(), signal.SIGTERM)
-    return real(*a, **k)
-os.replace = terminated
+    if inject == "replace-both":
+        os.kill(os.getpid(), signal.SIGINT)
+    return real_replace(*a, **k)
+def mkstemp(*a, **k):   # a SIGTERM right after the temporary file is created
+    tempfile.mkstemp = real_mkstemp
+    made = real_mkstemp(*a, **k)
+    os.kill(os.getpid(), signal.SIGTERM)
+    return made
+if inject == "mkstemp-term":
+    tempfile.mkstemp = mkstemp
+else:
+    os.replace = replace
 sys.argv = [script, "result", "--run", run, "--out", out]
 runpy.run_path(script, run_name="__main__")
 PY
 )
-  assert_contains "$RUN_OUT" '"error": "internal_error"' "an old Python's result step stopped by SIGTERM answers in structure too (T4)"
-  assert_contains "$(tail -1 "$WORK/r18f/errors.jsonl" 2>/dev/null)" "internal_error" "and keeps that error in the history (T4)"
-  assert_eq "" "$(ls -A "$WORK/r18f_out")" "and leaves no temporary file next to the result file's name (T4)"
+    assert_contains "$RUN_OUT" '"error": "runtime_unavailable"' "an old Python's result step is not stopped partway by a signal ($inject; B1)"
+    assert_eq "r.md" "$(ls -A "$WORK/r18f_out" | tr '\n' ' ' | sed 's/ $//')" "and the folder holds the result file and no temporary file ($inject; B1)"
+    assert_eq "$before" "$(cat "$WORK/r18f/errors.jsonl" 2>/dev/null)" "and the history is unchanged ($inject; B1)"
+  done
   rm -rf "$WORK/r18g"; SEQ= new_run "$WORK/r18g"
   before=$(cat "$WORK/r18g/errors.jsonl" 2>/dev/null)
   RUN_OUT=$(cd "$WORK/project" && "$OLDPY" "$SCRIPTS/xval.py" result --run "$WORK/r18g" --out "$WORK/r18g_result.md" 2>&1)
@@ -3800,9 +3814,7 @@ PY
   assert_contains "$(cat "$WORK/r18g_result.md")" "if it was not a Claude model" \
     "and the first-side limitation, said as a condition: this path does not read who the first side was"
 else
-  skip "an old Python's result step stopped by SIGTERM answers in structure too" "no Python older than 3.10 at $OLDPY"
-  skip "and keeps that error in the history" "no Python older than 3.10 at $OLDPY"
-  skip "and leaves no temporary file next to the result file's name" "no Python older than 3.10 at $OLDPY"
+  skip "an old Python's result step is not stopped partway by a signal" "no Python older than 3.10 at $OLDPY"
   skip "an old Python's result step answers with the path it wrote and runtime_unavailable" "no Python older than 3.10 at $OLDPY"
   skip "and adds nothing to the error history when it writes the file" "no Python older than 3.10 at $OLDPY"
   skip "an old Python's fixed-text result file names the zoom subagent's limitation" "no Python older than 3.10 at $OLDPY"
@@ -3814,6 +3826,190 @@ assert_contains "$(cat "$WORK/run9x_result.md")" "whether it was started fresh" 
   "the last-resort result file names the zoom subagent's limitation"
 assert_contains "$(cat "$WORK/run9x_result.md")" "compared by count only" "and the count-only limitation"
 assert_contains "$(cat "$WORK/run9x_result.md")" "if it was not a Claude model" "and the first-side limitation, said as a condition"
+
+# Round 19 (B1): the main path installs its handlers inside the outer net, so a SIGTERM right after the SIGTERM handler is
+# installed is answered and recorded, not a traceback.
+rm -rf "$WORK/r19b"; SEQ= new_run "$WORK/r19b"
+RUN_OUT=$(HOME="$WORK/home" python3 -B - "$WORK/r19b" "$SCRIPTS" <<'PY' 2>&1
+import os, signal, sys
+run, scripts = sys.argv[1:3]; sys.path.insert(0, scripts)
+import xval
+real = signal.getsignal
+def getsignal(sig):   # a SIGTERM right after the step's SIGTERM handler is installed
+    signal.getsignal = real
+    os.kill(os.getpid(), signal.SIGTERM)
+    return real(sig)
+signal.getsignal = getsignal
+try:
+    xval.main(["compare", "--run", run])
+except SystemExit as exc:
+    print("exit", exc.code)
+PY
+)
+assert_contains "$RUN_OUT" '"error": "internal_error"' "a SIGTERM right after the handlers are installed is answered (B1)"
+refute_contains "$RUN_OUT" "Traceback" "with no traceback (B1)"
+assert_contains "$(tail -1 "$WORK/r19b/errors.jsonl" 2>/dev/null)" "interrupted" "and recorded (B1)"
+
+# Round 19 audit: both handlers are in place before either signal is taken, so a SIGTERM as they are installed and a SIGINT
+# while the stop is recorded still end in one answer and one history line.
+rm -rf "$WORK/r19h"; SEQ= new_run "$WORK/r19h"
+RUN_OUT=$(HOME="$WORK/home" python3 -B - "$WORK/r19h" "$SCRIPTS" <<'PY' 2>&1
+import os, signal, sys
+run, scripts = sys.argv[1:3]; sys.path.insert(0, scripts)
+import xval
+real_get, real_append = signal.getsignal, xval.append_text
+def getsignal(sig):   # a SIGTERM between the two installs
+    signal.getsignal = real_get
+    os.kill(os.getpid(), signal.SIGTERM)
+    return real_get(sig)
+def append_text(*a, **k):   # a Ctrl-C while the stop is recorded
+    xval.append_text = real_append
+    os.kill(os.getpid(), signal.SIGINT)
+    return real_append(*a, **k)
+signal.getsignal = getsignal
+xval.append_text = append_text
+try:
+    xval.main(["compare", "--run", run])
+except SystemExit as exc:
+    print("exit", exc.code)
+PY
+)
+assert_contains "$RUN_OUT" '"error": "internal_error"' "a SIGTERM between the two installs and a SIGINT while recording give one answer (round 19 audit)"
+refute_contains "$RUN_OUT" "Traceback" "with no traceback (round 19 audit)"
+assert_contains "$(tail -1 "$WORK/r19h/errors.jsonl" 2>/dev/null)" "interrupted" "and the stop is in the history (round 19 audit)"
+
+# Round 19 (B2): what the answer says about the request is decided after what the step wrote is entered, by the test that
+# decides used_up. When the ledger cannot be written, whether the round was asked cannot be told: the answer says the round
+# is used up, as the run's error records, instead of "nothing was sent".
+rm -rf "$WORK/r19a"; SEQ= new_run "$WORK/r19a"
+assert_eq "used-up told used-up" "$(printf '%s\n' "$(HOME="$WORK/home" python3 -B - "$WORK/r19a" "$SCRIPTS" "$WORK/stubbin/codex-call" <<'PY' 2>/dev/null
+import json, os, sys
+run, scripts, stub = sys.argv[1:4]; sys.path.insert(0, scripts)
+import xval, run_files
+real_dump, broken = run_files.dump, []
+def dump(path, data):   # from the failed start on, the ledger cannot be written (a full disk)
+    if broken and os.path.basename(path) == "ledger.json":
+        raise OSError(28, "No space left on device")
+    return real_dump(path, data)
+def start(*a, **k):
+    broken.append(1)
+    raise OSError(8, "Exec format error")
+run_files.dump = dump
+xval.runtime = lambda r: stub
+xval.subprocess.Popen = start
+try:
+    xval.main(["ask", "--run", run, "--round", "1"])
+except SystemExit:
+    pass
+error = json.load(open(f"{run}/error.json"))
+detail = error.get("detail", "")
+print("used-up" if "used up" in detail else "said-unsent", "told" if "cannot be told" in detail else "claimed",
+      "used-up" if error.get("used_up") else "not-used-up")
+PY
+)" | tail -1)" "when the ledger cannot be written, the answer and the run's error agree the round is used up (B2)"
+
+# Round 19 audit: a request record that cannot be written stops the step before codex-call with "nothing was sent"; an ask
+# whose round is not 1 or zoom says what used_up records; a vocabulary that is not verified is not stated as a fact.
+rm -rf "$WORK/r19i"; SEQ= new_run "$WORK/r19i"; rm -f "$WORK/r19i/requests.json"; mkdir "$WORK/r19i/requests.json"
+RUN_OUT=$(cd "$WORK" && HOME="$WORK/home" PATH="$WORK/stubbin:$PATH" python3 "$SCRIPTS/xval.py" ask --run "$WORK/r19i" --round 1 2>&1)
+assert_contains "$RUN_OUT" "nothing was sent" "a request record that cannot be written says nothing was sent (round 19 audit)"
+rm -rf "$WORK/r19j"; cp -R "$WORK/run6w" "$WORK/r19j"; printf ' ' >> "$WORK/r19j/requests.json"
+assert_eq "unsent no-used-up" "$(HOME="$WORK/home" python3 -B - "$WORK/r19j" "$SCRIPTS" <<'PY' 2>/dev/null | tail -1
+import json, sys
+run, scripts = sys.argv[1:3]; sys.path.insert(0, scripts)
+import xval
+def interrupted(*a, **k):
+    raise KeyboardInterrupt
+xval.ask = interrupted
+try:
+    xval.main(["ask", "--run", run, "--round", "2"])
+except SystemExit:
+    pass
+error = json.load(open(f"{run}/error.json")) if __import__("os").path.exists(f"{run}/error.json") else {}
+history = open(f"{run}/errors.jsonl").read().splitlines()[-1]
+print("unsent" if "nothing was sent" in history else "claimed", "used-up" if json.loads(history).get("used_up") else "no-used-up")
+PY
+)" "an ask whose round is neither 1 nor zoom says what used_up records (round 19 audit)"
+rm -rf "$WORK/r19k"; cp -R "$WORK/run6w" "$WORK/r19k"
+python3 -B - "$WORK/r19k" "$SCRIPTS" <<'PY'
+import json, sys
+run = sys.argv[1]; sys.path.insert(0, sys.argv[2])
+import run_files
+json.dump({"sam_status": "ok"}, open(f"{run}/sam.json", "w"))
+run_files.enter(run, "sam.json")
+PY
+printf ' ' >> "$WORK/r19k/vocab.json"
+( cd "$WORK/project" && python3 "$SCRIPTS/xval.py" result --run "$WORK/r19k" --out "$WORK/r19k_result.md" >/dev/null 2>&1 )
+refute_contains "$(cat "$WORK/r19k_result.md")" "The vocabulary does not declare" \
+  "a vocabulary that is not verified is not said to lack track_point (round 19 audit)"
+assert_contains "$(cat "$WORK/r19k_result.md")" "if the vocabulary does not declare" "the track_point limitation is said as a condition (round 19 audit)"
+
+# Round 19 (L1): a .gitignore that is not UTF-8 makes the directory not a run directory, on both interpreters, with an answer
+# in structure; the result step still writes its file.
+rm -rf "$WORK/r19c" "$WORK/r19c_result.md"; mkdir -p "$WORK/r19c"; printf '# caf\351 build\n' > "$WORK/r19c/.gitignore"
+RUN_OUT=$(cd "$WORK" && python3 "$SCRIPTS/xval.py" compare --run "$WORK/r19c" 2>&1)
+assert_contains "$RUN_OUT" "not a run directory" "a .gitignore that is not UTF-8 makes the directory not a run (L1)"
+RUN_OUT=$(cd "$WORK/project" && python3 "$SCRIPTS/xval.py" result --run "$WORK/r19c" --out "$WORK/r19c_result.md" 2>&1)
+refute_contains "$RUN_OUT" "Traceback" "and the result step answers without a traceback (L1)"
+assert_file "$WORK/r19c_result.md" "and still writes the result file (L1)"
+assert_contains "$(cat "$WORK/r19c_result.md")" "if it was not a Claude model" \
+  "a result file for a directory that is not a run says the first-side limitation as a condition (round 19 audit)"
+assert_contains "$(cat "$WORK/r19c_result.md")" "compared by count only" "and the count-only limitation (round 19 audit)"
+refute_contains "$(cat "$WORK/r19c_result.md")" "was not recorded" "and does not say the model was not recorded (round 19 audit)"
+if [ -x "$OLDPY" ] && "$OLDPY" -c 'import sys; sys.exit(0 if sys.version_info < (3, 10) else 1)' 2>/dev/null; then
+  RUN_OUT=$(cd "$WORK/project" && "$OLDPY" "$SCRIPTS/xval.py" result --run "$WORK/r19c" --out "$WORK" 2>&1)
+  assert_contains "$RUN_OUT" '"error": "target_invalid"' "an old Python answers its own failure there in structure (L1)"
+  refute_contains "$RUN_OUT" "Traceback" "with no traceback (L1)"
+  # L8: the old Python's result file shows its version only, not the interpreter's name
+  ln -sf "$("$OLDPY" -c 'import sys; print(sys.executable)')" "$WORK/py<!--x"   # the binary itself: /usr/bin/python3 dispatches by its name
+  rm -rf "$WORK/r19f"; SEQ= new_run "$WORK/r19f"
+  ( cd "$WORK/project" && "$WORK/py<!--x" "$SCRIPTS/xval.py" result --run "$WORK/r19f" --out "$WORK/r19f_result.md" >/dev/null 2>&1 )
+  assert_contains "$(cat "$WORK/r19f_result.md")" "this is Python 3." "an old Python's result file says the version (L8)"
+  refute_contains "$(cat "$WORK/r19f_result.md")" "<!--" "and not the interpreter's name, which is outside text (L8)"
+else
+  skip "an old Python answers its own failure there in structure" "no Python older than 3.10 at $OLDPY"
+  skip "with no traceback" "no Python older than 3.10 at $OLDPY"
+  skip "an old Python's result file says the version" "no Python older than 3.10 at $OLDPY"
+  skip "and not the interpreter's name, which is outside text" "no Python older than 3.10 at $OLDPY"
+fi
+
+# Round 19 (L5): an interrupted result step does not say it entered anything; result enters nothing.
+rm -rf "$WORK/r19d"; cp -R "$WORK/run6w" "$WORK/r19d"
+RUN_OUT=$(cd "$WORK/project" && HOME="$WORK/home" python3 -B - "$WORK/r19d" "$SCRIPTS" "$WORK/r19d_result.md" <<'PY' 2>&1
+import sys
+run, scripts, out = sys.argv[1:4]; sys.path.insert(0, scripts)
+import xval
+def interrupted(*a, **k):
+    raise KeyboardInterrupt
+xval.result = interrupted
+try:
+    xval.main(["result", "--run", run, "--out", out])
+except SystemExit:
+    pass
+PY
+)
+assert_contains "$RUN_OUT" "interrupted" "an interrupted result step answers internal_error (L5)"
+refute_contains "$RUN_OUT" "entered in the run's ledger" "and does not say it entered anything (L5)"
+
+# Round 19 (L7): a result file that cannot verify the settings or the vocabulary says the first-side and count-only
+# limitations as conditions, and does not say the model was not recorded.
+rm -rf "$WORK/r19e"; cp -R "$WORK/run6w" "$WORK/r19e"; printf ' ' >> "$WORK/r19e/meta.json"; printf ' ' >> "$WORK/r19e/vocab.json"
+( cd "$WORK/project" && python3 "$SCRIPTS/xval.py" result --run "$WORK/r19e" --out "$WORK/r19e_result.md" >/dev/null 2>&1 )
+assert_contains "$(cat "$WORK/r19e_result.md")" "if it was not a Claude model" \
+  "a result file that cannot verify the settings says the first-side limitation as a condition (L7)"
+assert_contains "$(cat "$WORK/r19e_result.md")" "compared by count only" "and the count-only limitation (L7)"
+refute_contains "$(cat "$WORK/r19e_result.md")" "was not recorded" "and does not say the model was not recorded (L7)"
+
+# Round 19 (L6): in the native mirror the generated rows are rows of the Step 5 table, and the error enum names each class once.
+assert_eq "in-table unique" "$(python3 - "$REPO_ROOT/.codex/skills/codex-visual-xval/SKILL.md" <<'PY'
+import sys
+lines = open(sys.argv[1], encoding="utf-8").read().splitlines()
+i = next(k for k, l in enumerate(lines) if "`package_corruption`" in l and l.startswith("| native preflight"))
+enum = next(l for l in lines if l.startswith("error: <"))
+names = [x.strip() for x in enum[len("error: <"):enum.index(">")].split("|")]
+print("in-table" if lines[i - 1].startswith("|") else "outside", "unique" if len(names) == len(set(names)) else "repeated")
+PY
+)" "the native mirror's generated rows sit in the Step 5 table and its error enum names each class once (L6)"
 
 # Round 6 (Q1): the steps that write into a directory are a closed list.
 rm -rf "$WORK/typo"
