@@ -3332,7 +3332,7 @@ for name in sorted(os.listdir(sys.argv[1])):
         real += [f"{name}:{n}" for n in scan(source, "_older_python")]   # the Python 3.9 path is its own copy
 print(len(scan(SAMPLE)), len(scan(STAR)), len(scan(CLEAN)), len(real), *real)
 PY
-)" "the scanner sees the 17 write forms of its sample and a star import, none in a harmless sample, and no module but run_files writes a file by any of them (N6; round 16, Q6)"
+)" "the scanner sees the 17 write forms of its sample and a star import, none in a harmless sample, and no module but run_files writes a file by any of them; sam_track.py (SAM's own Python) and the Python 3.9 path (its own copy) are left out by design (N6; round 16, Q6; round 17, R5)"
 
 # Round 16 (P1): only a write that still lands in the run after resolution is refused; a link to the run itself followed by
 # '..' lands beside the run, and is written there.
