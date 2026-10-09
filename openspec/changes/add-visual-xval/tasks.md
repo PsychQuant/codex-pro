@@ -464,6 +464,6 @@
 - [x] 21.4 文件：SKILL、CHANGELOG、xval 的模組 docstring（Q6）。
   - 驗證：`bash tests/run.sh` 只剩 #24。
   - [after: 21.3]
-- [ ] 21.5 真實後端端到端（第十六次）。
+- [x] 21.5 真實後端端到端（第十六次）。
   - 驗證：紀錄寫進 e2e-checklist §F。
   - [after: 21.4]
