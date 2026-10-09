@@ -383,6 +383,9 @@ class Step:
     def __init__(self, run: str, enters: bool = True):
         global _written
         self.run, self.outputs, self.pending, self.enters, self.adopted = run, {}, {}, enters, set()
+        # asked: this step recorded its round's request (or tried to); started: codex-call started. They decide what
+        # an error of this step can mean about the round (#23 verify round 20, C1)
+        self.asked, self.started = False, False
         _written = []   # `enters=False`: the result step, which writes outside the run and enters nothing (round 13, J1)
 
     def expect(self, name: str) -> None:
@@ -512,8 +515,9 @@ def done(run: str, name: str, then: str = "") -> bool:
     not let the step be done again (round 10, C1), and nothing unchecked is read to decide (round 15, N1). Without an
     entry, what the ledger sees as a record (a regular file, or a link to one: the same test differences() makes)
     stops the step as not in the ledger, and is neither taken for the step done nor replaced; anything else at the
-    name (a FIFO, a dangling link) is not a record, does not count, and is replaced when the step writes the name
-    (#23 verify round 16, Q2)."""
+    name (a FIFO, a dangling link, a link to a directory, a directory) is not a record and does not count: a step that
+    writes the name stops with target_invalid at a directory itself and replaces the rest, and a step that only checks
+    the name treats it as nothing there (#23 verify round 16, Q2; round 18, S2; round 20, D1)."""
     if name in ledger(run):
         return True
     if safe_digest(os.path.join(run, name)) is not None:
@@ -539,7 +543,7 @@ def initialised(run: str) -> None:
 ROUND_STEP = re.compile(r"ask --round (1|zoom)")
 
 
-def uses_up(run: str, step: str) -> bool:
+def uses_up(run: str, step: str, asked: bool = False) -> bool:
     """Whether an error recorded now at `step` can never be resolved: init's once its attempt is recorded (a run
     is initialised once), a round's once its request is recorded (a round is asked once). Decided when the error is
     recorded and kept in it as `used_up`, never inferred later from the run's records: a request recorded after an
@@ -550,7 +554,9 @@ def uses_up(run: str, step: str) -> bool:
     if not match:
         return False
     if differences(run, ("requests.json",)):
-        return True   # it cannot be told whether the round was asked: kept, so nothing is lost
+        # whether the round was asked cannot be told; that matters only to a step that recorded the round's request
+        # itself. A step that stopped before that found the record changed and sent nothing (round 20, C1)
+        return asked
     requests = load(os.path.join(run, "requests.json"), {})
     asked = requests.get(match.group(1)) if isinstance(requests, dict) else None
     return isinstance(asked, dict) and bool(asked.get("requested_at"))

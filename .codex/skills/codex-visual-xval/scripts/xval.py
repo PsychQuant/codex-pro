@@ -577,6 +577,7 @@ def call_codex(run: str, prompt: str, images: list[str], tag: str, argv: list[st
         try:
             # inside, so a request record that cannot be written is a stop before the start like any other: its answer
             # says what the record shows once entered (round 19 audit)
+            files.asked = True   # before the record, so a record that fails partway counts too (round 20, C1)
             record_request(run, rnd, requested_at=now_iso(), requested_epoch=datetime.datetime.now().timestamp())
             retire_error(run, "ask --round 1" if rnd == "1" else "ask --round zoom")
             files.expect(os.path.basename(output))   # codex-call's reply: entered only if it writes it (round 12, G3)
@@ -587,6 +588,7 @@ def call_codex(run: str, prompt: str, images: list[str], tag: str, argv: list[st
             proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, encoding="utf-8",
                                     errors="replace",
                                     preexec_fn=lambda: signal.pthread_sigmask(signal.SIG_SETMASK, previous))
+            files.started = True   # from here the request counts as sent (round 20, C1)
         except BaseException as exc:
             # Nothing was executed, whatever stopped the step before codex-call started, a failure in the new process
             # before it was executed included: the request is withdrawn and the profile entry taken back while the
@@ -618,10 +620,15 @@ def call_codex(run: str, prompt: str, images: list[str], tag: str, argv: list[st
         signal.pthread_sigmask(signal.SIG_SETMASK, previous)   # one held during the start arrives here, in the guard
         _, stderr = proc.communicate()
     except KeyboardInterrupt:
+        # Only its state as the interrupt is handled is said, never when the interrupt came: a Ctrl-C reaches
+        # codex-call too, and Python waits briefly for it before handing the interrupt on (round 20, C2 and audit)
+        status = proc.poll()
         proc.kill()
         proc.wait()   # what it wrote before it stopped is entered as the step ends (round 10, C4; round 12, G3)
-        raise Stop("backend_error", "interrupted: codex-call was stopped; the request is counted as sent, so this "
-                   "round is used up")
+        state = ("codex-call was stopped" if status is None else
+                 "codex-call ended on a signal as the step was interrupted" if status < 0 else
+                 "codex-call had ended when the interrupt was handled")
+        raise Stop("backend_error", f"interrupted: {state}; the request is counted as sent, so this round is used up")
     except BaseException:
         proc.kill()
         proc.wait()
@@ -1022,13 +1029,16 @@ def main(argv: list[str]) -> None:
         raise KeyboardInterrupt
     def request_note() -> str:
         """What happened to an ask's request, read once what the step wrote is entered, by the test that decides
-        used_up (round 16, Q7; round 17, R2; round 18, T2; round 19, B2): none on record means nothing was sent; one on
-        record means the round counts as used up; a request record that does not match the ledger cannot be told
-        either way, and counts as used up too."""
+        used_up (round 16, Q7; round 17, R2; round 18, T2; round 19, B2; round 20, C1): not used up means nothing was
+        sent (a step that did not record the request finds a changed record and sent nothing); once codex-call started,
+        the request was sent; otherwise a request on record means the round is used up, and a request record that does
+        not match the ledger, recorded by this step, cannot be told either way and counts as used up too."""
         if command != "ask" or not is_run_dir(run):
             return ""
-        if not uses_up(run, step):   # the test that decides used_up decides the answer (round 19 audit)
+        if not uses_up(run, step, files.asked):   # the test that decides used_up decides the answer (round 19 audit)
             return "; nothing was sent"
+        if files.started:   # xval ran codex-call itself (round 20, C1)
+            return "; the request was sent, so this round is used up"
         if differences(run, ("requests.json",)):   # only the wording: on record, or not to be told
             return "; whether this round's request was sent cannot be told, so this round counts as used up"
         return "; the request is on record, so this round counts as used up"
@@ -1046,7 +1056,8 @@ def main(argv: list[str]) -> None:
     if signal.getsignal(signal.SIGINT) is signal.default_int_handler:   # an ignored SIGINT stays ignored
         signal.signal(signal.SIGINT, interrupted)
     try:
-        signal.pthread_sigmask(signal.SIG_SETMASK, previous)   # a signal held above arrives here, in the net
+        if command != "result":   # result holds both until it exits, as under Python 3.9 (round 20, D3)
+            signal.pthread_sigmask(signal.SIG_SETMASK, previous)   # a signal held above arrives here, in the net
         try:
             if command not in ("init", "confirm-privacy", "result") and not is_run_dir(run):
                 # the steps that may write into a directory that is not a run are a closed list (round 6, Q1)
@@ -1129,7 +1140,12 @@ def stop_run(run: str, command: str, error: str, detail: str, record_error: bool
             if keeps_error(run) or not ledger_usable(run, "error.json"):
                 record["kept_run_error"] = True
             else:
-                if uses_up(run, command):   # decided now, and kept in the error (round 13, I1)
+                if files is not None:   # what the step wrote, entered once more before the decision (round 20, C1)
+                    try:
+                        files.commit()
+                    except (Stop, OSError):
+                        pass
+                if uses_up(run, command, getattr(files, "asked", False)):   # decided now, kept in the error (I1)
                     record["used_up"] = True
                 try:   # the run's error is a record like the others (round 10, C2)
                     files = files or Step(run)   # before the write, which it notes

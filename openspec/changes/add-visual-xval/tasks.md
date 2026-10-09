@@ -508,3 +508,16 @@
 - [x] 24.4 真實後端端到端（第十九次）。
   - 驗證：紀錄寫進 e2e-checklist §F。
   - [after: 24.3]
+
+## 25. Verify 第二十輪修正：用掉只算這一步記過的請求，等 codex-call 的那一步有自己的界線（#23 第二十輪 report 的 C1、C2、D1–D7）
+
+- [x] 25.1 規格與 design（design「第二十輪」；請求紀錄與帳本不符時只有自己記過請求的步驟算用掉；等待 codex-call 期間的中斷；`result` 在兩個直譯器都擋住中斷；SIGINT 啟動時被忽略；`--run` 沒有值）。
+  - 驗證：`spectra validate` 與 `spectra analyze` 無 warning。
+- [x] 25.2 程式：`Step.asked`、`Step.started`，`uses_up()` 的不符分支、`stop_run` 判斷前再 commit、啟動後的回答（C1）；中斷時看 codex-call 是否已結束（C2）；主路徑的 `result` 擋住中斷（D3）；關係那條條件句（D4）；`done()` 的 docstring（D1）。先寫測試。
+  - [after: 25.1]
+- [x] 25.3 文件：SKILL、CHANGELOG（D2、D5、D6），在 #26 補上 pai#89 的前置條件（D7）；送 verify 前由 agent 逐句對照程式找反例。
+  - 驗證：`bash tests/run.sh` 只剩 #24。
+  - [after: 25.2]
+- [ ] 25.4 真實後端端到端（第二十次）。
+  - 驗證：紀錄寫進 e2e-checklist §F。
+  - [after: 25.3]

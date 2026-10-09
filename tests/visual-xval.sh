@@ -2903,6 +2903,8 @@ class Proc:
     killed = False
     def communicate(self):
         raise KeyboardInterrupt
+    def poll(self):   # still running when the interrupt arrives
+        return None
     def kill(self):
         Proc.killed = True
     def wait(self):
@@ -3020,6 +3022,8 @@ class Proc:
     returncode = 0
     def communicate(self):
         raise KeyboardInterrupt
+    def poll(self):   # still running when the interrupt arrives
+        return None
     def kill(self):
         pass
     def wait(self):
@@ -3166,6 +3170,8 @@ class Proc:
         os.kill(os.getpid(), signal.SIGINT)
         os.kill(os.getpid(), signal.SIGTERM)
         signal.pthread_sigmask(signal.SIG_UNBLOCK, held)
+    def poll(self):   # still running when the interrupt arrives
+        return None
     def kill(self):
         seen.append("killed")
     def wait(self):
@@ -4010,6 +4016,102 @@ names = [x.strip() for x in enum[len("error: <"):enum.index(">")].split("|")]
 print("in-table" if lines[i - 1].startswith("|") else "outside", "unique" if len(names) == len(set(names)) else "repeated")
 PY
 )" "the native mirror's generated rows sit in the Step 5 table and its error enum names each class once (L6)"
+
+# Round 20 (C1): a request record that does not match the ledger makes an error used up only when this step recorded the
+# round's request; a pre-send check that finds it changed answers "nothing was sent" and its error can be cleared later.
+rm -rf "$WORK/r20a"; cp -R "$WORK/run6w" "$WORK/r20a"; printf ' ' >> "$WORK/r20a/requests.json"
+RUN_OUT=$(cd "$WORK" && HOME="$WORK/home" PATH="$WORK/stubbin:$PATH" python3 "$SCRIPTS/xval.py" ask --run "$WORK/r20a" --round zoom 2>&1)
+assert_contains "$RUN_OUT" "nothing was sent" "a pre-send check that finds the request record changed says nothing was sent (C1)"
+assert_eq "False" "$(python3 -c 'import json,sys; print(bool(json.load(open(sys.argv[1])).get("used_up")))' "$WORK/r20a/error.json")" \
+  "and its error is not used up, so it can be cleared once the round completes (C1)"
+# C1: after codex-call has started, an unexpected failure says the request was sent.
+rm -rf "$WORK/r20b"; SEQ= new_run "$WORK/r20b"
+RUN_OUT=$(HOME="$WORK/home" MOCK_REPLY="$WORK/claude_marked.json" MOCK_LOG="$WORK/mock.log" MOCK_PROMPTS="$WORK/prompts.txt" PATH="$WORK/stubbin:$PATH" python3 -B - "$WORK/r20b" "$SCRIPTS" "$WORK/stubbin/codex-call" <<'PY' 2>&1
+import sys
+run, scripts, stub = sys.argv[1:4]; sys.path.insert(0, scripts)
+import xval
+real = xval.record_request
+def record(run_, rnd, **fields):   # an unexpected failure once codex-call has run
+    if "answered_at" in fields:
+        raise RuntimeError("boom")
+    return real(run_, rnd, **fields)
+xval.record_request = record
+xval.runtime = lambda r: stub
+try:
+    xval.main(["ask", "--run", run, "--round", "1"])
+except SystemExit:
+    pass
+PY
+)
+assert_contains "$RUN_OUT" "the request was sent" "an unexpected failure after codex-call ran says the request was sent (C1)"
+
+# Round 20 (C2): an interrupt that arrives as xval collects codex-call's exit says codex-call had already ended.
+rm -rf "$WORK/r20c"; SEQ= new_run "$WORK/r20c"
+RUN_OUT=$(HOME="$WORK/home" MOCK_LOG="$WORK/mock.log" MOCK_PROMPTS="$WORK/prompts.txt" PATH="$WORK/stubbin:$PATH" python3 -B - "$WORK/r20c" "$SCRIPTS" "$WORK/stubbin/codex-call" <<'PY' 2>&1
+import subprocess, sys
+run, scripts, stub = sys.argv[1:4]; sys.path.insert(0, scripts)
+import xval
+class Late(subprocess.Popen):
+    def communicate(self, *a, **k):   # the exit is collected, then the interrupt arrives
+        out = super().communicate(*a, **k)
+        raise KeyboardInterrupt
+xval.subprocess.Popen = Late
+xval.runtime = lambda r: stub
+try:
+    xval.main(["ask", "--run", run, "--round", "1"])
+except SystemExit:
+    pass
+PY
+)
+assert_contains "$RUN_OUT" "had ended when the interrupt was handled" "an interrupt handled after codex-call ended says so (C2)"
+refute_contains "$RUN_OUT" "codex-call was stopped" "and not that it was stopped (C2)"
+
+# Round 20 audit: a Ctrl-C reaches codex-call too; the answer says what state codex-call was in, never that the interrupt
+# came after it ended.
+rm -rf "$WORK/r20e" "$WORK/r20e.pid"; SEQ= new_run "$WORK/r20e"
+c2g=$(HOME="$WORK/home" MOCK_SLEEP=60 MOCK_PIDFILE="$WORK/r20e.pid" MOCK_LOG="$WORK/mock.log" MOCK_PROMPTS="$WORK/prompts.txt" \
+  PATH="$WORK/stubbin:$PATH" python3 - "$SCRIPTS" "$WORK/r20e" "$WORK/r20e.pid" <<'PY'
+import os, signal, subprocess, sys, time
+proc = subprocess.Popen([sys.executable, f"{sys.argv[1]}/xval.py", "ask", "--run", sys.argv[2], "--round", "1"],
+                        stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, start_new_session=True)
+for _ in range(600):
+    if os.path.exists(sys.argv[3]) and open(sys.argv[3]).read().strip():
+        break
+    time.sleep(0.1)
+else:
+    print("codex-call never started"); proc.kill(); sys.exit(0)
+os.killpg(proc.pid, signal.SIGINT)   # what a terminal's Ctrl-C does: the whole group
+out, _ = proc.communicate(timeout=30)
+print(out.strip())
+PY
+)
+assert_contains "$c2g" '"error": "backend_error"' "a Ctrl-C to the whole group while codex-call runs is backend_error (round 20 audit)"
+refute_contains "$c2g" "had ended when the interrupt was handled" "and is not said to have come after codex-call ended (round 20 audit)"
+
+# Round 20 (D3): on the main path too the result step holds SIGINT and SIGTERM until it exits: a SIGTERM as the file is
+# moved into place does not stop it, and the answer is the file's path.
+rm -rf "$WORK/r20d" "$WORK/r20d_out"; SEQ= new_run "$WORK/r20d"; mkdir -p "$WORK/r20d_out"
+before=$(cat "$WORK/r20d/errors.jsonl" 2>/dev/null)
+RUN_OUT=$(cd "$WORK/project" && python3 - "$SCRIPTS/xval.py" "$WORK/r20d" "$WORK/r20d_out/r.md" <<'PY' 2>&1
+import os, runpy, signal, sys
+script, run, out = sys.argv[1:4]
+real = os.replace
+def replace(*a, **k):
+    os.replace = real
+    os.kill(os.getpid(), signal.SIGTERM)
+    return real(*a, **k)
+os.replace = replace
+sys.argv = [script, "result", "--run", run, "--out", out]
+runpy.run_path(script, run_name="__main__")
+PY
+)
+assert_contains "$RUN_OUT" '"result"' "the result step is not stopped partway by a signal on the main path either (D3)"
+assert_eq "r.md" "$(ls -A "$WORK/r20d_out" | tr '\n' ' ' | sed 's/ $//')" "and leaves its file and nothing else (D3)"
+assert_eq "$before" "$(cat "$WORK/r20d/errors.jsonl" 2>/dev/null)" "and adds nothing to the history (D3)"
+
+# Round 20 (D4): the relation limitation is a condition whenever the vocabulary is not shown, a non-run directory included.
+assert_contains "$(cat "$WORK/r19c_result.md")" "If the vocabulary has relations" \
+  "a result file for a directory that is not a run says the relation limitation as a condition (D4)"
 
 # Round 6 (Q1): the steps that write into a directory are a closed list.
 rm -rf "$WORK/typo"

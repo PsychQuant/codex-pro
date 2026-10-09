@@ -48,7 +48,7 @@ allowed-tools:
 4. `parse_failed`：Codex 的回覆不是符合 schema 的 JSON
 5. `runtime_unavailable`：找不到 `codex-call`、`python3` 比 3.10 舊、`codex-call` 根本沒能啟動，或寫不進 prompt 檔
 6. `internal_error`：腳本內部的意外例外。照樣寫結果檔；例外的文字只留在 run 目錄的 `error.json`，結果檔只說它在那裡。
-   步驟被 SIGINT 或 SIGTERM 中斷時也是這一類（它已寫出的檔照樣登記；`result` 不登記任何東西；3.9 的路徑從它的第一個敘述起擋住中斷，之後不會被打斷，Python 啟動時到的訊號則在寫任何東西之前結束程序），只有 `ask` 在 codex-call 執行中被中斷是 `backend_error`
+   步驟被 SIGINT 或 SIGTERM 中斷時也是這一類（它已寫出的檔照樣登記；`result` 不登記任何東西，而且在兩個直譯器都擋住中斷到結束、不會被打斷；3.9 的路徑從它的第一個敘述起擋住中斷；Python 啟動時到的訊號則在寫任何東西之前結束程序，那個訊號在啟動時就被忽略的除外），只有 `ask` 在 codex-call 執行中被中斷是 `backend_error`
 7. `backend_error`：`codex-call` 啟動之後失敗、沒有更具體的類別：後端回錯誤（例如 HTTP 500）、連線中斷、
    沒說明原因（`HTTP 0`），或它自己的本機問題（讀不到 prompt、鎖檔權限）；`ask` 在 codex-call 執行中被 SIGINT 或 SIGTERM 中斷時也是這一類
    （codex-call 跟著終止，它已寫出的回覆照樣登記）。
@@ -75,7 +75,7 @@ $codex-visual-xval <image>... --vocab <vocab.json> [--claude-answers <claims.jso
 
 腳本需要 **Python 3.10 以上**的 `python3`。macOS 內建的 `/usr/bin/python3` 是 3.9；用它執行時，`xval.py`
 會在載入其他模組之前停下：`--run` 含 `..` 或是 symlink 時，照主路徑同一條規則回答 `target_invalid`、什麼都不寫；其餘步驟回答
-`runtime_unavailable`，`--run` 是 run 目錄時記進錯誤歷史（不改 run 的錯誤與帳本，run 照原樣，改用 3.10 以上重跑那一步即可）；`result` 照樣寫出結果檔（Step 5 列出的 `result` 自己失敗的情況除外），印出它的路徑與 `runtime_unavailable`，不記歷史，也不讀 run 的任何紀錄，只寫固定內容（設定、張數都留空）；要完整的結果檔就用 3.10 以上再寫一次。沒給 `--run`（或給空字串）時，兩個直譯器都只印用法、exit 64，什麼都不寫。3.9 的路徑從它的第一個敘述起到結束都擋住 SIGINT 與 SIGTERM，不會被中途打斷；它的結果檔只寫版本號，不寫直譯器的名字。
+`runtime_unavailable`，`--run` 是 run 目錄時記進錯誤歷史（不改 run 的錯誤與帳本，run 照原樣，改用 3.10 以上重跑那一步即可）；`result` 照樣寫出結果檔（Step 5 列出的 `result` 自己失敗的情況除外），印出它的路徑與 `runtime_unavailable`，不記歷史，也不讀 run 的任何紀錄，只寫固定內容（設定、張數都留空）；要完整的結果檔就用 3.10 以上再寫一次。沒給 `--run`、`--run` 後面沒有值或給空字串時，兩個直譯器都只印用法、exit 64，什麼都不寫。3.9 的路徑從它的第一個敘述起到結束都擋住 SIGINT 與 SIGTERM，不會被中途打斷；它的結果檔只寫版本號，不寫直譯器的名字。
 
 以本 skill 的目錄設定 `SKILL_DIR`（Claude Code 會在載入時顯示 base directory；不得從目前工作目錄猜），
 並建立 run 目錄：
@@ -276,7 +276,7 @@ init 還沒嘗試就拒絕，沒完成就停在 init 的錯誤；放大輪另外
 `runtime_unsupported`）；寫好 prompt 檔，記下請求時間（這一步先前在送出前停下的錯誤，此時清除）後送出、
 驗證回覆、記下回覆的 SHA-256。從記下請求之前到 codex-call 啟動之間擋住中斷：這段期間收到的中斷要等到啟動之後才處理，
 啟動成功時這一輪就算已送出。這段期間因為其他原因停下（codex-call 沒能啟動、登記失敗、意外例外）時，在擋住的狀態下撤回
-請求；訊息在這一步寫出的檔登記之後才決定，與錯誤的 `used_up` 用同一個判斷：請求不在紀錄上寫 nothing was sent，還在紀錄上（撤回失敗）說這一輪已用掉，請求紀錄與帳本不符（登記不進去）時說判斷不了、這一輪算用掉。一步停下或完成之後，記錄期間的中斷一律忽略。它只印出狀態，Codex 的答案寫在 `$RUN/codex.json`。
+請求；訊息在這一步寫出的檔登記之後才決定，與錯誤的 `used_up` 用同一個判斷：請求不在紀錄上寫 nothing was sent，還在紀錄上（撤回失敗）說這一輪已用掉，請求紀錄與帳本不符（登記不進去）時說判斷不了、這一輪算用掉；codex-call 啟動之後的意外失敗說已經送出。送出前的檢查發現請求紀錄被改過而停下時，這一步沒有記下請求，所以寫 nothing was sent，錯誤也不算用掉。一步停下或完成之後，記錄期間的中斷一律忽略。它只印出狀態，Codex 的答案寫在 `$RUN/codex.json`。
 
 **每一輪只送一次**：同一輪再跑一次 `ask` 會被拒絕，已記錄的答案不會被取代。這是「不 retry」與
 「不用重問來湊一致」的程式保證。
@@ -305,9 +305,9 @@ init 還沒嘗試就拒絕，沒完成就停在 init 的錯誤；放大輪另外
   這不是 run 的錯誤，`$RUN/error.json` 不會改變，run 照原本的狀態繼續。`--run` 含 `..`、是 symlink、或不是 run 目錄時什麼都
   不記；其餘的拒絕（含 run 目錄上未知的 `--round`）記一行在 `errors.jsonl`。
 - **這一步跑不起來或寫不出檔，但 run 沒有停**：`python3` 比 3.10 舊時，`result` 以外的每一步都停在 `runtime_unavailable`
-  （`--run` 含 `..` 或是 symlink 時例外，屬於上面的第四組；沒給 `--run` 或給空字串時，兩個直譯器都只印用法、exit 64，什麼都不寫；run 照原樣，改用 3.10 以上重跑那一步）；以及 `result` 自己的失敗（`target_invalid`：位置會落在 `--run` 指的目錄裡、
+  （`--run` 含 `..` 或是 symlink 時例外，屬於上面的第四組；沒給 `--run`、`--run` 後面沒有值或給空字串時，兩個直譯器都只印用法、exit 64，什麼都不寫；run 照原樣，改用 3.10 以上重跑那一步）；以及 `result` 自己的失敗（`target_invalid`：位置會落在 `--run` 指的目錄裡、
   路徑沒有指名檔案（含空的 `--out`）或它的目錄不存在、`--out` 是 symlink 或不是一般檔、寫不出去；被中斷或意外失敗時是
-  `internal_error`（3.9 從它的第一個敘述起擋住中斷，之後只有意外失敗）；`--run` 含 `..` 或是 symlink 時屬於上面的第四組，什麼都不寫）。
+  `internal_error`（`result` 擋住中斷到結束，只有意外失敗）；`--run` 含 `..` 或是 symlink 時屬於上面的第四組，什麼都不寫）。
   `$RUN/error.json` 不會改變；照訊息修好（換 Python、給 `--out` 一個 run 外的路徑）之後重跑同一步。
 - **run 停止**：`$RUN/error.json` 記下錯誤（run 已有一個與帳本不符或永遠解不開的錯誤，或帳本不見、讀不到時，這次只記進歷史，
   原本的錯誤留著；error.json 寫不出去時也只剩歷史）。`ask` 在記下請求之後、codex-call 啟動之前停下時（啟動失敗、

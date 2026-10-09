@@ -453,7 +453,8 @@ def render(run: str, stopped: dict | None) -> tuple[str, str | None]:
               "- Each round is asked once per run. A new run on the same images is a fresh attempt the program cannot "
               "link to this one, and it is no longer blind to what this run showed."]
     vocab = record("vocab.json", {})
-    unverified_vocab = "vocab.json" in bad   # nothing is said of it as a fact; conditions instead (round 19 audit)
+    # not shown, for any reason: nothing is said of it as a fact; conditions instead (round 19 audit; round 20, D4)
+    unverified_vocab = "vocab.json" in bad or not vocab.get("classes")
     if vocab.get("relations") or unverified_vocab:
         lines.append(("- If the vocabulary has relations, a" if unverified_vocab else "- A")
                      + " SAM distance settles a relation both ways only when SAM measured as many tips as both sides "
