@@ -505,6 +505,6 @@
 - [x] 24.3 文件與產生器：SKILL Step 3、4.2、5，CHANGELOG，原生鏡像的表格列與 enum（L2–L7、L9、L10）；送 verify 前由一組 agent 逐句對照程式找反例。
   - 驗證：`bash tests/run.sh` 只剩 #24。
   - [after: 24.2]
-- [ ] 24.4 真實後端端到端（第十九次）。
+- [x] 24.4 真實後端端到端（第十九次）。
   - 驗證：紀錄寫進 e2e-checklist §F。
   - [after: 24.3]

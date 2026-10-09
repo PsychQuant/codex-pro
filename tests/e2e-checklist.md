@@ -395,6 +395,13 @@ f01 是 PIL 寫出的 3000×1875 PNG，f02 是 PIL 寫出的 JPEG（品質 92）
 - 兩個 run 都以 macOS 內建的 3.9 跑 `result`：寫出固定內容的結果檔，回答 `runtime_unavailable`，裡面有放大輪子代理、只比數量的類別與 first side 模型家族三條條件句；錯誤歷史與 run 裡每個檔的 SHA 前後相同。
 - 第二個 run 帳本 29 筆，跑完後沒有任何不符、沒有 `error.json`、沒有暫存檔；複本與裁切圖的權限依使用者的 umask（022 時為 0644），不含 EXIF、XMP 或文字區塊；結果檔沒有 error、`invalid`、「not shown」「never sealed」、外來文字、資料夾名稱、撇號或 `<!--`。
 
+第十九次紀錄：2026-10-10，codex-pro `42b0f1d`（第十九輪 verify 的修正與送 verify 前反例審查的 12 項：3.9 從第一個敘述起擋住中斷、主路徑兩個處理函式裝好才放開訊號、請求狀態在登記之後由同一個判斷決定、結果檔的條件句），
+同一個 runtime 與 profile、同一組 PIL 合成圖，資料夾名稱含撇號、括號與 `<!--`；`confirm-privacy` 以結尾帶 `/.` 的 `--run` 執行。
+
+- 第一輪 7 秒、放大輪 7 秒，各一次請求；放大輪題目檔與全新 subagent 作答的那份逐字相同。分歧三筆全是植入的錯誤；裁決為兩筆 `resolved_codex`、一筆無法裁決，與前幾次相同；`result` 回報的路徑打得開。
+- 以 macOS 內建的 3.9 跑 `result`：寫出固定內容的結果檔，回答 `runtime_unavailable`，裡面有三條條件句，直譯器只寫版本號；錯誤歷史與 run 裡每個檔的 SHA 前後相同。
+- 帳本 29 筆，跑完後沒有任何不符、沒有 `error.json`、沒有暫存檔；複本與裁切圖的權限依使用者的 umask（022 時為 0644），不含 EXIF、XMP 或文字區塊；結果檔沒有 error、`invalid`、「not shown」「never sealed」、外來文字、資料夾名稱、撇號或 `<!--`。
+
 ## Post-test cleanup checklist
 
 - [ ] B 段使用的 disposable account／VM 沒有污染日常 Codex home
