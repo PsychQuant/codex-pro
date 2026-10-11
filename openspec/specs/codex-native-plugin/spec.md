@@ -8,7 +8,7 @@ TBD - created by archiving change 'add-native-codex-plugin'. Update Purpose afte
 
 ### Requirement: Native Codex plugin manifest
 
-The repository SHALL provide `.codex-plugin/plugin.json` as a valid skills-only Codex plugin manifest. The manifest SHALL declare `name` as `codex-pro`, strict SemVer `version` as `0.8.0`, `skills` as `./skills/`, a non-empty description, `author.name`, and install-surface `interface` metadata containing display name, short description, long description, developer name, category, capabilities, website URL, and one to three starter prompts. The manifest MUST NOT declare apps, MCP servers, hooks, or asset paths without corresponding package files.
+The repository SHALL provide `.codex-plugin/plugin.json` as a valid skills-only Codex plugin manifest. The manifest SHALL declare `name` as `codex-pro`, strict SemVer `version` as `0.9.0`, `skills` as `./skills/`, a non-empty description, `author.name`, and install-surface `interface` metadata containing display name, short description, long description, developer name, category, capabilities, website URL, and one to three starter prompts. The manifest MUST NOT declare apps, MCP servers, hooks, or asset paths without corresponding package files.
 
 #### Scenario: Plugin validator accepts the manifest
 
@@ -18,7 +18,7 @@ The repository SHALL provide `.codex-plugin/plugin.json` as a valid skills-only 
 #### Scenario: Skills path targets the native bundle
 
 - **WHEN** Codex resolves the manifest `skills` field relative to the repository root
-- **THEN** it resolves to the generated root `skills/` directory containing exactly the nine names in `scripts/codex-skills.manifest`
+- **THEN** it resolves to the generated root `skills/` directory containing exactly the ten names in `scripts/codex-skills.manifest`
 
 
 <!-- @trace
@@ -50,6 +50,108 @@ code:
   - scripts/codex-bundle-resources.manifest
   - skills/codex-setup/SKILL.md
   - skills/codex-rescue/SKILL.md
+-->
+
+
+<!-- @trace
+source: add-visual-xval
+updated: 2026-10-12
+code:
+  - .codex/skills/codex-visual-xval/references/claim-schema.md
+  - .codex/skills/codex-visual-xval/scripts/zoom_round.py
+  - skills/codex-visual-xval/scripts/adjudicate.py
+  - plugins/codex-pro/skills/codex-result/SKILL.md
+  - plugins/codex-pro/.claude-plugin/plugin.json
+  - .codex/skills/codex-visual-xval/scripts/adjudicate.py
+  - .codex/skills/codex-status/SKILL.md
+  - tests/codex-skills-parity.sh
+  - THIRD_PARTY_NOTICES.md
+  - .agents/skills/spectra-ask/SKILL.md
+  - bin/codex-pro-call
+  - plugins/codex-pro/skills/codex-visual-xval/scripts/adjudicate.py
+  - skills/codex-visual-xval/references/claim-schema.md
+  - skills/codex-visual-xval/scripts/xval.py
+  - skills/codex-visual-xval/scripts/sam_env.sh
+  - .agents/skills/spectra-commit/SKILL.md
+  - .codex/.codex-bundle-files
+  - plugins/codex-pro/runtime/codex-call
+  - .codex/skills/codex-visual-xval/scripts/codex_errors.py
+  - plugins/codex-pro/skills/codex-visual-xval/scripts/sam_track.py
+  - skills/codex-setup/SKILL.md
+  - scripts/codex-skills.manifest
+  - plugins/codex-pro/skills/codex-visual-xval/scripts/zoom_round.py
+  - .codex/bin/codex-pro-call
+  - .codex/skills/codex-visual-xval/scripts/media.py
+  - skills/codex-visual-xval/scripts/seal.py
+  - skills/codex-visual-xval/references/vocab-format.md
+  - bin/codex-call
+  - .codex/skills/codex-visual-xval/scripts/sam_track.py
+  - plugins/codex-pro/skills/codex-visual-xval/SKILL.md
+  - plugins/codex-pro/skills/codex-visual-xval/scripts/xval.py
+  - .agents/skills/spectra-analyze/SKILL.md
+  - .agents/skills/spectra-discuss/SKILL.md
+  - plugins/codex-pro/skills/codex-visual-xval/scripts/seal.py
+  - .codex/skills/codex-visual-xval/scripts/result_file.py
+  - CHANGELOG.md
+  - skills/codex-status/SKILL.md
+  - tests/result.sh
+  - tests/e2e-checklist.md
+  - .codex-bundle-files
+  - plugins/codex-pro/skills/codex-visual-xval/references/vocab-format.md
+  - .agents/skills/spectra-ingest/SKILL.md
+  - .agents/skills/spectra-review/SKILL.md
+  - tests/lib/assert.sh
+  - AGENTS.md
+  - skills/codex-visual-xval/scripts/codex_errors.py
+  - skills/codex-visual-xval/scripts/sam_track.py
+  - tests/run.sh
+  - .codex/skills/codex-visual-xval/scripts/xval.py
+  - .codex/skills/codex-visual-xval/scripts/sam_env.sh
+  - skills/codex-visual-xval/SKILL.md
+  - tests/codex-plugin.sh
+  - .codex/skills/codex-visual-xval/scripts/seal.py
+  - plugins/codex-pro/references/codex-call-provenance.json
+  - .codex/skills/codex-visual-xval/SKILL.md
+  - plugins/codex-pro/skills/codex-visual-xval/scripts/result_file.py
+  - .agents/skills/spectra-drift/SKILL.md
+  - .codex/bin/codex-call
+  - skills/codex-visual-xval/scripts/media.py
+  - .codex/skills/codex-visual-xval/scripts/run_files.py
+  - scripts/codex-bundle-resources.manifest
+  - skills/codex-visual-xval/scripts/zoom_round.py
+  - plugins/codex-pro/skills/codex-visual-xval/scripts/media.py
+  - .agents/skills/spectra-verify/SKILL.md
+  - .codex-plugin/plugin.json
+  - plugins/codex-pro/THIRD_PARTY_NOTICES.md
+  - .agents/skills/spectra-archive/SKILL.md
+  - .codex/skills/codex-visual-xval/references/vocab-format.md
+  - .codex/skills/codex-result/SKILL.md
+  - plugins/codex-pro/runtime/codex-pro-call
+  - .codex/skills/codex-visual-xval/scripts/compare_claims.py
+  - skills/codex-visual-xval/scripts/run_files.py
+  - tests/visual-xval.sh
+  - .codex/references/codex-call-provenance.json
+  - CLAUDE.md
+  - skills/codex-visual-xval/scripts/compare_claims.py
+  - plugins/codex-pro/skills/codex-visual-xval/scripts/run_files.py
+  - .agents/skills/spectra-debug/SKILL.md
+  - references/codex-call-provenance.json
+  - .agents/skills/spectra-audit/SKILL.md
+  - scripts/generate-codex-skills.sh
+  - plugins/codex-pro/skills/codex-visual-xval/scripts/sam_env.sh
+  - plugins/codex-pro/skills/codex-visual-xval/references/claim-schema.md
+  - plugins/codex-pro/skills/codex-visual-xval/scripts/compare_claims.py
+  - tests/status.sh
+  - tests/codex-runtime.sh
+  - skills/codex-result/SKILL.md
+  - README.md
+  - .claude-plugin/marketplace.json
+  - .agents/skills/spectra-apply/SKILL.md
+  - .codex/skills/codex-setup/SKILL.md
+  - plugins/codex-pro/skills/codex-status/SKILL.md
+  - skills/codex-visual-xval/scripts/result_file.py
+  - .agents/skills/spectra-propose/SKILL.md
+  - plugins/codex-pro/skills/codex-visual-xval/scripts/codex_errors.py
 -->
 
 ---
@@ -102,7 +204,7 @@ code:
 ---
 ### Requirement: Complete generated Codex bundles
 
-`plugins/codex-pro/` SHALL remain the only hand-maintained source for Codex skill content and runtime resources. Running `scripts/generate-codex-skills.sh` without arguments SHALL update two complete bundle roots: `.codex/` and the repository root. Each bundle SHALL contain generated `skills/`, `references/`, `bin/`, and a sorted `.codex-bundle-files` ownership inventory. The nine skill directories, every manifest-listed skill-local resource, shared reference, wrapper, and runtime snapshot SHALL be byte-identical between both bundle roots, except generated SKILL.md content that is deterministically transformed from the Claude source and is itself identical across the two Codex bundles.
+`plugins/codex-pro/` SHALL remain the only hand-maintained source for Codex skill content and runtime resources. Running `scripts/generate-codex-skills.sh` without arguments SHALL update two complete bundle roots: `.codex/` and the repository root. Each bundle SHALL contain generated `skills/`, `references/`, `bin/`, and a sorted `.codex-bundle-files` ownership inventory. The ten skill directories, every manifest-listed skill-local resource, shared reference, wrapper, and runtime snapshot SHALL be byte-identical between both bundle roots, except generated SKILL.md content that is deterministically transformed from the Claude source and is itself identical across the two Codex bundles.
 
 Every resource-manifest source and publish entry MUST name a file below its allowed subtree. A `skills/` entry MUST use `skills/<expected-skill>/<child-file>`; `references/`, `runtime/`, and `bin/` entries MUST contain at least one child component. Before writing the ownership inventory or applying a staged bundle, the generator SHALL independently enumerate staged regular files and require that exact set to equal the expected inventory.
 
@@ -170,6 +272,108 @@ code:
   - skills/codex-rescue/SKILL.md
 -->
 
+
+<!-- @trace
+source: add-visual-xval
+updated: 2026-10-12
+code:
+  - .codex/skills/codex-visual-xval/references/claim-schema.md
+  - .codex/skills/codex-visual-xval/scripts/zoom_round.py
+  - skills/codex-visual-xval/scripts/adjudicate.py
+  - plugins/codex-pro/skills/codex-result/SKILL.md
+  - plugins/codex-pro/.claude-plugin/plugin.json
+  - .codex/skills/codex-visual-xval/scripts/adjudicate.py
+  - .codex/skills/codex-status/SKILL.md
+  - tests/codex-skills-parity.sh
+  - THIRD_PARTY_NOTICES.md
+  - .agents/skills/spectra-ask/SKILL.md
+  - bin/codex-pro-call
+  - plugins/codex-pro/skills/codex-visual-xval/scripts/adjudicate.py
+  - skills/codex-visual-xval/references/claim-schema.md
+  - skills/codex-visual-xval/scripts/xval.py
+  - skills/codex-visual-xval/scripts/sam_env.sh
+  - .agents/skills/spectra-commit/SKILL.md
+  - .codex/.codex-bundle-files
+  - plugins/codex-pro/runtime/codex-call
+  - .codex/skills/codex-visual-xval/scripts/codex_errors.py
+  - plugins/codex-pro/skills/codex-visual-xval/scripts/sam_track.py
+  - skills/codex-setup/SKILL.md
+  - scripts/codex-skills.manifest
+  - plugins/codex-pro/skills/codex-visual-xval/scripts/zoom_round.py
+  - .codex/bin/codex-pro-call
+  - .codex/skills/codex-visual-xval/scripts/media.py
+  - skills/codex-visual-xval/scripts/seal.py
+  - skills/codex-visual-xval/references/vocab-format.md
+  - bin/codex-call
+  - .codex/skills/codex-visual-xval/scripts/sam_track.py
+  - plugins/codex-pro/skills/codex-visual-xval/SKILL.md
+  - plugins/codex-pro/skills/codex-visual-xval/scripts/xval.py
+  - .agents/skills/spectra-analyze/SKILL.md
+  - .agents/skills/spectra-discuss/SKILL.md
+  - plugins/codex-pro/skills/codex-visual-xval/scripts/seal.py
+  - .codex/skills/codex-visual-xval/scripts/result_file.py
+  - CHANGELOG.md
+  - skills/codex-status/SKILL.md
+  - tests/result.sh
+  - tests/e2e-checklist.md
+  - .codex-bundle-files
+  - plugins/codex-pro/skills/codex-visual-xval/references/vocab-format.md
+  - .agents/skills/spectra-ingest/SKILL.md
+  - .agents/skills/spectra-review/SKILL.md
+  - tests/lib/assert.sh
+  - AGENTS.md
+  - skills/codex-visual-xval/scripts/codex_errors.py
+  - skills/codex-visual-xval/scripts/sam_track.py
+  - tests/run.sh
+  - .codex/skills/codex-visual-xval/scripts/xval.py
+  - .codex/skills/codex-visual-xval/scripts/sam_env.sh
+  - skills/codex-visual-xval/SKILL.md
+  - tests/codex-plugin.sh
+  - .codex/skills/codex-visual-xval/scripts/seal.py
+  - plugins/codex-pro/references/codex-call-provenance.json
+  - .codex/skills/codex-visual-xval/SKILL.md
+  - plugins/codex-pro/skills/codex-visual-xval/scripts/result_file.py
+  - .agents/skills/spectra-drift/SKILL.md
+  - .codex/bin/codex-call
+  - skills/codex-visual-xval/scripts/media.py
+  - .codex/skills/codex-visual-xval/scripts/run_files.py
+  - scripts/codex-bundle-resources.manifest
+  - skills/codex-visual-xval/scripts/zoom_round.py
+  - plugins/codex-pro/skills/codex-visual-xval/scripts/media.py
+  - .agents/skills/spectra-verify/SKILL.md
+  - .codex-plugin/plugin.json
+  - plugins/codex-pro/THIRD_PARTY_NOTICES.md
+  - .agents/skills/spectra-archive/SKILL.md
+  - .codex/skills/codex-visual-xval/references/vocab-format.md
+  - .codex/skills/codex-result/SKILL.md
+  - plugins/codex-pro/runtime/codex-pro-call
+  - .codex/skills/codex-visual-xval/scripts/compare_claims.py
+  - skills/codex-visual-xval/scripts/run_files.py
+  - tests/visual-xval.sh
+  - .codex/references/codex-call-provenance.json
+  - CLAUDE.md
+  - skills/codex-visual-xval/scripts/compare_claims.py
+  - plugins/codex-pro/skills/codex-visual-xval/scripts/run_files.py
+  - .agents/skills/spectra-debug/SKILL.md
+  - references/codex-call-provenance.json
+  - .agents/skills/spectra-audit/SKILL.md
+  - scripts/generate-codex-skills.sh
+  - plugins/codex-pro/skills/codex-visual-xval/scripts/sam_env.sh
+  - plugins/codex-pro/skills/codex-visual-xval/references/claim-schema.md
+  - plugins/codex-pro/skills/codex-visual-xval/scripts/compare_claims.py
+  - tests/status.sh
+  - tests/codex-runtime.sh
+  - skills/codex-result/SKILL.md
+  - README.md
+  - .claude-plugin/marketplace.json
+  - .agents/skills/spectra-apply/SKILL.md
+  - .codex/skills/codex-setup/SKILL.md
+  - plugins/codex-pro/skills/codex-status/SKILL.md
+  - skills/codex-visual-xval/scripts/result_file.py
+  - .agents/skills/spectra-propose/SKILL.md
+  - plugins/codex-pro/skills/codex-visual-xval/scripts/codex_errors.py
+-->
+
 ---
 ### Requirement: Backward-compatible generator interfaces
 
@@ -180,7 +384,7 @@ In default mode, the generator SHALL stage and validate both committed bundle de
 #### Scenario: Legacy skill-only caller remains valid
 
 - **WHEN** an existing test invokes the generator with `--output <temporary-skills-directory>`
-- **THEN** the generator writes the nine transformed skill directories without changing either committed bundle
+- **THEN** the generator writes the ten transformed skill directories without changing either committed bundle
 
 #### Scenario: Dangerous bundle destination is rejected
 
@@ -239,15 +443,117 @@ code:
   - skills/codex-rescue/SKILL.md
 -->
 
+
+<!-- @trace
+source: add-visual-xval
+updated: 2026-10-12
+code:
+  - .codex/skills/codex-visual-xval/references/claim-schema.md
+  - .codex/skills/codex-visual-xval/scripts/zoom_round.py
+  - skills/codex-visual-xval/scripts/adjudicate.py
+  - plugins/codex-pro/skills/codex-result/SKILL.md
+  - plugins/codex-pro/.claude-plugin/plugin.json
+  - .codex/skills/codex-visual-xval/scripts/adjudicate.py
+  - .codex/skills/codex-status/SKILL.md
+  - tests/codex-skills-parity.sh
+  - THIRD_PARTY_NOTICES.md
+  - .agents/skills/spectra-ask/SKILL.md
+  - bin/codex-pro-call
+  - plugins/codex-pro/skills/codex-visual-xval/scripts/adjudicate.py
+  - skills/codex-visual-xval/references/claim-schema.md
+  - skills/codex-visual-xval/scripts/xval.py
+  - skills/codex-visual-xval/scripts/sam_env.sh
+  - .agents/skills/spectra-commit/SKILL.md
+  - .codex/.codex-bundle-files
+  - plugins/codex-pro/runtime/codex-call
+  - .codex/skills/codex-visual-xval/scripts/codex_errors.py
+  - plugins/codex-pro/skills/codex-visual-xval/scripts/sam_track.py
+  - skills/codex-setup/SKILL.md
+  - scripts/codex-skills.manifest
+  - plugins/codex-pro/skills/codex-visual-xval/scripts/zoom_round.py
+  - .codex/bin/codex-pro-call
+  - .codex/skills/codex-visual-xval/scripts/media.py
+  - skills/codex-visual-xval/scripts/seal.py
+  - skills/codex-visual-xval/references/vocab-format.md
+  - bin/codex-call
+  - .codex/skills/codex-visual-xval/scripts/sam_track.py
+  - plugins/codex-pro/skills/codex-visual-xval/SKILL.md
+  - plugins/codex-pro/skills/codex-visual-xval/scripts/xval.py
+  - .agents/skills/spectra-analyze/SKILL.md
+  - .agents/skills/spectra-discuss/SKILL.md
+  - plugins/codex-pro/skills/codex-visual-xval/scripts/seal.py
+  - .codex/skills/codex-visual-xval/scripts/result_file.py
+  - CHANGELOG.md
+  - skills/codex-status/SKILL.md
+  - tests/result.sh
+  - tests/e2e-checklist.md
+  - .codex-bundle-files
+  - plugins/codex-pro/skills/codex-visual-xval/references/vocab-format.md
+  - .agents/skills/spectra-ingest/SKILL.md
+  - .agents/skills/spectra-review/SKILL.md
+  - tests/lib/assert.sh
+  - AGENTS.md
+  - skills/codex-visual-xval/scripts/codex_errors.py
+  - skills/codex-visual-xval/scripts/sam_track.py
+  - tests/run.sh
+  - .codex/skills/codex-visual-xval/scripts/xval.py
+  - .codex/skills/codex-visual-xval/scripts/sam_env.sh
+  - skills/codex-visual-xval/SKILL.md
+  - tests/codex-plugin.sh
+  - .codex/skills/codex-visual-xval/scripts/seal.py
+  - plugins/codex-pro/references/codex-call-provenance.json
+  - .codex/skills/codex-visual-xval/SKILL.md
+  - plugins/codex-pro/skills/codex-visual-xval/scripts/result_file.py
+  - .agents/skills/spectra-drift/SKILL.md
+  - .codex/bin/codex-call
+  - skills/codex-visual-xval/scripts/media.py
+  - .codex/skills/codex-visual-xval/scripts/run_files.py
+  - scripts/codex-bundle-resources.manifest
+  - skills/codex-visual-xval/scripts/zoom_round.py
+  - plugins/codex-pro/skills/codex-visual-xval/scripts/media.py
+  - .agents/skills/spectra-verify/SKILL.md
+  - .codex-plugin/plugin.json
+  - plugins/codex-pro/THIRD_PARTY_NOTICES.md
+  - .agents/skills/spectra-archive/SKILL.md
+  - .codex/skills/codex-visual-xval/references/vocab-format.md
+  - .codex/skills/codex-result/SKILL.md
+  - plugins/codex-pro/runtime/codex-pro-call
+  - .codex/skills/codex-visual-xval/scripts/compare_claims.py
+  - skills/codex-visual-xval/scripts/run_files.py
+  - tests/visual-xval.sh
+  - .codex/references/codex-call-provenance.json
+  - CLAUDE.md
+  - skills/codex-visual-xval/scripts/compare_claims.py
+  - plugins/codex-pro/skills/codex-visual-xval/scripts/run_files.py
+  - .agents/skills/spectra-debug/SKILL.md
+  - references/codex-call-provenance.json
+  - .agents/skills/spectra-audit/SKILL.md
+  - scripts/generate-codex-skills.sh
+  - plugins/codex-pro/skills/codex-visual-xval/scripts/sam_env.sh
+  - plugins/codex-pro/skills/codex-visual-xval/references/claim-schema.md
+  - plugins/codex-pro/skills/codex-visual-xval/scripts/compare_claims.py
+  - tests/status.sh
+  - tests/codex-runtime.sh
+  - skills/codex-result/SKILL.md
+  - README.md
+  - .claude-plugin/marketplace.json
+  - .agents/skills/spectra-apply/SKILL.md
+  - .codex/skills/codex-setup/SKILL.md
+  - plugins/codex-pro/skills/codex-status/SKILL.md
+  - skills/codex-visual-xval/scripts/result_file.py
+  - .agents/skills/spectra-propose/SKILL.md
+  - plugins/codex-pro/skills/codex-visual-xval/scripts/codex_errors.py
+-->
+
 ---
 ### Requirement: Pinned runtime provenance
 
-The hand-maintained source bundle SHALL include a byte-for-byte snapshot of `PsychQuant/parallel-ai-agents` `codex-call` from commit `6fc6883ef1d655f5f782a97accc0a5adacc76226`. The source snapshot and wrapper SHALL be stored outside the Claude plugin root `bin/` directory, and the resource manifest SHALL map them into each generated native bundle as `bin/codex-call` and `bin/codex-pro-call`. The Claude plugin package MUST NOT contribute either executable to the automatic Bash PATH and SHALL retain external PATH resolution for its unmodified Claude skills. Because Claude marketplace installation copies only `plugins/codex-pro/`, that package root SHALL include a complete MIT `LICENSE` and a third-party notice identifying the vendored snapshot and immutable commit; it MUST NOT depend on repository-root notice files for license compliance. Provenance data SHALL record repository, source path, commit, Git blob `c2418f5c0a0a3d092859d6252d2910c460dee981`, raw URL, size `25329`, mode `100755`, SHA-256 `fa80364b2159f3df4f2d9a27c885a7b50e510bf52933abaa79564945bedb6af0`, MIT license, and known upstream issue identifiers. Updating the snapshot MUST use an immutable commit and MUST update provenance and verification tests in the same change.
+The hand-maintained source bundle SHALL include a byte-for-byte snapshot of `PsychQuant/parallel-ai-agents` `codex-call` from the immutable commit recorded in `references/codex-call-provenance.json`; that commit SHALL be one whose `codex-call` accepts the `--image` option. The source snapshot and wrapper SHALL be stored outside the Claude plugin root `bin/` directory, and the resource manifest SHALL map them into each generated native bundle as `bin/codex-call` and `bin/codex-pro-call`. The Claude plugin package MUST NOT contribute either executable to the automatic Bash PATH and SHALL retain external PATH resolution for its unmodified Claude skills. Because Claude marketplace installation copies only `plugins/codex-pro/`, that package root SHALL include a complete MIT `LICENSE` and a third-party notice identifying the vendored snapshot and immutable commit; it MUST NOT depend on repository-root notice files for license compliance. Provenance data SHALL record repository, source path, commit, Git blob, raw URL, size, mode, SHA-256, MIT license, and known upstream issue identifiers. The provenance JSON SHALL be the single authoritative source for these values: the wrapper's expected SHA-256, the provenance tests, and the third-party notices SHALL be checked against it, and specifications SHALL NOT restate the fingerprint values. Updating the snapshot MUST use an immutable commit and MUST update provenance and verification tests in the same change.
 
 #### Scenario: Vendored bytes match the pinned source fingerprint
 
 - **WHEN** the runtime provenance test hashes and stats the source and both generated snapshots
-- **THEN** all three files are executable, 25,329 bytes, and match the recorded SHA-256
+- **THEN** all three files are executable and match the size and SHA-256 recorded in the provenance JSON
 
 #### Scenario: Mutable upstream reference is not used
 
@@ -264,36 +570,116 @@ The hand-maintained source bundle SHALL include a byte-for-byte snapshot of `Psy
 - **WHEN** only `plugins/codex-pro/` is copied into a Claude marketplace cache
 - **THEN** that isolated package still contains the complete MIT text and a notice identifying `runtime/codex-call` and its immutable upstream commit
 
+#### Scenario: Wrapper digest agrees with provenance
+
+- **WHEN** the expected SHA-256 embedded in `codex-pro-call` is compared with the provenance JSON
+- **THEN** the two values are identical, and a mismatch fails the static test suite
+
+#### Scenario: Vendored runtime accepts images
+
+- **WHEN** the help output of the vendored `codex-call` snapshot is inspected
+- **THEN** it lists the `--image` option
+
 
 <!-- @trace
-source: add-native-codex-plugin
-updated: 2026-08-10
+source: add-visual-xval
+updated: 2026-10-12
 code:
-  - THIRD_PARTY_NOTICES.md
-  - tests/codex-plugin.sh
-  - scripts/generate-codex-skills.sh
-  - tests/rescue.sh
-  - plugins/codex-pro/runtime/codex-pro-call
-  - skills/codex-review/SKILL.md
-  - .codex/skills/codex-setup/SKILL.md
-  - .codex/skills/codex-adversarial-review/SKILL.md
-  - tests/adversarial-review.sh
-  - tests/review.sh
-  - tests/setup.sh
-  - tests/run-dispatcher.sh
-  - plugins/codex-pro/THIRD_PARTY_NOTICES.md
-  - tests/codex-runtime.sh
-  - AGENTS.md
-  - plugins/codex-pro/runtime/codex-call
-  - skills/codex-adversarial-review/SKILL.md
-  - tests/run.sh
-  - .codex/skills/codex-review/SKILL.md
+  - .codex/skills/codex-visual-xval/references/claim-schema.md
+  - .codex/skills/codex-visual-xval/scripts/zoom_round.py
+  - skills/codex-visual-xval/scripts/adjudicate.py
+  - plugins/codex-pro/skills/codex-result/SKILL.md
+  - plugins/codex-pro/.claude-plugin/plugin.json
+  - .codex/skills/codex-visual-xval/scripts/adjudicate.py
+  - .codex/skills/codex-status/SKILL.md
   - tests/codex-skills-parity.sh
-  - .codex/skills/codex-rescue/SKILL.md
-  - plugins/codex-pro/LICENSE
-  - scripts/codex-bundle-resources.manifest
+  - THIRD_PARTY_NOTICES.md
+  - .agents/skills/spectra-ask/SKILL.md
+  - bin/codex-pro-call
+  - plugins/codex-pro/skills/codex-visual-xval/scripts/adjudicate.py
+  - skills/codex-visual-xval/references/claim-schema.md
+  - skills/codex-visual-xval/scripts/xval.py
+  - skills/codex-visual-xval/scripts/sam_env.sh
+  - .agents/skills/spectra-commit/SKILL.md
+  - .codex/.codex-bundle-files
+  - plugins/codex-pro/runtime/codex-call
+  - .codex/skills/codex-visual-xval/scripts/codex_errors.py
+  - plugins/codex-pro/skills/codex-visual-xval/scripts/sam_track.py
   - skills/codex-setup/SKILL.md
-  - skills/codex-rescue/SKILL.md
+  - scripts/codex-skills.manifest
+  - plugins/codex-pro/skills/codex-visual-xval/scripts/zoom_round.py
+  - .codex/bin/codex-pro-call
+  - .codex/skills/codex-visual-xval/scripts/media.py
+  - skills/codex-visual-xval/scripts/seal.py
+  - skills/codex-visual-xval/references/vocab-format.md
+  - bin/codex-call
+  - .codex/skills/codex-visual-xval/scripts/sam_track.py
+  - plugins/codex-pro/skills/codex-visual-xval/SKILL.md
+  - plugins/codex-pro/skills/codex-visual-xval/scripts/xval.py
+  - .agents/skills/spectra-analyze/SKILL.md
+  - .agents/skills/spectra-discuss/SKILL.md
+  - plugins/codex-pro/skills/codex-visual-xval/scripts/seal.py
+  - .codex/skills/codex-visual-xval/scripts/result_file.py
+  - CHANGELOG.md
+  - skills/codex-status/SKILL.md
+  - tests/result.sh
+  - tests/e2e-checklist.md
+  - .codex-bundle-files
+  - plugins/codex-pro/skills/codex-visual-xval/references/vocab-format.md
+  - .agents/skills/spectra-ingest/SKILL.md
+  - .agents/skills/spectra-review/SKILL.md
+  - tests/lib/assert.sh
+  - AGENTS.md
+  - skills/codex-visual-xval/scripts/codex_errors.py
+  - skills/codex-visual-xval/scripts/sam_track.py
+  - tests/run.sh
+  - .codex/skills/codex-visual-xval/scripts/xval.py
+  - .codex/skills/codex-visual-xval/scripts/sam_env.sh
+  - skills/codex-visual-xval/SKILL.md
+  - tests/codex-plugin.sh
+  - .codex/skills/codex-visual-xval/scripts/seal.py
+  - plugins/codex-pro/references/codex-call-provenance.json
+  - .codex/skills/codex-visual-xval/SKILL.md
+  - plugins/codex-pro/skills/codex-visual-xval/scripts/result_file.py
+  - .agents/skills/spectra-drift/SKILL.md
+  - .codex/bin/codex-call
+  - skills/codex-visual-xval/scripts/media.py
+  - .codex/skills/codex-visual-xval/scripts/run_files.py
+  - scripts/codex-bundle-resources.manifest
+  - skills/codex-visual-xval/scripts/zoom_round.py
+  - plugins/codex-pro/skills/codex-visual-xval/scripts/media.py
+  - .agents/skills/spectra-verify/SKILL.md
+  - .codex-plugin/plugin.json
+  - plugins/codex-pro/THIRD_PARTY_NOTICES.md
+  - .agents/skills/spectra-archive/SKILL.md
+  - .codex/skills/codex-visual-xval/references/vocab-format.md
+  - .codex/skills/codex-result/SKILL.md
+  - plugins/codex-pro/runtime/codex-pro-call
+  - .codex/skills/codex-visual-xval/scripts/compare_claims.py
+  - skills/codex-visual-xval/scripts/run_files.py
+  - tests/visual-xval.sh
+  - .codex/references/codex-call-provenance.json
+  - CLAUDE.md
+  - skills/codex-visual-xval/scripts/compare_claims.py
+  - plugins/codex-pro/skills/codex-visual-xval/scripts/run_files.py
+  - .agents/skills/spectra-debug/SKILL.md
+  - references/codex-call-provenance.json
+  - .agents/skills/spectra-audit/SKILL.md
+  - scripts/generate-codex-skills.sh
+  - plugins/codex-pro/skills/codex-visual-xval/scripts/sam_env.sh
+  - plugins/codex-pro/skills/codex-visual-xval/references/claim-schema.md
+  - plugins/codex-pro/skills/codex-visual-xval/scripts/compare_claims.py
+  - tests/status.sh
+  - tests/codex-runtime.sh
+  - skills/codex-result/SKILL.md
+  - README.md
+  - .claude-plugin/marketplace.json
+  - .agents/skills/spectra-apply/SKILL.md
+  - .codex/skills/codex-setup/SKILL.md
+  - plugins/codex-pro/skills/codex-status/SKILL.md
+  - skills/codex-visual-xval/scripts/result_file.py
+  - .agents/skills/spectra-propose/SKILL.md
+  - plugins/codex-pro/skills/codex-visual-xval/scripts/codex_errors.py
 -->
 
 ---
@@ -361,11 +747,11 @@ code:
 ---
 ### Requirement: Skill-relative runtime resolution
 
-The generated Codex setup, review, adversarial-review, and rescue skills SHALL set `SKILL_DIR` from the active SKILL.md absolute location supplied by Codex, derive `BUNDLE_ROOT` as two parent directories above it, and prefer `BUNDLE_ROOT/bin/codex-pro-call`. They MUST NOT infer the skill location from the current working directory, scan Codex cache directories, read `CODEX_HOME`, or require `PLUGIN_ROOT`, `CODEX_PLUGIN_ROOT`, `CODEX_SKILL_ROOT`, or `CLAUDE_PLUGIN_ROOT`.
+The generated Codex setup, review, adversarial-review, rescue, and visual-xval skills SHALL set `SKILL_DIR` from the active SKILL.md absolute location supplied by Codex, derive `BUNDLE_ROOT` as two parent directories above it, and prefer `BUNDLE_ROOT/bin/codex-pro-call`. They MUST NOT infer the skill location from the current working directory, scan Codex cache directories, read `CODEX_HOME`, or require `PLUGIN_ROOT`, `CODEX_PLUGIN_ROOT`, `CODEX_SKILL_ROOT`, or `CLAUDE_PLUGIN_ROOT`.
 
 If the bundle contains `.codex-plugin/plugin.json` or `.codex-bundle-files` but its wrapper is missing, not a regular file, or non-executable, the generated skill SHALL fail closed as package corruption. A directory or special file MUST NOT pass as a wrapper merely because its path satisfies `test -x`. A broken symbolic link at either native marker path SHALL still count as native package state and MUST NOT reopen PATH fallback. A final `command -v codex-call` fallback SHALL be permitted only when neither native marker path exists, preserving an explicitly identified legacy project mirror.
 
-The generated producer resolver MUST NOT terminate the skill before result handling. It SHALL set a stable preflight error and detail, skip runtime execution, OAuth access, and network access, and continue to the existing result-writing step. Missing, non-regular, or non-executable native wrapper/runtime and integrity mismatch SHALL map to `package_corruption`; unsupported platform, missing Swift, missing legacy PATH runtime, and other runtime availability failures SHALL map to `runtime_unavailable`. Review, adversarial-review, and rescue SHALL preserve their existing result shapes while permitting these two native-only frontmatter error values, and every such failure SHALL write a result file without retrying. The result body SHALL include a sanitized and bounded representation of the preflight detail; raw control characters or unbounded wrapper output MUST NOT be copied into frontmatter.
+The generated producer resolver MUST NOT terminate the skill before result handling. It SHALL set a stable preflight error and detail, skip runtime execution, OAuth access, and network access, and continue to the existing result-writing step. Missing, non-regular, or non-executable native wrapper/runtime and integrity mismatch SHALL map to `package_corruption`; unsupported platform, missing Swift, missing legacy PATH runtime, and other runtime availability failures SHALL map to `runtime_unavailable`. Review, adversarial-review, rescue, and visual-xval SHALL preserve their existing result shapes while permitting these two native-only frontmatter error values, and every such failure SHALL write a result file without retrying. The result body SHALL include a sanitized and bounded representation of the preflight detail; raw control characters or unbounded wrapper output MUST NOT be copied into frontmatter.
 
 #### Scenario: Installed native producer uses bundled runtime
 
@@ -394,45 +780,115 @@ The generated producer resolver MUST NOT terminate the skill before result handl
 
 #### Scenario: Native preflight failure remains observable
 
-- **WHEN** review, adversarial-review, or rescue encounters a package-corruption or runtime-unavailable preflight state
+- **WHEN** review, adversarial-review, rescue, or visual-xval encounters a package-corruption or runtime-unavailable preflight state
 - **THEN** it does not invoke the runtime and writes its normal structured result file with `error: package_corruption` or `error: runtime_unavailable` plus a sanitized, bounded preflight detail in the result body
 
 
 <!-- @trace
-source: add-native-codex-plugin
-updated: 2026-08-10
+source: add-visual-xval
+updated: 2026-10-12
 code:
-  - THIRD_PARTY_NOTICES.md
-  - tests/codex-plugin.sh
-  - scripts/generate-codex-skills.sh
-  - tests/rescue.sh
-  - plugins/codex-pro/runtime/codex-pro-call
-  - skills/codex-review/SKILL.md
-  - .codex/skills/codex-setup/SKILL.md
-  - .codex/skills/codex-adversarial-review/SKILL.md
-  - tests/adversarial-review.sh
-  - tests/review.sh
-  - tests/setup.sh
-  - tests/run-dispatcher.sh
-  - plugins/codex-pro/THIRD_PARTY_NOTICES.md
-  - tests/codex-runtime.sh
-  - AGENTS.md
-  - plugins/codex-pro/runtime/codex-call
-  - skills/codex-adversarial-review/SKILL.md
-  - tests/run.sh
-  - .codex/skills/codex-review/SKILL.md
+  - .codex/skills/codex-visual-xval/references/claim-schema.md
+  - .codex/skills/codex-visual-xval/scripts/zoom_round.py
+  - skills/codex-visual-xval/scripts/adjudicate.py
+  - plugins/codex-pro/skills/codex-result/SKILL.md
+  - plugins/codex-pro/.claude-plugin/plugin.json
+  - .codex/skills/codex-visual-xval/scripts/adjudicate.py
+  - .codex/skills/codex-status/SKILL.md
   - tests/codex-skills-parity.sh
-  - .codex/skills/codex-rescue/SKILL.md
-  - plugins/codex-pro/LICENSE
-  - scripts/codex-bundle-resources.manifest
+  - THIRD_PARTY_NOTICES.md
+  - .agents/skills/spectra-ask/SKILL.md
+  - bin/codex-pro-call
+  - plugins/codex-pro/skills/codex-visual-xval/scripts/adjudicate.py
+  - skills/codex-visual-xval/references/claim-schema.md
+  - skills/codex-visual-xval/scripts/xval.py
+  - skills/codex-visual-xval/scripts/sam_env.sh
+  - .agents/skills/spectra-commit/SKILL.md
+  - .codex/.codex-bundle-files
+  - plugins/codex-pro/runtime/codex-call
+  - .codex/skills/codex-visual-xval/scripts/codex_errors.py
+  - plugins/codex-pro/skills/codex-visual-xval/scripts/sam_track.py
   - skills/codex-setup/SKILL.md
-  - skills/codex-rescue/SKILL.md
+  - scripts/codex-skills.manifest
+  - plugins/codex-pro/skills/codex-visual-xval/scripts/zoom_round.py
+  - .codex/bin/codex-pro-call
+  - .codex/skills/codex-visual-xval/scripts/media.py
+  - skills/codex-visual-xval/scripts/seal.py
+  - skills/codex-visual-xval/references/vocab-format.md
+  - bin/codex-call
+  - .codex/skills/codex-visual-xval/scripts/sam_track.py
+  - plugins/codex-pro/skills/codex-visual-xval/SKILL.md
+  - plugins/codex-pro/skills/codex-visual-xval/scripts/xval.py
+  - .agents/skills/spectra-analyze/SKILL.md
+  - .agents/skills/spectra-discuss/SKILL.md
+  - plugins/codex-pro/skills/codex-visual-xval/scripts/seal.py
+  - .codex/skills/codex-visual-xval/scripts/result_file.py
+  - CHANGELOG.md
+  - skills/codex-status/SKILL.md
+  - tests/result.sh
+  - tests/e2e-checklist.md
+  - .codex-bundle-files
+  - plugins/codex-pro/skills/codex-visual-xval/references/vocab-format.md
+  - .agents/skills/spectra-ingest/SKILL.md
+  - .agents/skills/spectra-review/SKILL.md
+  - tests/lib/assert.sh
+  - AGENTS.md
+  - skills/codex-visual-xval/scripts/codex_errors.py
+  - skills/codex-visual-xval/scripts/sam_track.py
+  - tests/run.sh
+  - .codex/skills/codex-visual-xval/scripts/xval.py
+  - .codex/skills/codex-visual-xval/scripts/sam_env.sh
+  - skills/codex-visual-xval/SKILL.md
+  - tests/codex-plugin.sh
+  - .codex/skills/codex-visual-xval/scripts/seal.py
+  - plugins/codex-pro/references/codex-call-provenance.json
+  - .codex/skills/codex-visual-xval/SKILL.md
+  - plugins/codex-pro/skills/codex-visual-xval/scripts/result_file.py
+  - .agents/skills/spectra-drift/SKILL.md
+  - .codex/bin/codex-call
+  - skills/codex-visual-xval/scripts/media.py
+  - .codex/skills/codex-visual-xval/scripts/run_files.py
+  - scripts/codex-bundle-resources.manifest
+  - skills/codex-visual-xval/scripts/zoom_round.py
+  - plugins/codex-pro/skills/codex-visual-xval/scripts/media.py
+  - .agents/skills/spectra-verify/SKILL.md
+  - .codex-plugin/plugin.json
+  - plugins/codex-pro/THIRD_PARTY_NOTICES.md
+  - .agents/skills/spectra-archive/SKILL.md
+  - .codex/skills/codex-visual-xval/references/vocab-format.md
+  - .codex/skills/codex-result/SKILL.md
+  - plugins/codex-pro/runtime/codex-pro-call
+  - .codex/skills/codex-visual-xval/scripts/compare_claims.py
+  - skills/codex-visual-xval/scripts/run_files.py
+  - tests/visual-xval.sh
+  - .codex/references/codex-call-provenance.json
+  - CLAUDE.md
+  - skills/codex-visual-xval/scripts/compare_claims.py
+  - plugins/codex-pro/skills/codex-visual-xval/scripts/run_files.py
+  - .agents/skills/spectra-debug/SKILL.md
+  - references/codex-call-provenance.json
+  - .agents/skills/spectra-audit/SKILL.md
+  - scripts/generate-codex-skills.sh
+  - plugins/codex-pro/skills/codex-visual-xval/scripts/sam_env.sh
+  - plugins/codex-pro/skills/codex-visual-xval/references/claim-schema.md
+  - plugins/codex-pro/skills/codex-visual-xval/scripts/compare_claims.py
+  - tests/status.sh
+  - tests/codex-runtime.sh
+  - skills/codex-result/SKILL.md
+  - README.md
+  - .claude-plugin/marketplace.json
+  - .agents/skills/spectra-apply/SKILL.md
+  - .codex/skills/codex-setup/SKILL.md
+  - plugins/codex-pro/skills/codex-status/SKILL.md
+  - skills/codex-visual-xval/scripts/result_file.py
+  - .agents/skills/spectra-propose/SKILL.md
+  - plugins/codex-pro/skills/codex-visual-xval/scripts/codex_errors.py
 -->
 
 ---
 ### Requirement: Platform-scoped producer capability
 
-The plugin SHALL remain installable on supported Codex surfaces, and its pure local consumer skills SHALL remain usable without the bundled producer runtime. The bundled review, adversarial-review, and rescue runtime SHALL be declared macOS-only with Xcode Command Line Tools Swift. On unsupported platforms, setup SHALL report producer unavailability and SHALL distinguish that result from consumer skill availability.
+The plugin SHALL remain installable on supported Codex surfaces, and its pure local consumer skills SHALL remain usable without the bundled producer runtime. The bundled review, adversarial-review, rescue, and visual-xval runtime SHALL be declared macOS-only with Xcode Command Line Tools Swift. On unsupported platforms, setup SHALL report producer unavailability and SHALL distinguish that result from consumer skill availability.
 
 #### Scenario: Consumer skill remains available on a non-macOS host
 
@@ -441,45 +897,115 @@ The plugin SHALL remain installable on supported Codex surfaces, and its pure lo
 
 #### Scenario: Producer stops before OAuth or network access on a non-macOS host
 
-- **WHEN** a non-macOS user invokes review, adversarial-review, or rescue
+- **WHEN** a non-macOS user invokes review, adversarial-review, rescue, or visual-xval
 - **THEN** runtime preflight returns `error=unsupported_platform` before reading OAuth data or accessing the network
 
 
 <!-- @trace
-source: add-native-codex-plugin
-updated: 2026-08-10
+source: add-visual-xval
+updated: 2026-10-12
 code:
-  - THIRD_PARTY_NOTICES.md
-  - tests/codex-plugin.sh
-  - scripts/generate-codex-skills.sh
-  - tests/rescue.sh
-  - plugins/codex-pro/runtime/codex-pro-call
-  - skills/codex-review/SKILL.md
-  - .codex/skills/codex-setup/SKILL.md
-  - .codex/skills/codex-adversarial-review/SKILL.md
-  - tests/adversarial-review.sh
-  - tests/review.sh
-  - tests/setup.sh
-  - tests/run-dispatcher.sh
-  - plugins/codex-pro/THIRD_PARTY_NOTICES.md
-  - tests/codex-runtime.sh
-  - AGENTS.md
-  - plugins/codex-pro/runtime/codex-call
-  - skills/codex-adversarial-review/SKILL.md
-  - tests/run.sh
-  - .codex/skills/codex-review/SKILL.md
+  - .codex/skills/codex-visual-xval/references/claim-schema.md
+  - .codex/skills/codex-visual-xval/scripts/zoom_round.py
+  - skills/codex-visual-xval/scripts/adjudicate.py
+  - plugins/codex-pro/skills/codex-result/SKILL.md
+  - plugins/codex-pro/.claude-plugin/plugin.json
+  - .codex/skills/codex-visual-xval/scripts/adjudicate.py
+  - .codex/skills/codex-status/SKILL.md
   - tests/codex-skills-parity.sh
-  - .codex/skills/codex-rescue/SKILL.md
-  - plugins/codex-pro/LICENSE
-  - scripts/codex-bundle-resources.manifest
+  - THIRD_PARTY_NOTICES.md
+  - .agents/skills/spectra-ask/SKILL.md
+  - bin/codex-pro-call
+  - plugins/codex-pro/skills/codex-visual-xval/scripts/adjudicate.py
+  - skills/codex-visual-xval/references/claim-schema.md
+  - skills/codex-visual-xval/scripts/xval.py
+  - skills/codex-visual-xval/scripts/sam_env.sh
+  - .agents/skills/spectra-commit/SKILL.md
+  - .codex/.codex-bundle-files
+  - plugins/codex-pro/runtime/codex-call
+  - .codex/skills/codex-visual-xval/scripts/codex_errors.py
+  - plugins/codex-pro/skills/codex-visual-xval/scripts/sam_track.py
   - skills/codex-setup/SKILL.md
-  - skills/codex-rescue/SKILL.md
+  - scripts/codex-skills.manifest
+  - plugins/codex-pro/skills/codex-visual-xval/scripts/zoom_round.py
+  - .codex/bin/codex-pro-call
+  - .codex/skills/codex-visual-xval/scripts/media.py
+  - skills/codex-visual-xval/scripts/seal.py
+  - skills/codex-visual-xval/references/vocab-format.md
+  - bin/codex-call
+  - .codex/skills/codex-visual-xval/scripts/sam_track.py
+  - plugins/codex-pro/skills/codex-visual-xval/SKILL.md
+  - plugins/codex-pro/skills/codex-visual-xval/scripts/xval.py
+  - .agents/skills/spectra-analyze/SKILL.md
+  - .agents/skills/spectra-discuss/SKILL.md
+  - plugins/codex-pro/skills/codex-visual-xval/scripts/seal.py
+  - .codex/skills/codex-visual-xval/scripts/result_file.py
+  - CHANGELOG.md
+  - skills/codex-status/SKILL.md
+  - tests/result.sh
+  - tests/e2e-checklist.md
+  - .codex-bundle-files
+  - plugins/codex-pro/skills/codex-visual-xval/references/vocab-format.md
+  - .agents/skills/spectra-ingest/SKILL.md
+  - .agents/skills/spectra-review/SKILL.md
+  - tests/lib/assert.sh
+  - AGENTS.md
+  - skills/codex-visual-xval/scripts/codex_errors.py
+  - skills/codex-visual-xval/scripts/sam_track.py
+  - tests/run.sh
+  - .codex/skills/codex-visual-xval/scripts/xval.py
+  - .codex/skills/codex-visual-xval/scripts/sam_env.sh
+  - skills/codex-visual-xval/SKILL.md
+  - tests/codex-plugin.sh
+  - .codex/skills/codex-visual-xval/scripts/seal.py
+  - plugins/codex-pro/references/codex-call-provenance.json
+  - .codex/skills/codex-visual-xval/SKILL.md
+  - plugins/codex-pro/skills/codex-visual-xval/scripts/result_file.py
+  - .agents/skills/spectra-drift/SKILL.md
+  - .codex/bin/codex-call
+  - skills/codex-visual-xval/scripts/media.py
+  - .codex/skills/codex-visual-xval/scripts/run_files.py
+  - scripts/codex-bundle-resources.manifest
+  - skills/codex-visual-xval/scripts/zoom_round.py
+  - plugins/codex-pro/skills/codex-visual-xval/scripts/media.py
+  - .agents/skills/spectra-verify/SKILL.md
+  - .codex-plugin/plugin.json
+  - plugins/codex-pro/THIRD_PARTY_NOTICES.md
+  - .agents/skills/spectra-archive/SKILL.md
+  - .codex/skills/codex-visual-xval/references/vocab-format.md
+  - .codex/skills/codex-result/SKILL.md
+  - plugins/codex-pro/runtime/codex-pro-call
+  - .codex/skills/codex-visual-xval/scripts/compare_claims.py
+  - skills/codex-visual-xval/scripts/run_files.py
+  - tests/visual-xval.sh
+  - .codex/references/codex-call-provenance.json
+  - CLAUDE.md
+  - skills/codex-visual-xval/scripts/compare_claims.py
+  - plugins/codex-pro/skills/codex-visual-xval/scripts/run_files.py
+  - .agents/skills/spectra-debug/SKILL.md
+  - references/codex-call-provenance.json
+  - .agents/skills/spectra-audit/SKILL.md
+  - scripts/generate-codex-skills.sh
+  - plugins/codex-pro/skills/codex-visual-xval/scripts/sam_env.sh
+  - plugins/codex-pro/skills/codex-visual-xval/references/claim-schema.md
+  - plugins/codex-pro/skills/codex-visual-xval/scripts/compare_claims.py
+  - tests/status.sh
+  - tests/codex-runtime.sh
+  - skills/codex-result/SKILL.md
+  - README.md
+  - .claude-plugin/marketplace.json
+  - .agents/skills/spectra-apply/SKILL.md
+  - .codex/skills/codex-setup/SKILL.md
+  - plugins/codex-pro/skills/codex-status/SKILL.md
+  - skills/codex-visual-xval/scripts/result_file.py
+  - .agents/skills/spectra-propose/SKILL.md
+  - plugins/codex-pro/skills/codex-visual-xval/scripts/codex_errors.py
 -->
 
 ---
 ### Requirement: Cross-harness version consistency
 
-The Codex manifest, Claude plugin manifest, and Claude marketplace entry SHALL all declare version `0.8.0`. A version change MUST update all three in the same commit, and the release notes SHALL identify Codex native plugin distribution as the 0.8.0 feature.
+The Codex manifest, Claude plugin manifest, and Claude marketplace entry SHALL all declare version `0.9.0`. A version change MUST update all three in the same commit, and the release notes SHALL name what the version adds: for 0.9.0 that is visual cross-validation (`codex-visual-xval`), while Codex native plugin distribution stays recorded as the 0.8.0 feature.
 
 #### Scenario: Version drift blocks the release gate
 
@@ -515,4 +1041,105 @@ code:
   - scripts/codex-bundle-resources.manifest
   - skills/codex-setup/SKILL.md
   - skills/codex-rescue/SKILL.md
+-->
+
+<!-- @trace
+source: add-visual-xval
+updated: 2026-10-12
+code:
+  - .codex/skills/codex-visual-xval/references/claim-schema.md
+  - .codex/skills/codex-visual-xval/scripts/zoom_round.py
+  - skills/codex-visual-xval/scripts/adjudicate.py
+  - plugins/codex-pro/skills/codex-result/SKILL.md
+  - plugins/codex-pro/.claude-plugin/plugin.json
+  - .codex/skills/codex-visual-xval/scripts/adjudicate.py
+  - .codex/skills/codex-status/SKILL.md
+  - tests/codex-skills-parity.sh
+  - THIRD_PARTY_NOTICES.md
+  - .agents/skills/spectra-ask/SKILL.md
+  - bin/codex-pro-call
+  - plugins/codex-pro/skills/codex-visual-xval/scripts/adjudicate.py
+  - skills/codex-visual-xval/references/claim-schema.md
+  - skills/codex-visual-xval/scripts/xval.py
+  - skills/codex-visual-xval/scripts/sam_env.sh
+  - .agents/skills/spectra-commit/SKILL.md
+  - .codex/.codex-bundle-files
+  - plugins/codex-pro/runtime/codex-call
+  - .codex/skills/codex-visual-xval/scripts/codex_errors.py
+  - plugins/codex-pro/skills/codex-visual-xval/scripts/sam_track.py
+  - skills/codex-setup/SKILL.md
+  - scripts/codex-skills.manifest
+  - plugins/codex-pro/skills/codex-visual-xval/scripts/zoom_round.py
+  - .codex/bin/codex-pro-call
+  - .codex/skills/codex-visual-xval/scripts/media.py
+  - skills/codex-visual-xval/scripts/seal.py
+  - skills/codex-visual-xval/references/vocab-format.md
+  - bin/codex-call
+  - .codex/skills/codex-visual-xval/scripts/sam_track.py
+  - plugins/codex-pro/skills/codex-visual-xval/SKILL.md
+  - plugins/codex-pro/skills/codex-visual-xval/scripts/xval.py
+  - .agents/skills/spectra-analyze/SKILL.md
+  - .agents/skills/spectra-discuss/SKILL.md
+  - plugins/codex-pro/skills/codex-visual-xval/scripts/seal.py
+  - .codex/skills/codex-visual-xval/scripts/result_file.py
+  - CHANGELOG.md
+  - skills/codex-status/SKILL.md
+  - tests/result.sh
+  - tests/e2e-checklist.md
+  - .codex-bundle-files
+  - plugins/codex-pro/skills/codex-visual-xval/references/vocab-format.md
+  - .agents/skills/spectra-ingest/SKILL.md
+  - .agents/skills/spectra-review/SKILL.md
+  - tests/lib/assert.sh
+  - AGENTS.md
+  - skills/codex-visual-xval/scripts/codex_errors.py
+  - skills/codex-visual-xval/scripts/sam_track.py
+  - tests/run.sh
+  - .codex/skills/codex-visual-xval/scripts/xval.py
+  - .codex/skills/codex-visual-xval/scripts/sam_env.sh
+  - skills/codex-visual-xval/SKILL.md
+  - tests/codex-plugin.sh
+  - .codex/skills/codex-visual-xval/scripts/seal.py
+  - plugins/codex-pro/references/codex-call-provenance.json
+  - .codex/skills/codex-visual-xval/SKILL.md
+  - plugins/codex-pro/skills/codex-visual-xval/scripts/result_file.py
+  - .agents/skills/spectra-drift/SKILL.md
+  - .codex/bin/codex-call
+  - skills/codex-visual-xval/scripts/media.py
+  - .codex/skills/codex-visual-xval/scripts/run_files.py
+  - scripts/codex-bundle-resources.manifest
+  - skills/codex-visual-xval/scripts/zoom_round.py
+  - plugins/codex-pro/skills/codex-visual-xval/scripts/media.py
+  - .agents/skills/spectra-verify/SKILL.md
+  - .codex-plugin/plugin.json
+  - plugins/codex-pro/THIRD_PARTY_NOTICES.md
+  - .agents/skills/spectra-archive/SKILL.md
+  - .codex/skills/codex-visual-xval/references/vocab-format.md
+  - .codex/skills/codex-result/SKILL.md
+  - plugins/codex-pro/runtime/codex-pro-call
+  - .codex/skills/codex-visual-xval/scripts/compare_claims.py
+  - skills/codex-visual-xval/scripts/run_files.py
+  - tests/visual-xval.sh
+  - .codex/references/codex-call-provenance.json
+  - CLAUDE.md
+  - skills/codex-visual-xval/scripts/compare_claims.py
+  - plugins/codex-pro/skills/codex-visual-xval/scripts/run_files.py
+  - .agents/skills/spectra-debug/SKILL.md
+  - references/codex-call-provenance.json
+  - .agents/skills/spectra-audit/SKILL.md
+  - scripts/generate-codex-skills.sh
+  - plugins/codex-pro/skills/codex-visual-xval/scripts/sam_env.sh
+  - plugins/codex-pro/skills/codex-visual-xval/references/claim-schema.md
+  - plugins/codex-pro/skills/codex-visual-xval/scripts/compare_claims.py
+  - tests/status.sh
+  - tests/codex-runtime.sh
+  - skills/codex-result/SKILL.md
+  - README.md
+  - .claude-plugin/marketplace.json
+  - .agents/skills/spectra-apply/SKILL.md
+  - .codex/skills/codex-setup/SKILL.md
+  - plugins/codex-pro/skills/codex-status/SKILL.md
+  - skills/codex-visual-xval/scripts/result_file.py
+  - .agents/skills/spectra-propose/SKILL.md
+  - plugins/codex-pro/skills/codex-visual-xval/scripts/codex_errors.py
 -->
