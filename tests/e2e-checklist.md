@@ -56,7 +56,7 @@ Vendored Swift runtime 以 `FileManager.homeDirectoryForCurrentUser` 取得
 - [ ] 跑 `codex plugin marketplace list --json`，確認列出 marketplace `codex-pro`；不能只
   依賴 `plugin list` 的 exit status。
 - [ ] 跑 `codex plugin list --marketplace codex-pro --available --json`，確認看到未安裝的
-  `codex-pro` 0.9.0。
+  `codex-pro` 0.10.0。
 - [ ] 安裝：`codex plugin add codex-pro@codex-pro --json`。再以 `codex plugin list
   --marketplace codex-pro --json` 確認 installed 與 enabled 狀態。
 
@@ -102,10 +102,10 @@ Vendored Swift runtime 以 `FileManager.homeDirectoryForCurrentUser` 取得
 - [ ] 在同一隔離 OS 帳號先以 CLI 執行 `codex plugin marketplace add
   PsychQuant/codex-pro --ref main --json`；完全結束並重啟 Codex App。
 - [ ] 開啟 Plugins Directory，選擇 `codex-pro` marketplace，確認 listing 顯示同名 plugin
-  0.9.0。不要把「加入 Git marketplace」寫成 App UI 內的操作。
+  0.10.0。不要把「加入 Git marketplace」寫成 App UI 內的操作。
 - [ ] 安裝並啟用 plugin，開新 task，人工確認十個 skill 可見；跑 `$codex-setup` 與一個純
   本機 consumer。App 仍需遵守 macOS＋Swift 與 OAuth 前提。
-- [ ] 走一次 update 或 reinstall UI，開新 task 確認仍載入 0.9.0。
+- [ ] 走一次 update 或 reinstall UI，開新 task 確認仍載入 0.10.0。
 - [ ] 從 App 解除安裝 plugin，必要時移除 marketplace；確認新 task 不再列出 skills，既有
   專案 result files 不被刪除。
 - [ ] 記錄官方 directory 狀態為「尚未提交／審核中的外部步驟」；不得把 self-hosted smoke
