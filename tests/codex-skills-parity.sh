@@ -42,6 +42,7 @@ declare -a REQUIRED_RESOURCES=(
   "skills/codex-batch/references/script-template.sh"
   "references/defaults.json"
   "references/profile-contract.md"
+  "references/roles.yaml"
   "bin/codex-call"
   "bin/codex-pro-call"
 )
@@ -970,7 +971,7 @@ import sys
 
 path = Path(sys.argv[1])
 lines = path.read_text(encoding="utf-8").splitlines()
-anchor = "skills/codex-batch/references/script-template.sh"
+anchor = "references/roles.yaml"
 mapping = (
     "references/current-parent-resource.txt "
     "references/redirect/sentinel.txt"

@@ -3,6 +3,7 @@ bin/codex-pro-call
 references/codex-call-provenance.json
 references/defaults.json
 references/profile-contract.md
+references/roles.yaml
 skills/codex-adversarial-review/SKILL.md
 skills/codex-batch/SKILL.md
 skills/codex-batch/references/script-template.sh
