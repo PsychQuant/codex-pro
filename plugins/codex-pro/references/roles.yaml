@@ -1,0 +1,17 @@
+# Named roles: one entry per kind of request (#20). This file is the only place
+# that names a model for a role; a skill, a script or a document asks for a role
+# by name and holds no model name itself. To change what a role uses, edit it here.
+#
+# `default` is what the top-level fields of defaults.json hold, and a test checks
+# that the two agree. Format: a role name at column 0, then its fields indented by
+# two spaces, one `field: value` per line, with no comments on those lines.
+
+default:
+  model: gpt-5.6-sol
+  effort: xhigh
+  max_time: 600
+
+proof-hard:
+  model: gpt-6-astra
+  effort: xhigh
+  service_tier: fast

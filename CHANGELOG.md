@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+Issue: [#20](https://github.com/PsychQuant/codex-pro/issues/20)
+
+- 新增角色表 `references/roles.yaml`：一種工作一個角色，是唯一決定該角色用哪個模型的地方。`proof-hard` 給 Lean 證明，`default` 與 `defaults.json` 的頂層欄位一致，由測試檢查。契約版本升到 1.1.0，既有 consumer 不受影響。
+
 ## 0.9.0 — 2026-10-07
 
 Issue: [#23](https://github.com/PsychQuant/codex-pro/issues/23)

@@ -175,6 +175,42 @@ for skill_dir in "$REPO_ROOT/plugins/$PLUGIN_NAME/skills/"*/; do
   fi
 done
 
+# ── Role registry (#20): the one place that names a model per kind of request ──
+role_check=$(python3 - "$REPO_ROOT/plugins/codex-pro/references" <<'ROLES'
+import json, os, re, sys
+root = sys.argv[1]
+path = os.path.join(root, "roles.yaml")
+if not os.path.exists(path):
+    print("roles.yaml is missing"); sys.exit(0)
+roles, current = {}, None
+for line in open(path, encoding="utf-8"):
+    if not line.strip() or line.lstrip().startswith("#"):
+        continue
+    top = re.fullmatch(r"([a-z][a-z-]*):\s*", line.rstrip("\n"))
+    field = re.fullmatch(r"  ([a-z_]+): (\S+)\s*", line.rstrip("\n"))
+    if top:
+        current = roles.setdefault(top.group(1), {})
+    elif field and current is not None:
+        current[field.group(1)] = field.group(2)
+    else:
+        print("cannot read line: %r" % line); sys.exit(0)
+d = json.load(open(os.path.join(root, "defaults.json"), encoding="utf-8"))
+problems = []
+for key in ("model", "effort", "max_time"):
+    if str(d.get(key)) != roles.get("default", {}).get(key):
+        problems.append("default.%s differs from defaults.json" % key)
+for key in ("model", "effort", "service_tier"):
+    if not roles.get("proof-hard", {}).get(key):
+        problems.append("proof-hard has no %s" % key)
+print("; ".join(problems) or "ok")
+ROLES
+)
+if [ "$role_check" = "ok" ]; then
+  pass "roles.yaml: default equals defaults.json, proof-hard names model, effort and service_tier"
+else
+  fail "roles.yaml: $role_check"
+fi
+
 # ── Summary ─────────────────────────────────────────────────────
 report_summary "static"
 exit_code=$?

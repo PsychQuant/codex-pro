@@ -11,7 +11,7 @@
 | `model` | string | `gpt-5.6-sol` | codex-call `--model`；#3 裁決（backend-api 路徑 5.6 世代僅此名可用） |
 | `effort` | string | `xhigh` | codex-call `--effort` |
 | `max_time` | int | `600` | codex-call `--max-time`（秒，硬 HTTP timeout） |
-| `contract_version` | string | `1.0.0` | 本契約的 semver（consumer 可 gate） |
+| `contract_version` | string | `1.1.0` | 本契約的 semver（consumer 可 gate）；1.1.0 新增角色表（第 5 節，#20） |
 
 **producer skills 的 prose 表（codex-review / codex-rescue / codex-adversarial-review / codex-batch / codex-config）是本檔的鏡像** — 分歧時以 `defaults.json` 為準。（skills 全面改讀檔屬 follow-up，見 #7 Expected 3。）
 
@@ -55,3 +55,12 @@ Claude Code plugin 內的 consumer 應使用 host 提供的 plugin root；外部
   bundled snapshot，其來源與呼叫契約由 `codex-call-provenance.json`、
   `THIRD_PARTY_NOTICES.md` 與 `bin/codex-pro-call` 管理；Claude Code 版則維持 PATH
   解析。外部 consumer 不應從本檔推論 executable 的位置或穩定性
+
+## 5. 角色表（`references/roles.yaml`，#20，1.1.0 起）
+
+要的是「哪一種工作」而不是「哪個模型」時，consumer 依角色名稱讀這份表，自己不寫模型名。這裡是唯一決定某個角色用哪個模型的地方，要改就改這份表。
+
+- 目前有兩個角色：`default` 的 `model`、`effort`、`max_time` 就是 `defaults.json` 的頂層欄位，測試檢查兩者一致；`proof-hard` 給 Lean 證明，有 `model`、`effort`、`service_tier`。
+- 格式：角色名稱在第 0 欄，欄位縮排兩格，每行一個 `field: value`，欄位行不放註解。
+- 只新增、不改名：第 4 節穩定的項目都不動，既有 consumer 不受影響。讀不到角色或缺欄位時，consumer 應停下報錯，不要退回別的模型。
+- 這份表不經 `profile.yaml` 覆蓋：扁平解析器不能表達每個角色的欄位，覆蓋機制等 #18 決定。臨時換一次，由 consumer 的旗標處理。
