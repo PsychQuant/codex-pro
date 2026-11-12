@@ -5,6 +5,11 @@
 # `default` is what the top-level fields of defaults.json hold, and a test checks
 # that the two agree. Format: a role name at column 0, then its fields indented by
 # two spaces, one `field: value` per line, with no comments on those lines.
+#
+# `proof-hard-ultrafast` (#32) is `proof-hard` on the Ultrafast service tier: the same
+# model and effort, and a test checks that they stay equal. It is opt-in. The tier
+# depends on the account's plan and is charged at a higher rate than Fast, so a consumer
+# uses this role only when its own setting names it.
 
 default:
   model: gpt-5.6-sol
@@ -15,3 +20,8 @@ proof-hard:
   model: gpt-6-astra
   effort: xhigh
   service_tier: fast
+
+proof-hard-ultrafast:
+  model: gpt-6-astra
+  effort: xhigh
+  service_tier: ultrafast

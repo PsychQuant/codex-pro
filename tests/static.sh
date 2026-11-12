@@ -203,12 +203,33 @@ for key in ("model", "effort", "service_tier"):
     if not roles.get("proof-hard", {}).get(key):
         problems.append("proof-hard has no %s" % key)
 print("; ".join(problems) or "ok")
+# Second line (#32): proof-hard-ultrafast is proof-hard on the Ultrafast tier — the same model
+# and effort, a different service_tier. When proof-hard moves to another model, this fails
+# until the fast variant moves with it.
+fast, base = roles.get("proof-hard-ultrafast", {}), roles.get("proof-hard", {})
+fast_problems = []
+for key in ("model", "effort", "service_tier"):
+    if not fast.get(key):
+        fast_problems.append("proof-hard-ultrafast has no %s" % key)
+if fast.get("service_tier") not in (None, "ultrafast"):
+    fast_problems.append("proof-hard-ultrafast.service_tier is %s, not ultrafast" % fast["service_tier"])
+for key in ("model", "effort"):
+    if fast.get(key) and fast[key] != base.get(key):
+        fast_problems.append("proof-hard-ultrafast.%s differs from proof-hard" % key)
+print("; ".join(fast_problems) or "ok")
 ROLES
 )
-if [ "$role_check" = "ok" ]; then
+role_check_base=$(printf '%s\n' "$role_check" | sed -n '1p')
+role_check_fast=$(printf '%s\n' "$role_check" | sed -n '2p')
+if [ "$role_check_base" = "ok" ]; then
   pass "roles.yaml: default equals defaults.json, proof-hard names model, effort and service_tier"
 else
-  fail "roles.yaml: $role_check"
+  fail "roles.yaml: $role_check_base"
+fi
+if [ "$role_check_fast" = "ok" ]; then
+  pass "roles.yaml: proof-hard-ultrafast is proof-hard on the ultrafast tier (same model and effort)"
+else
+  fail "roles.yaml: ${role_check_fast:-proof-hard-ultrafast was not checked (the registry could not be read)}"
 fi
 
 # ── Summary ─────────────────────────────────────────────────────

@@ -11,7 +11,7 @@
 | `model` | string | `gpt-5.6-sol` | codex-call `--model`；#3 裁決（backend-api 路徑 5.6 世代僅此名可用） |
 | `effort` | string | `xhigh` | codex-call `--effort` |
 | `max_time` | int | `600` | codex-call `--max-time`（秒，硬 HTTP timeout） |
-| `contract_version` | string | `1.1.0` | 本契約的 semver（consumer 可 gate）；1.1.0 新增角色表（第 5 節，#20） |
+| `contract_version` | string | `1.2.0` | 本契約的 semver（consumer 可 gate）；1.1.0 新增角色表（第 5 節，#20）；1.2.0 新增角色 `proof-hard-ultrafast`（#32） |
 
 **producer skills 的 prose 表（codex-review / codex-rescue / codex-adversarial-review / codex-batch / codex-config）是本檔的鏡像** — 分歧時以 `defaults.json` 為準。（skills 全面改讀檔屬 follow-up，見 #7 Expected 3。）
 
@@ -60,7 +60,9 @@ Claude Code plugin 內的 consumer 應使用 host 提供的 plugin root；外部
 
 要的是「哪一種工作」而不是「哪個模型」時，consumer 依角色名稱讀這份表，自己不寫模型名。這裡是唯一決定某個角色用哪個模型的地方，要改就改這份表。
 
-- 目前有兩個角色：`default` 的 `model`、`effort`、`max_time` 就是 `defaults.json` 的頂層欄位，測試檢查兩者一致；`proof-hard` 給 Lean 證明，有 `model`、`effort`、`service_tier`。
+- 目前有三個角色：`default` 的 `model`、`effort`、`max_time` 就是 `defaults.json` 的頂層欄位，測試檢查兩者一致；`proof-hard` 給 Lean 證明，有 `model`、`effort`、`service_tier`；`proof-hard-ultrafast`（1.2.0 起，#32）是 `proof-hard` 換到 Ultrafast tier，`model` 與 `effort` 和 `proof-hard` 相同，測試檢查兩者一致。
+- `service_tier` 目前用到的值是 `fast` 與 `ultrafast`。`codex-call` 把 `fast` 送成 `priority`，`ultrafast` 原樣送出；`codex exec` 的 `service_tier` 設定收同樣兩個名稱。
+- `proof-hard-ultrafast` 要 consumer 自己的設定指名才會用到：Ultrafast 依帳號的方案開放，用量倍率也比 Fast 高。後端拒絕這個 tier 時，consumer 應停下報錯，不要退回別的 tier 或別的角色。
 - 格式：角色名稱在第 0 欄，欄位縮排兩格，每行一個 `field: value`，欄位行不放註解。
 - 只新增、不改名：第 4 節穩定的項目都不動，既有 consumer 不受影響。讀不到角色或缺欄位時，consumer 應停下報錯，不要退回別的模型。
 - 這份表不經 `profile.yaml` 覆蓋：扁平解析器不能表達每個角色的欄位，覆蓋機制等 #18 決定。臨時換一次，由 consumer 的旗標處理。
