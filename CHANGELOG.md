@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.11.0 — 2026-11-12
+
+Issue: [#32](https://github.com/PsychQuant/codex-pro/issues/32)
+
+- 角色表新增 `proof-hard-ultrafast`：和 `proof-hard` 同一個模型與 effort，`service_tier` 是 `ultrafast`。要 consumer 自己的設定指名才會用到；Ultrafast 依帳號的方案開放，用量倍率也比 Fast 高。測試檢查它的 `model` 與 `effort` 和 `proof-hard` 相同。契約版本升到 1.2.0，既有 consumer 不受影響。
+
 ## 0.10.0 — 2026-11-03
 
 Issue: [#20](https://github.com/PsychQuant/codex-pro/issues/20)
