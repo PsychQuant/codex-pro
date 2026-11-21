@@ -270,6 +270,7 @@ versions = [
 for label, version in versions:
     emit(version == expected_version,
          f"{label} version == {expected_version}", f"actual={version!r}")
+# spec-example: codex-native-plugin / three published manifests declare one version
 emit(
     all(version is not None for _, version in versions)
     and len({version for _, version in versions}) == 1,

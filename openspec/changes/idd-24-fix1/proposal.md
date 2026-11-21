@@ -14,7 +14,7 @@
 
 ## Non-Goals
 
-- 不改其他 requirement；不改 `tests` capability（已在上一個 change 改過）。
+- 不改 `codex-native-plugin` 其他 requirement 的行為；「Cross-harness version consistency」只拿掉寫死的 `0.9.0`（三份 manifest 版本一致的規則不變）。不改 `tests` capability（已在上一個 change 改過）。
 
 ## Success Criteria
 
