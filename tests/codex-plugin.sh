@@ -611,9 +611,10 @@ fi
 # run it in a subshell with fresh counters against a missing checker, a checker
 # that exits 1 and one that exits 0, and read back the counts it left.
 gate_stub_dir="$schema_tmp/gate-stubs"
-if [ -n "$schema_tmp" ] && mkdir -p "$gate_stub_dir"; then
-printf 'import sys\nsys.exit(1)\n' >"$gate_stub_dir/fails.py"
-printf 'import sys\nsys.exit(0)\n' >"$gate_stub_dir/passes.py"
+if [ -n "$schema_tmp" ] && mkdir -p "$gate_stub_dir" \
+    && printf 'import sys\nsys.exit(1)\n' >"$gate_stub_dir/fails.py" \
+    && printf 'import sys\nsys.exit(0)\n' >"$gate_stub_dir/passes.py" \
+    && [ -s "$gate_stub_dir/fails.py" ] && [ -s "$gate_stub_dir/passes.py" ]; then
 while IFS='|' read -r stub expect_fail expect_pass; do
   counts=$(PASS_COUNT=0 FAIL_COUNT=0; run_schema_gate "$gate_stub_dir/$stub" "$REPO_ROOT" >/dev/null; printf '%s %s' "$FAIL_COUNT" "$PASS_COUNT")
   if [ "$counts" = "$expect_fail $expect_pass" ]; then
@@ -626,6 +627,8 @@ missing.py|1|0
 fails.py|1|0
 passes.py|0|1
 STUBS
+else
+  fail "the gate-accounting fixtures could be written"
 fi
 
 # spec-example: codex-native-plugin / pinned schema check accepts the native manifest
@@ -659,6 +662,15 @@ esac
 # spec-example: tests / pinned schema rejects a broken manifest
 # Each case mutates a temporary copy of the two manifests and expects the
 # given exit code and the field name in the output.
+# absent_for <case> — a message the case must NOT print (the wording a fix replaced).
+absent_for() {
+  case "$1" in
+    name-null) printf '%s' 'plugin.json name: required' ;;
+    source-source-missing) printf '%s' 'source.source: must be local' ;;
+    policy-installation-missing) printf '%s' 'policy.installation: must be one of' ;;
+    policy-authentication-missing) printf '%s' 'policy.authentication: must be one of' ;;
+  esac
+}
 SCHEMA_CASES=$(cat <<'CASES'
 name-missing|1|plugin.json name:
 name-not-kebab|1|plugin.json name:
@@ -690,6 +702,8 @@ default-prompt-at-limit|0|
 version-prerelease-build-valid|0|
 name-null|1|plugin.json name: must be string
 source-source-missing|1|plugins[0].source.source: required
+policy-installation-missing|1|plugins[0].policy.installation: required
+policy-authentication-missing|1|plugins[0].policy.authentication: required
 author-not-object|1|plugin.json author: must be object
 interface-not-object|1|plugin.json interface: must be object
 plugins-not-array|1|marketplace.json plugins: must be array
@@ -781,6 +795,10 @@ elif case == "version-prerelease-build-valid":
     plugin["version"] = "1.2.3-rc.1+build.5"
 elif case == "name-null":
     plugin["name"] = None
+elif case == "policy-installation-missing":
+    del entry["policy"]["installation"]
+elif case == "policy-authentication-missing":
+    del entry["policy"]["authentication"]
 elif case == "source-source-missing":
     del entry["source"]["source"]
 elif case == "author-not-object":
@@ -909,16 +927,20 @@ PY_MUTATE
       continue
     fi
     schema_cases_ran=$((schema_cases_ran + 1))
-    case_output=$(python3 -I "$SCHEMA_CHECK" "$case_root" 2>&1 </dev/null)
+    case_out_file="$case_root.out"
+    python3 -I "$SCHEMA_CHECK" "$case_root" >"$case_out_file" 2>&1 </dev/null
     case_exit=$?
+    case_output=$(cat "$case_out_file")
+    case_absent=$(absent_for "$case_name")
     if [ "$expect_exit" -eq 0 ]; then
-      if [ "$case_exit" -eq 0 ] && [ -z "$case_output" ]; then
+      if [ "$case_exit" -eq 0 ] && [ ! -s "$case_out_file" ]; then
         pass "pinned schema accepts '$case_name' (exit 0, no output)"
       else
         case_reason=$(printf '%s\n' "$case_output" | tr '\n' ' ' | sed 's/[[:space:]]*$//')
         fail "pinned schema accepts '$case_name' (expected exit 0 and no output; got exit $case_exit: $case_reason)"
       fi
-    elif [ "$case_exit" -eq "$expect_exit" ] && grep -qF -- "$expect_field" <<<"$case_output"; then
+    elif [ "$case_exit" -eq "$expect_exit" ] && grep -qF -- "$expect_field" <<<"$case_output" \
+        && { [ -z "$case_absent" ] || ! grep -qF -- "$case_absent" <<<"$case_output"; }; then
       pass "pinned schema rejects '$case_name' (exit $expect_exit, names $expect_field)"
     else
       case_reason=$(printf '%s\n' "$case_output" | tr '\n' ' ' | sed 's/[[:space:]]*$//')
@@ -941,20 +963,26 @@ import re
 import sys
 text = open(sys.argv[1], encoding="utf-8").read()
 start = text.index("##### Example: pinned schema rejects a broken manifest")
-rows = []
+lines = []
 for line in text[start:].splitlines()[1:]:
     if line.startswith("#"):
         break
-    if not line.startswith("|"):
-        continue
-    if re.match(r"\| Case in |\| -+ \|", line):
-        continue
-    m = re.match(r"\| `([^`]+)` \| (\d) \| `(.*)` \|$", line)
+    if line.strip():
+        lines.append(line.strip())
+cells = lambda line: [c.strip() for c in line.strip("|").split("|")]
+out = []
+if len(lines) < 2 or cells(lines[0])[:1] != ["Case in `tests/codex-plugin.sh`"] \
+        or not all(re.fullmatch(r":?-+:?", c) for c in cells(lines[1])):
+    out.append("TABLE HEADER OR SEPARATOR MISSING")
+for line in lines[2:]:
+    row = cells(line)
+    m = len(row) == 3 and re.fullmatch(r"`([^`]+)`", row[0]) and re.fullmatch(r"\d", row[1]) \
+        and re.fullmatch(r"`(.*)`", row[2])
     if not m:
-        rows.append("UNPARSEABLE ROW: " + line)
+        out.append("UNPARSEABLE ROW: " + line)
         continue
-    rows.append("|".join(m.groups()))
-print("\n".join(rows))
+    out.append("|".join([row[0][1:-1], row[1], row[2][1:-1]]))
+print("\n".join(out))
 PY_TABLE
 )
 if [ "$spec_table" = "$SCHEMA_CASES" ]; then
@@ -983,11 +1011,24 @@ if [ "$internal_exit" = "3" ]; then
 else
   fail "pinned schema check exits 3 on an unexpected error (got ${internal_exit:-none})"
 fi
-# The command line goes through the same wrapper.
-if [ "$(grep -v '^[[:space:]]*$' "$SCHEMA_CHECK" | tail -n 1)" = "    sys.exit(main(sys.argv))" ]; then
-  pass "the checker's command-line entry calls the exit-3 wrapper"
+# The command line goes through the same wrapper: run a copy of the checker
+# with an error injected into check_plugin and read the process exit status.
+if [ -n "$schema_tmp" ] && python3 -I - "$SCHEMA_CHECK" "$schema_tmp/injected_check.py" <<'PY_INJECT' 2>/dev/null; then
+import sys
+src = open(sys.argv[1], encoding="utf-8").read()
+anchor = "def check_plugin(plugin: dict, errors: list[str]) -> None:\n"
+assert src.count(anchor) == 1
+open(sys.argv[2], "w", encoding="utf-8").write(src.replace(anchor, anchor + "    raise RuntimeError('injected')\n"))
+PY_INJECT
+  python3 -I "$schema_tmp/injected_check.py" "$REPO_ROOT" >/dev/null 2>&1 </dev/null
+  cli_exit=$?
+  if [ "$cli_exit" -eq 3 ]; then
+    pass "the checker's command line exits 3 on an unexpected error"
+  else
+    fail "the checker's command line exits 3 on an unexpected error (got $cli_exit)"
+  fi
 else
-  fail "the checker's command-line entry calls the exit-3 wrapper"
+  fail "a copy of the checker with an injected error could be prepared"
 fi
 [ -n "$schema_tmp" ] && rm -rf "$schema_tmp"
 

@@ -261,9 +261,13 @@ def check_entry(entry: Any, prefix: str, errors: list[str]) -> None:
     policy = entry.get("policy")
     if isinstance(policy, dict):
         check_fields(policy, POLICY_FIELDS, prefix + "policy.", errors)
-        if policy.get("installation") not in INSTALLATION:
+        if "installation" not in policy:
+            errors.append(f"{prefix}policy.installation: required")
+        elif policy.get("installation") not in INSTALLATION:
             errors.append(f"{prefix}policy.installation: must be one of {', '.join(INSTALLATION)}")
-        if policy.get("authentication") not in AUTHENTICATION:
+        if "authentication" not in policy:
+            errors.append(f"{prefix}policy.authentication: required")
+        elif policy.get("authentication") not in AUTHENTICATION:
             errors.append(f"{prefix}policy.authentication: must be one of {', '.join(AUTHENTICATION)}")
 
 
