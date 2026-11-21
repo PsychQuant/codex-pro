@@ -645,8 +645,20 @@ elif case == "source-not-local":
     entry["source"]["source"] = "git"
 elif case == "category-missing":
     del entry["category"]
+elif case == "default-prompt-too-long":
+    plugin["interface"]["defaultPrompt"] = ["x" * 129]
+elif case == "policy-authentication-invalid":
+    entry["policy"]["authentication"] = "SOMETIMES"
+elif case == "source-path-not-relative":
+    entry["source"]["path"] = "plugins/codex-pro"
 elif case == "plugin-not-json":
     plugin_path.write_text("not json", encoding="utf-8")
+    sys.exit(0)
+elif case == "plugin-missing":
+    plugin_path.unlink()
+    sys.exit(0)
+elif case == "market-not-json":
+    market_path.write_text("not json", encoding="utf-8")
     sys.exit(0)
 else:
     sys.exit(f"unknown case {case}")
@@ -666,18 +678,23 @@ PY_MUTATE
       fail "pinned schema rejects '$case_name' (expected exit $expect_exit naming $expect_field; got exit $case_exit: $case_reason)"
     fi
   done <<'CASES'
-name-missing|1|name
-name-not-kebab|1|name
-version-number|1|version
-keywords-string|1|keywords
-undocumented-field|1|skill
-skills-not-relative|1|skills
-default-prompt-four|1|defaultPrompt
-screenshot-outside-assets|1|screenshots
-policy-installation-invalid|1|policy.installation
-source-not-local|1|source.source
-category-missing|1|category
-plugin-not-json|2|plugin.json
+name-missing|1|plugin.json name:
+name-not-kebab|1|plugin.json name:
+version-number|1|plugin.json version:
+keywords-string|1|plugin.json keywords:
+undocumented-field|1|plugin.json skill:
+skills-not-relative|1|plugin.json skills:
+default-prompt-four|1|plugin.json interface.defaultPrompt:
+default-prompt-too-long|1|plugin.json interface.defaultPrompt:
+screenshot-outside-assets|1|plugin.json interface.screenshots[0]:
+policy-installation-invalid|1|plugins[0].policy.installation:
+policy-authentication-invalid|1|plugins[0].policy.authentication:
+source-not-local|1|plugins[0].source.source:
+source-path-not-relative|1|plugins[0].source.path:
+category-missing|1|plugins[0].category:
+plugin-not-json|2|plugin.json: not JSON
+plugin-missing|2|plugin.json: missing
+market-not-json|2|marketplace.json: not JSON
 CASES
 elif [ -n "$schema_tmp" ]; then
   fail "pinned schema negative cases need the check file ($SCHEMA_CHECK)"

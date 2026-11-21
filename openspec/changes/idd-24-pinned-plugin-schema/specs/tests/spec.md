@@ -6,7 +6,7 @@ The automated suite SHALL include `tests/codex-plugin.sh` in `tests/run.sh`. The
 
 #### Scenario: Complete native package passes static validation
 
-- **WHEN** `tests/codex-plugin.sh` runs against a complete 0.8.0 package
+- **WHEN** `tests/codex-plugin.sh` runs against the complete native package
 - **THEN** manifest schema, marketplace source, version consistency, skill count, resource paths, and the pinned schema check all pass
 
 #### Scenario: Missing or escaping path fails validation
@@ -36,14 +36,19 @@ The automated suite SHALL include `tests/codex-plugin.sh` in `tests/run.sh`. The
 | plugin.json with top-level field `skill` | 1 | `skill` |
 | plugin.json `skills` = `skills/` | 1 | `skills` |
 | plugin.json `interface.defaultPrompt` with 4 entries | 1 | `defaultPrompt` |
+| plugin.json `interface.defaultPrompt` entry of 129 characters | 1 | `defaultPrompt` |
 | plugin.json `interface.screenshots` = `["./shot.png"]` | 1 | `screenshots` |
 | marketplace entry `policy.installation` = `MAYBE` | 1 | `policy.installation` |
+| marketplace entry `policy.authentication` = `SOMETIMES` | 1 | `policy.authentication` |
 | marketplace entry `source.source` = `git` | 1 | `source.source` |
+| marketplace entry `source.path` = `plugins/codex-pro` | 1 | `source.path` |
 | marketplace entry without `category` | 1 | `category` |
 | plugin.json replaced by `not json` | 2 | `plugin.json` |
+| plugin.json removed | 2 | `plugin.json` |
+| marketplace.json replaced by `not json` | 2 | `marketplace.json` |
 
 ##### Example: missing schema check fails the contract test
 
-- **GIVEN** a copy of the repository where `tests/lib/codex_plugin_schema.py` is absent
-- **WHEN** the contract test's schema step runs
+- **GIVEN** a schema check path that does not exist
+- **WHEN** the contract test's schema step runs with that path
 - **THEN** it reports a failure naming the missing check file and does not report a skip

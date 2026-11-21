@@ -1,7 +1,7 @@
 ## 1. 測試先行（Requirement: Native plugin static contract test 的 Examples）
 
 - [x] 1.1 （Native plugin static contract test）在 `tests/codex-plugin.sh` 加正向測試：對 repo 本身執行 `python3 tests/lib/codex_plugin_schema.py <repo-root>` 應 exit 0；測試帶標記 `spec-example: tests / pinned schema accepts the repository manifests`。驗證：檢查檔尚未存在時此測試失敗（RED），完成後 `bash tests/codex-plugin.sh` 回報 pass。
-- [x] 1.2 在 `tests/codex-plugin.sh` 加負向測試：對 repo 的暫存複本逐一套用 Example「pinned schema rejects a broken manifest」表中的 12 種變更，每種都斷言結束碼（1 或 2）與輸出包含該列的欄位名；測試帶標記 `spec-example: tests / pinned schema rejects a broken manifest`。驗證：檢查檔尚未存在時全部失敗（RED），完成後全部 pass。
+- [x] 1.2 在 `tests/codex-plugin.sh` 加負向測試：對 repo 的暫存複本逐一套用 Example「pinned schema rejects a broken manifest」表中的 17 種變更，每種都斷言結束碼（1 或 2）與輸出包含該列的欄位名；測試帶標記 `spec-example: tests / pinned schema rejects a broken manifest`。驗證：檢查檔尚未存在時全部失敗（RED），完成後全部 pass。
 - [x] 1.3 在 `tests/codex-plugin.sh` 加「檢查檔不存在」測試：以不存在的路徑當 schema 檢查檔時，契約測試的 schema 步驟回報 fail 並指名該檔，輸出不含 skip；測試帶標記 `spec-example: tests / missing schema check fails the contract test`。驗證：`bash tests/codex-plugin.sh` 顯示該案例 pass。
 
 ## 2. 實作 pinned schema 檢查
@@ -18,4 +18,4 @@
 
 ## 5. 全套驗證
 
-- [ ] 5.1 [after: 4.1] 全套測試與本機 CI gate 通過。驗證：`bash tests/run.sh` exit 0，`idd-ci-gate.sh run --commit HEAD` exit 0。
+- [x] 5.1 [after: 4.1] 全套測試與本機 CI gate 通過。驗證：`bash tests/run.sh` exit 0，`idd-ci-gate.sh run --commit HEAD` exit 0。

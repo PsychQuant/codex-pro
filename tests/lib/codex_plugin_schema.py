@@ -11,10 +11,12 @@ written from one upstream document, pinned here; the document is not copied
   commit:     e940b8a86138adf03972802b990a1dfc57fcbf09
   sha256:     5d7223255decc44fcb93f3aa80bb17afc1469b2d3c339d65d9473c5c0c54fcdd
 
-The upstream file is a sample with a field guide, not a formal schema. A field
-is required here only when the guide marks it required or says to always
-include it; every other documented field is checked for its documented type
-when present. A field the guide does not document is a violation, so a new
+The upstream file is a sample with a field guide, not a formal schema. Required
+here: plugin.json `name` (the guide marks it required); in marketplace.json the
+top-level `name` and `plugins`, and on each plugin entry `name`, `source` with
+`source.path`, `policy` and `category` (the guide's "always include" plus the
+fields its entry guide lists without marking them optional). Every other
+documented field is checked for its documented type when present. A field the guide does not document is a violation, so a new
 upstream field becomes a visible decision (re-pin) instead of passing silently.
 
 Usage: codex_plugin_schema.py <repo-root>
