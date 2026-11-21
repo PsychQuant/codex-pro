@@ -161,6 +161,16 @@ The automated suite SHALL include `tests/codex-plugin.sh` in `tests/run.sh`. The
 - **WHEN** the contract test's schema step runs with that path
 - **THEN** it reports a failure naming the missing check file and does not report a skip
 
+
+<!-- @trace
+source: idd-24-pinned-plugin-schema
+updated: 2026-11-21
+code:
+  - tests/codex-plugin.sh
+  - tests/lib/codex_plugin_schema.py
+  - tests/run.sh
+-->
+
 ---
 ### Requirement: Full bundle parity test
 
