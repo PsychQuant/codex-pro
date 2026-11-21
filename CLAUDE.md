@@ -245,10 +245,10 @@ Future skill design：先決定 category 再寫 SKILL.md、prevent 散亂的 ski
    }
    ```
 
-   - **權限**：這個檔，以及 `.claude` 與 `.claude/.idd` 兩層目錄，都要由自己的帳號擁有，而且 group 與 others 不能寫入（檔案 644、目錄 755 或更嚴）。gate 逐層檢查，任一層不符就回 exit 4；umask 是 002 時新建的目錄是 775，要自己改成 755。
+   - **權限**：這個檔，以及 `.claude` 與 `.claude/.idd` 兩層目錄，都要由自己的帳號擁有，而且 group 與 others 不能寫入（檔案 644、目錄 755 或更嚴）。gate 逐層檢查，任一層不符就回 exit 4。umask 是 002 時，`git clone` 建出來的兩層目錄通常是 775、新建的 `local.json` 通常是 664，都會被拒；以 `ls -ld` 看到的實際權限為準，比 755／644 寬的就改，不論目錄是誰建的。
    - `ci.timeout_seconds` 可省略（預設 3600 秒，足夠跑完 `tests/run.sh`）。
    - **gate 保護的是指令設定，不是指令執行的程式**：`bash tests/run.sh` 本身是被追蹤的檔案，跑的是被檢查那個 commit 裡的測試。所以只對自己信任的 commit 跑 gate，不要拿它檢查還沒審過的外部分支。
-   - **既有 clone 的遷移**：先把自己的 `local.json` 備份到工作樹之外，再拉移除追蹤的那個 commit。檔案沒改過時 git 會直接刪掉它；改過時（例如已經加了 `ci`）`git pull` 會因本機修改而中止。拉完後照上面重建或放回備份。之後 checkout 或 bisect 到這個 commit 之前的版本時，git 會用舊的追蹤內容（沒有 `ci`）蓋掉這個被忽略的檔，切回來時再把它刪掉；所以跨過這個 commit 之前同樣先備份。
+   - **既有 clone 的遷移**：先把自己的 `local.json` 備份到工作樹之外，再拉移除追蹤的那個 commit。檔案沒改過時 git 會直接刪掉它；改過時（例如已經加了 `ci`）`git pull` 會因本機修改而中止。這時**不要照 git 的提示 stash 或 commit**：stash 會在之後 `git stash pop` 時、commit 會在 merge 時撞上 modify/delete 衝突，解衝突時 `git add` 這個檔就讓它重新被追蹤（`.gitignore` 擋不住已在 index 裡的檔），下一個 commit 又把它帶回 repo。正確做法是備份後用 `git restore --source=HEAD --staged --worktree -- .claude/.idd/local.json` 捨棄本機修改（含已暫存的），再 pull。拉完後照上面重建或放回備份。`git clean -x`／`-X` 與 `git stash -a` 也會刪掉這個被忽略的檔（以及 `state/`），跑之前同樣先備份。之後 checkout 或 bisect 到這個 commit 之前的版本時，git 會用舊的追蹤內容（沒有 `ci`）蓋掉這個被忽略的檔，切回來時再把它刪掉；所以跨過這個 commit 之前同樣先備份。
 
 ## Tests
 
