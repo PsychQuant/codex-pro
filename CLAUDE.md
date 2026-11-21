@@ -145,11 +145,22 @@ codex-pro/                                ← marketplace root（自身為 catal
 
 | Marketplace / Plugin | 關係 | 用途 |
 |---|---|---|
-| [openai/codex-plugin-cc](https://github.com/openai/codex-plugin-cc) | 對標、要超越 | 痛點來源、design 反例 |
+| [openai/codex-plugin-cc](https://github.com/openai/codex-plugin-cc) | 對標、要超越；**常態參照**（協定比對基準之一） | 痛點來源、design 反例；它送給 Codex 的請求與處理的事件，是 `codex-call` 必須涵蓋的範圍 |
 | `psychquant/parallel-ai-agents`（plugin） | **runtime dependency** | 提供 `bin/codex-call` Swift wrapper |
 | `psychquant/codex-batch`（plugin） | sibling | 給 Codex CLI 端用的 plugin（不是 Claude Code 端） |
 
 `parallel-ai-agents/CLAUDE.md` 已記載 `codex-call` 的技術選擇理由（為什麼是 Swift script、為什麼不是 Python、為什麼不走 subprocess）— 那份是 source of truth，本專案不複述。
+
+### 常態參照：官方協定（2026-11-21 起，#36）
+
+codex-pro 不收斂成官方 CLI 的薄殼，全部 skill 保留自帶的 `codex-call`（#36 的決定）。換來的設計空間有一個硬條件：**`codex-call` 送出與處理的協定，必須與官方一致，或至少包含官方的部分**——官方 client 會送的欄位、會處理的事件，`codex-call` 都要能送、能處理；硬 timeout、circuit breaker 這類多出來的行為照舊保留。
+
+比對基準有兩個，都屬常態參照：動到 `codex-call` 的請求格式、事件處理、認證或 service tier 時，先對照它們，不憑記憶。
+
+1. 官方 Codex CLI 的原始碼（`openai/codex`）
+2. [`openai/codex-plugin-cc`](https://github.com/openai/codex-plugin-cc)
+
+機械檢查放在 `codex-call` 的原始碼所在處：PsychQuant/parallel-ai-agents#123（每天檢查官方 release、程式抽取欄位與事件清單後做集合比對、有差異就自動開 issue 並跑 `/idd-all --review`）。codex-pro 經 re-vendor（#29）拿到驗過的快照。
 
 ## Design constraints（implementation 期必守）
 
