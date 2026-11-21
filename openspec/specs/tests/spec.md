@@ -110,7 +110,7 @@ The plugin SHALL ship a manual e2e checklist at `tests/e2e-checklist.md` contain
 ---
 ### Requirement: Native plugin static contract test
 
-The automated suite SHALL include `tests/codex-plugin.sh` in `tests/run.sh`. The test SHALL validate the native manifest with repository-local assertions, validate the self-hosted marketplace entry, compare all three published versions, verify all referenced package paths remain inside the plugin root and exist, verify that the Claude source plugin contributes no root `bin/codex-call` or `bin/codex-pro-call`, verify that the isolated Claude package carries the complete MIT license and vendored-runtime notice, and run the repository-local schema check `tests/lib/codex_plugin_schema.py` as a release gate. The schema check SHALL implement the field rules of the upstream `openai/skills` file `skills/.system/plugin-creator/references/plugin-json-spec.md` pinned at commit `e940b8a86138adf03972802b990a1dfc57fcbf09`, and SHALL record that repository, path, commit and the file's sha256 in its source. The schema check SHALL exit 0 when both manifests conform; 1 when any rule is violated, printing each violated field, including a manifest that is valid JSON but not an object; 2 when a manifest is missing or is not strict JSON (NaN, Infinity, a repeated key, or nesting deeper than the parser allows); and 64 on a usage error. The test SHALL NOT consult the Codex plugin-creator validator, and SHALL fail rather than skip when the schema check file is missing or exits non-zero. The test SHALL also show that the gate's failure reaches its own exit status, on copies of the tree.
+The automated suite SHALL include `tests/codex-plugin.sh` in `tests/run.sh`. The test SHALL validate the native manifest with repository-local assertions, validate the self-hosted marketplace entry, compare all three published versions, verify all referenced package paths remain inside the plugin root and exist, verify that the Claude source plugin contributes no root `bin/codex-call` or `bin/codex-pro-call`, verify that the isolated Claude package carries the complete MIT license and vendored-runtime notice, and run the repository-local schema check `tests/lib/codex_plugin_schema.py` as a release gate. The schema check SHALL implement the field rules of the upstream `openai/skills` file `skills/.system/plugin-creator/references/plugin-json-spec.md` pinned at commit `e940b8a86138adf03972802b990a1dfc57fcbf09`, and SHALL record that repository, path, commit and the file's sha256 in its source. The schema check SHALL exit 0 when both manifests conform; 1 when any rule is violated, printing each violated field (a field name that is not a plain identifier printed JSON-escaped), including a manifest that is valid JSON but not an object; 2 when a manifest is missing, unreadable, or is not strict UTF-8 JSON (NaN, Infinity, a repeated key, or nesting deeper than the parser allows); 3 on an unexpected internal error; and 64 on a usage error. The test SHALL NOT consult the Codex plugin-creator validator, and SHALL fail rather than skip when the schema check file is missing or exits non-zero. The release gate SHALL add exactly one failure to the test's failure count when the check fails or is missing, and the test SHALL show that in-process. The test SHALL check that the case table in this requirement lists exactly the cases it runs.
 
 #### Scenario: Complete native package passes static validation
 
@@ -125,12 +125,12 @@ The automated suite SHALL include `tests/codex-plugin.sh` in `tests/run.sh`. The
 #### Scenario: Pinned schema rejects a non-conforming manifest
 
 - **WHEN** the schema check runs on a copy of the repository whose manifest breaks a rule of the pinned upstream spec, is missing, or is not strict JSON
-- **THEN** the check exits 1 for a rule violation and 2 for a missing or non-JSON manifest, and its output names the violated field or the manifest
+- **THEN** the check exits 1 for a rule violation and 2 for a missing, unreadable or non-JSON manifest, and its output names the violated field or the manifest
 
-#### Scenario: Schema gate failure fails the whole contract test
+#### Scenario: Schema gate failure is counted
 
-- **WHEN** `tests/codex-plugin.sh` runs on a copy of the tree with a broken manifest, or without the schema check file
-- **THEN** it exits non-zero and prints the schema gate's own failure line, while an unmodified copy exits 0
+- **WHEN** the release gate step runs with a missing checker, a checker that exits 1, or a checker that exits 0
+- **THEN** it adds exactly one failure, one failure, or one pass to the test's counts, respectively
 
 ##### Example: pinned schema accepts the repository manifests
 
@@ -163,6 +163,15 @@ The automated suite SHALL include `tests/codex-plugin.sh` in `tests/run.sh`. The
 | `source-path-not-relative` | 1 | `plugins[0].source.path:` |
 | `source-path-dotdot` | 1 | `plugins[0].source.path:` |
 | `category-missing` | 1 | `plugins[0].category:` |
+| `source-path-missing` | 1 | `plugins[0].source.path:` |
+| `version-core-leading-zero` | 1 | `plugin.json version:` |
+| `version-build-invalid` | 1 | `plugin.json version:` |
+| `name-uppercase` | 1 | `plugin.json name:` |
+| `products-not-strings` | 1 | `plugins[0].policy.products:` |
+| `default-prompt-at-limit` | 0 | `` |
+| `key-with-newline` | 1 | `plugin.json "x\nfake":` |
+| `key-lone-surrogate` | 1 | `plugin.json "\ud800":` |
+| `market-not-object` | 1 | `marketplace.json: must be a JSON object` |
 | `plugin-not-object` | 1 | `plugin.json: must be a JSON object` |
 | `author-undocumented` | 1 | `plugin.json author.twitter:` |
 | `interface-undocumented` | 1 | `plugin.json interface.tagline:` |
@@ -184,6 +193,9 @@ The automated suite SHALL include `tests/codex-plugin.sh` in `tests/run.sh`. The
 | `entry-not-object` | 1 | `marketplace.json plugins[0]: must be an object` |
 | `plugin-duplicate-key` | 2 | `plugin.json: not JSON` |
 | `plugin-deep-nesting` | 2 | `plugin.json: not JSON` |
+| `plugin-infinity` | 2 | `plugin.json: not JSON` |
+| `plugin-not-utf8` | 2 | `plugin.json: not JSON` |
+| `plugin-unreadable` | 2 | `plugin.json: not JSON` |
 | `plugin-not-json` | 2 | `plugin.json: not JSON` |
 | `plugin-nan` | 2 | `plugin.json: not JSON` |
 | `plugin-missing` | 2 | `plugin.json: missing` |
@@ -195,13 +207,19 @@ The automated suite SHALL include `tests/codex-plugin.sh` in `tests/run.sh`. The
 - **WHEN** the contract test's schema step runs with that path
 - **THEN** it reports a failure naming the missing check file and does not report a skip
 
-##### Example: a broken copy fails the whole contract test
+##### Example: the gate's failure is counted
 
-| Copy of the tree | Expected exit of `tests/codex-plugin.sh` | Gate failure line |
-| ---------------- | ---------------------------------------- | ----------------- |
-| unmodified (control) | 0 | absent |
-| `keywords` = `"codex"` in plugin.json | non-zero | present |
-| `tests/lib/codex_plugin_schema.py` removed | non-zero | present |
+| Checker given to `run_schema_gate` | Failures added | Passes added |
+| ---------------------------------- | -------------- | ------------ |
+| missing | 1 | 0 |
+| exits 1 | 1 | 0 |
+| exits 0 | 0 | 1 |
+
+##### Example: the case table matches the test
+
+- **GIVEN** the `SCHEMA_CASES` list in `tests/codex-plugin.sh` and the table of the Example "pinned schema rejects a broken manifest"
+- **WHEN** `tests/codex-plugin.sh` runs
+- **THEN** the two list the same cases, in the same order, with the same exit codes and output names
 
 <!-- @trace
 source: add-native-codex-plugin
@@ -235,12 +253,29 @@ code:
 -->
 
 <!-- @trace
+source: idd-24-pinned-plugin-schema
+updated: 2026-11-21
+code:
+  - tests/codex-plugin.sh
+  - tests/lib/codex_plugin_schema.py
+  - tests/run.sh
+-->
+
+<!-- @trace
 source: idd-24-fix2
 updated: 2026-11-22
 code:
   - tests/codex-plugin.sh
   - tests/lib/codex_plugin_schema.py
   - tests/run.sh
+-->
+
+<!-- @trace
+source: idd-24-fix3
+updated: 2026-11-22
+code:
+  - tests/codex-plugin.sh
+  - tests/lib/codex_plugin_schema.py
 -->
 
 ---
