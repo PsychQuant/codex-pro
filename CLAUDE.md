@@ -233,6 +233,19 @@ Future skill design：先決定 category 再寫 SKILL.md、prevent 散亂的 ski
 4. 重大 namespace / spec 變更（過去 marketplace-pivot、consolidate-naming 級的）archive 後手動跑 `tests/e2e-checklist.md`
 5. 本 marketplace 目前以 local dev 為主；對外發布（push 到 GitHub 並廣告）留待主要 skill（setup / review / rescue）穩定後再評估
 6. `codex-call` runtime 短期內直接 reference `parallel-ai-agents` 的 PATH-exposed binary；穩定後再評估抽成獨立 dependency
+7. **IDD 的本機設定 `.claude/.idd/local.json` 不進 git**（#33）：IDD 的本機 CI gate 拒絕讀被追蹤的設定檔（被追蹤的檔案裡的指令會隨任何 commit 改變），所以每個維護者的 clone 自己建這個檔，`.gitignore` 已排除它與 `.claude/.idd/state/`。內容：
+
+   ```json
+   {
+     "github_repo": "PsychQuant/codex-pro",
+     "github_owner": "PsychQuant",
+     "attachments_release": "attachments",
+     "pr_policy": "never",
+     "ci": { "mode": "local", "command": "bash tests/run.sh" }
+   }
+   ```
+
+   檔案要由自己的帳號擁有、權限 644 或更嚴。`ci.timeout_seconds` 可省略（預設 3600 秒，足夠跑完 `tests/run.sh`）。拉到移除追蹤的那個 commit 時，git 會刪掉既有 clone 裡的這個檔，照上面重建即可。
 
 ## Tests
 

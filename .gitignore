@@ -5,3 +5,8 @@ openspec/.vector-search.db*
 .codex-pro/
 .wiki-last-sync
 __pycache__/
+
+# IDD: the local config is each maintainer's own file (the CI gate refuses a tracked one);
+# run state is written per run. Values to put in the config: CLAUDE.md, Development workflow.
+.claude/.idd/local.json
+.claude/.idd/state/
