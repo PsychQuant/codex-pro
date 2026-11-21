@@ -1019,7 +1019,7 @@ code:
 ---
 ### Requirement: Cross-harness version consistency
 
-The Codex manifest, Claude plugin manifest, and Claude marketplace entry SHALL all declare the same strict SemVer version. A version change MUST update all three in the same commit, and the release notes SHALL name what the version adds.
+The Codex manifest, Claude plugin manifest, and Claude marketplace entry SHALL all declare the same strict SemVer version. A version change MUST update all three in the same commit, and the release notes SHALL name what the version adds: for 0.9.0 that is visual cross-validation (`codex-visual-xval`), while Codex native plugin distribution stays recorded as the 0.8.0 feature.
 
 #### Scenario: Version drift blocks the release gate
 
@@ -1031,17 +1031,6 @@ The Codex manifest, Claude plugin manifest, and Claude marketplace entry SHALL a
 - **GIVEN** `.codex-plugin/plugin.json`, `plugins/codex-pro/.claude-plugin/plugin.json` and the `codex-pro` entry of `.claude-plugin/marketplace.json`
 - **WHEN** `tests/codex-plugin.sh` runs its version consistency assertion
 - **THEN** the assertion "all three published manifest versions are identical" passes
-
-
-<!-- @trace
-source: idd-24-fix1
-updated: 2026-11-21
-code:
-  - .codex-plugin/plugin.json
-  - plugins/codex-pro/.claude-plugin/plugin.json
-  - .claude-plugin/marketplace.json
-  - tests/codex-plugin.sh
--->
 
 <!-- @trace
 source: add-native-codex-plugin
@@ -1173,4 +1162,24 @@ code:
   - skills/codex-visual-xval/scripts/result_file.py
   - .agents/skills/spectra-propose/SKILL.md
   - plugins/codex-pro/skills/codex-visual-xval/scripts/codex_errors.py
+-->
+
+<!-- @trace
+source: idd-24-fix1
+updated: 2026-11-21
+code:
+  - .codex-plugin/plugin.json
+  - plugins/codex-pro/.claude-plugin/plugin.json
+  - .claude-plugin/marketplace.json
+  - tests/codex-plugin.sh
+-->
+
+<!-- @trace
+source: idd-24-fix5
+updated: 2026-11-22
+code:
+  - .codex-plugin/plugin.json
+  - plugins/codex-pro/.claude-plugin/plugin.json
+  - .claude-plugin/marketplace.json
+  - tests/codex-plugin.sh
 -->

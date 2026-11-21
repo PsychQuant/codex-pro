@@ -173,6 +173,8 @@ The automated suite SHALL include `tests/codex-plugin.sh` in `tests/run.sh`. The
 | `version-prerelease-build-valid` | 0 | `` |
 | `name-null` | 1 | `plugin.json name: must be string` |
 | `source-source-missing` | 1 | `plugins[0].source.source: required` |
+| `policy-installation-missing` | 1 | `plugins[0].policy.installation: required` |
+| `policy-authentication-missing` | 1 | `plugins[0].policy.authentication: required` |
 | `author-not-object` | 1 | `plugin.json author: must be object` |
 | `interface-not-object` | 1 | `plugin.json interface: must be object` |
 | `plugins-not-array` | 1 | `marketplace.json plugins: must be array` |
@@ -290,6 +292,14 @@ code:
 
 <!-- @trace
 source: idd-24-fix4
+updated: 2026-11-22
+code:
+  - tests/codex-plugin.sh
+  - tests/lib/codex_plugin_schema.py
+-->
+
+<!-- @trace
+source: idd-24-fix5
 updated: 2026-11-22
 code:
   - tests/codex-plugin.sh
