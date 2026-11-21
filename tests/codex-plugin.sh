@@ -592,13 +592,15 @@ fi
 
 # spec-example: codex-native-plugin / pinned schema check accepts the native manifest
 if [ -r "$SCHEMA_CHECK" ]; then
-  quiet_output=$(python3 -I "$SCHEMA_CHECK" "$REPO_ROOT" 2>&1 </dev/null)
+  quiet_file=$(mktemp "${TMPDIR:-/tmp}/codex-plugin-quiet.XXXXXX")
+  python3 -I "$SCHEMA_CHECK" "$REPO_ROOT" >"$quiet_file" 2>&1 </dev/null
   quiet_exit=$?
-  if [ "$quiet_exit" -eq 0 ] && [ -z "$quiet_output" ]; then
+  if [ "$quiet_exit" -eq 0 ] && [ ! -s "$quiet_file" ]; then
     pass "pinned schema check exits 0 and prints nothing for the native manifest"
   else
-    fail "pinned schema check exits 0 and prints nothing for the native manifest (exit=$quiet_exit: $quiet_output)"
+    fail "pinned schema check exits 0 and prints nothing for the native manifest (exit=$quiet_exit, $(wc -c <"$quiet_file" | tr -d ' ') bytes)"
   fi
+  rm -f "$quiet_file"
   python3 -I "$SCHEMA_CHECK" >/dev/null 2>&1 </dev/null
   usage_exit=$?
   if [ "$usage_exit" -eq 64 ]; then
@@ -622,6 +624,7 @@ esac
 # given exit code and the field name in the output.
 schema_tmp=$(mktemp -d "${TMPDIR:-/tmp}/codex-plugin-schema.XXXXXX") || {
   fail "temporary directory for pinned schema negative cases"; schema_tmp=""; }
+[ -n "$schema_tmp" ] && trap 'rm -rf "$schema_tmp"' EXIT
 SCHEMA_CASES=$(cat <<'CASES'
 name-missing|1|plugin.json name:
 name-not-kebab|1|plugin.json name:
@@ -645,6 +648,26 @@ source-path-not-relative|1|plugins[0].source.path:
 source-path-dotdot|1|plugins[0].source.path:
 category-missing|1|plugins[0].category:
 plugin-not-object|1|plugin.json: must be a JSON object
+author-undocumented|1|plugin.json author.twitter:
+interface-undocumented|1|plugin.json interface.tagline:
+market-undocumented|1|marketplace.json owner:
+market-interface-undocumented|1|marketplace.json interface.tagline:
+entry-undocumented|1|plugins[0].displayName:
+source-undocumented|1|plugins[0].source.ref:
+policy-undocumented|1|plugins[0].policy.visibility:
+screenshot-not-png|1|plugin.json interface.screenshots[0]:
+screenshot-no-file-name|1|plugin.json interface.screenshots[0]:
+hooks-not-relative|1|plugin.json hooks:
+mcp-servers-not-relative|1|plugin.json mcpServers:
+apps-not-relative|1|plugin.json apps:
+composer-icon-not-relative|1|plugin.json interface.composerIcon:
+logo-not-relative|1|plugin.json interface.logo:
+keywords-element-number|1|plugin.json keywords:
+market-name-missing|1|marketplace.json name:
+market-plugins-missing|1|marketplace.json plugins:
+entry-not-object|1|marketplace.json plugins[0]: must be an object
+plugin-duplicate-key|2|plugin.json: not JSON
+plugin-deep-nesting|2|plugin.json: not JSON
 plugin-not-json|2|plugin.json: not JSON
 plugin-nan|2|plugin.json: not JSON
 plugin-missing|2|plugin.json: missing
@@ -689,6 +712,48 @@ elif case == "screenshot-dotdot":
     plugin["interface"]["screenshots"] = ["./assets/../shot.png"]
 elif case == "source-path-dotdot":
     entry["source"]["path"] = "./../outside"
+elif case == "author-undocumented":
+    plugin["author"]["twitter"] = "x"
+elif case == "interface-undocumented":
+    plugin["interface"]["tagline"] = "x"
+elif case == "market-undocumented":
+    market["owner"] = "x"
+elif case == "market-interface-undocumented":
+    market.setdefault("interface", {})["tagline"] = "x"
+elif case == "entry-undocumented":
+    entry["displayName"] = "x"
+elif case == "source-undocumented":
+    entry["source"]["ref"] = "main"
+elif case == "policy-undocumented":
+    entry["policy"]["visibility"] = "x"
+elif case == "screenshot-not-png":
+    plugin["interface"]["screenshots"] = ["./assets/shot.jpg"]
+elif case == "screenshot-no-file-name":
+    plugin["interface"]["screenshots"] = ["./assets/.png"]
+elif case == "hooks-not-relative":
+    plugin["hooks"] = "hooks.json"
+elif case == "mcp-servers-not-relative":
+    plugin["mcpServers"] = "mcp.json"
+elif case == "apps-not-relative":
+    plugin["apps"] = "app.json"
+elif case == "composer-icon-not-relative":
+    plugin["interface"]["composerIcon"] = "assets/icon.png"
+elif case == "logo-not-relative":
+    plugin["interface"]["logo"] = "assets/logo.png"
+elif case == "keywords-element-number":
+    plugin["keywords"] = ["codex", 1]
+elif case == "market-name-missing":
+    del market["name"]
+elif case == "market-plugins-missing":
+    del market["plugins"]
+elif case == "entry-not-object":
+    market["plugins"] = ["codex-pro"]
+elif case == "plugin-duplicate-key":
+    plugin_path.write_text('{"name": "Bad Name", "name": "codex-pro"}', encoding="utf-8")
+    sys.exit(0)
+elif case == "plugin-deep-nesting":
+    plugin_path.write_text("[" * 100000 + "]" * 100000, encoding="utf-8")
+    sys.exit(0)
 elif case == "plugin-not-object":
     plugin_path.write_text("[]", encoding="utf-8")
     sys.exit(0)
@@ -740,7 +805,7 @@ PY_MUTATE
     schema_cases_ran=$((schema_cases_ran + 1))
     case_output=$(python3 -I "$SCHEMA_CHECK" "$case_root" 2>&1 </dev/null)
     case_exit=$?
-    if [ "$case_exit" -eq "$expect_exit" ] && printf '%s' "$case_output" | grep -qF -- "$expect_field"; then
+    if [ "$case_exit" -eq "$expect_exit" ] && grep -qF -- "$expect_field" <<<"$case_output"; then
       pass "pinned schema rejects '$case_name' (exit $expect_exit, names $expect_field)"
     else
       case_reason=$(printf '%s\n' "$case_output" | tr '\n' ' ' | sed 's/[[:space:]]*$//')
@@ -756,31 +821,60 @@ else
   fail "pinned schema negative cases all ran (ran $schema_cases_ran of $schema_cases_expected)"
 fi
 
-# The gate's failure reaches the whole script: a copy of the tracked tree with a
-# broken manifest, and one without the check file, must make this script exit
-# non-zero and name the schema step. Nested runs skip this section.
-if [ -n "$schema_tmp" ] && [ "${CODEX_PLUGIN_NESTED:-}" != "1" ]; then
-  for integration_case in broken-manifest missing-check; do
+# spec-example: tests / a broken copy fails the whole contract test
+# The gate's failure reaches the whole script. Three copies of the tree: an
+# unmodified control that must exit 0, one with a broken manifest and one without
+# the check file; each failing copy must print the gate's own failure line.
+# A nested run is recognised by a per-run token written into its copy, so an
+# inherited environment variable alone cannot switch these cases off.
+nested_marker="$REPO_ROOT/.codex-plugin-nested-run"
+if [ -n "${CODEX_PLUGIN_NESTED_TOKEN:-}" ] && [ -r "$nested_marker" ] \
+    && [ "$(cat "$nested_marker")" = "$CODEX_PLUGIN_NESTED_TOKEN" ]; then
+  echo "  → nested run: the integration cases run in the parent copy only"
+elif [ -n "$schema_tmp" ]; then
+  if git -C "$REPO_ROOT" rev-parse --is-inside-work-tree >/dev/null 2>&1 \
+      && [ "$(git -C "$REPO_ROOT" rev-parse --show-toplevel)" = "$(cd "$REPO_ROOT" && pwd -P)" ]; then
+    copy_mode="git"
+  else
+    copy_mode="tree"
+    echo "  → integration copies: no git work tree, copying the whole tree"
+  fi
+  for integration_case in control broken-manifest missing-check; do
     copy_root="$schema_tmp/copy-$integration_case"
     mkdir -p "$copy_root"
-    if ! (cd "$REPO_ROOT" && git ls-files -z | tar --null -T - -cf -) | (cd "$copy_root" && tar -xf -); then
-      fail "integration copy of the tracked tree for '$integration_case'"
+    if [ "$copy_mode" = "git" ]; then
+      (cd "$REPO_ROOT" && git ls-files -z | tar --null -T - -cf -) | (cd "$copy_root" && tar -xf -)
+    else
+      cp -R "$REPO_ROOT/." "$copy_root/"
+    fi
+    copy_status=$?
+    if [ "$copy_status" -ne 0 ]; then
+      fail "integration copy of the tree for '$integration_case' ($copy_mode, status $copy_status)"
       continue
     fi
-    if [ "$integration_case" = "broken-manifest" ]; then
-      python3 -I -c 'import json,sys; p=sys.argv[1]; d=json.load(open(p)); d["keywords"]="codex"; open(p,"w").write(json.dumps(d))' \
-        "$copy_root/.codex-plugin/plugin.json"
-      expect_text="✗ pinned schema check accepts the native package"
-    else
-      rm -f "$copy_root/tests/lib/codex_plugin_schema.py"
-      expect_text="pinned schema check is missing"
-    fi
-    integration_output=$(CODEX_PLUGIN_NESTED=1 bash "$copy_root/tests/codex-plugin.sh" 2>&1 </dev/null)
+    case "$integration_case" in
+      broken-manifest)
+        python3 -I -c 'import json,sys; p=sys.argv[1]; d=json.load(open(p)); d["keywords"]="codex"; open(p,"w").write(json.dumps(d))' \
+          "$copy_root/.codex-plugin/plugin.json" </dev/null ;;
+      missing-check)
+        rm -f "$copy_root/tests/lib/codex_plugin_schema.py" ;;
+    esac
+    token="$integration_case-$$-$RANDOM$RANDOM"
+    printf '%s' "$token" >"$copy_root/.codex-plugin-nested-run"
+    integration_output=$(CODEX_PLUGIN_NESTED_TOKEN="$token" bash "$copy_root/tests/codex-plugin.sh" 2>&1 </dev/null)
     integration_exit=$?
-    if [ "$integration_exit" -ne 0 ] && printf '%s' "$integration_output" | grep -qF -- "$expect_text"; then
-      pass "codex-plugin.sh exits non-zero and names the schema step ($integration_case)"
+    gate_failed=no
+    grep -qF -- "✗ pinned schema check accepts the native package" <<<"$integration_output" && gate_failed=yes
+    if [ "$integration_case" = "control" ]; then
+      if [ "$integration_exit" -eq 0 ] && [ "$gate_failed" = "no" ]; then
+        pass "an unmodified copy of the tree passes codex-plugin.sh"
+      else
+        fail "an unmodified copy of the tree passes codex-plugin.sh (exit=$integration_exit)"
+      fi
+    elif [ "$integration_exit" -ne 0 ] && [ "$gate_failed" = "yes" ]; then
+      pass "codex-plugin.sh exits non-zero on the schema gate's own failure ($integration_case)"
     else
-      fail "codex-plugin.sh exits non-zero and names the schema step ($integration_case; exit=$integration_exit)"
+      fail "codex-plugin.sh exits non-zero on the schema gate's own failure ($integration_case; exit=$integration_exit, gate line=$gate_failed)"
     fi
   done
 fi

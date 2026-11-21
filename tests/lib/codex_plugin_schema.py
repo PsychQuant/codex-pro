@@ -29,7 +29,7 @@ Where this check differs from the guide, on purpose:
             `defaultPrompt` beyond 3 entries or 128 characters is a violation
             (the guide says the excess is ignored or truncated);
             `source.source` must be `local` (the guide's repo workflow);
-            screenshots must end in lower-case `.png`;
+            screenshots must be a lower-case `.png` file name under ./assets/;
             a path with a `..` component is a violation.
   looser    an entry `name` is not compared with the plugin folder or
             plugin.json `name`, and an empty `plugins` array passes: the
@@ -38,7 +38,8 @@ Where this check differs from the guide, on purpose:
 Usage: codex_plugin_schema.py <repo-root>
 Exit:  0 both manifests conform; 1 one or more violations (each printed with
        its field), including valid JSON that is not an object; 2 a manifest is
-       missing or is not strict JSON (NaN and Infinity are not JSON);
+       missing or is not strict JSON (NaN, Infinity, a repeated key, or nesting
+       deeper than the parser allows);
        64 usage error.
 Python 3.9 compatible (macOS system Python).
 """
@@ -111,6 +112,16 @@ def _reject_constant(token: str) -> None:
     raise ValueError(f"{token} is not JSON")
 
 
+def _reject_duplicates(pairs: list[tuple[str, Any]]) -> dict:
+    """A repeated key would let another loader see a different manifest."""
+    seen: dict = {}
+    for key, value in pairs:
+        if key in seen:
+            raise ValueError(f"duplicate key {key!r}")
+        seen[key] = value
+    return seen
+
+
 def has_type(value: Any, kind: str) -> bool:
     if kind == STRING:
         return isinstance(value, str)
@@ -155,9 +166,11 @@ def load(path: Path, label: str) -> Any:
     except (OSError, UnicodeDecodeError) as exc:
         raise ManifestUnreadable(f"{label}: not JSON ({type(exc).__name__})")
     try:
-        return json.loads(text, parse_constant=_reject_constant)
+        return json.loads(text, parse_constant=_reject_constant, object_pairs_hook=_reject_duplicates)
     except ValueError as exc:
         raise ManifestUnreadable(f"{label}: not JSON ({exc})")
+    except RecursionError:
+        raise ManifestUnreadable(f"{label}: not JSON (nested deeper than the parser allows)")
 
 
 def check_plugin(plugin: dict, errors: list[str]) -> None:
@@ -192,8 +205,10 @@ def check_interface(interface: dict, errors: list[str]) -> None:
     shots = interface.get("screenshots")
     if isinstance(shots, list):
         for index, shot in enumerate(shots):
+            name = shot.rsplit("/", 1)[-1] if isinstance(shot, str) else ""
             if isinstance(shot, str) and not (
-                shot.startswith("./assets/") and shot.endswith(".png") and not has_parent_component(shot)
+                shot.startswith("./assets/") and name.endswith(".png") and len(name) > len(".png")
+                and not has_parent_component(shot)
             ):
                 errors.append(f"plugin.json interface.screenshots[{index}]: must be a .png under ./assets/")
 
