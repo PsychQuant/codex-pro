@@ -126,6 +126,7 @@ The automated suite SHALL include `tests/codex-plugin.sh` in `tests/run.sh`. The
 
 - **WHEN** the schema check runs on a copy of the repository whose manifest breaks a rule of the pinned upstream spec, is missing, or is not strict JSON
 - **THEN** the check exits 1 for a rule violation and 2 for a missing, unreadable or non-JSON manifest, and its output names the violated field or the manifest
+- **AND** a row of the case table with expected exit 0 is a valid input at the edge of a rule, and the check SHALL exit 0 and print nothing for it
 
 #### Scenario: Schema gate failure is counted
 
@@ -169,6 +170,15 @@ The automated suite SHALL include `tests/codex-plugin.sh` in `tests/run.sh`. The
 | `name-uppercase` | 1 | `plugin.json name:` |
 | `products-not-strings` | 1 | `plugins[0].policy.products:` |
 | `default-prompt-at-limit` | 0 | `` |
+| `version-prerelease-build-valid` | 0 | `` |
+| `name-null` | 1 | `plugin.json name: must be string` |
+| `source-source-missing` | 1 | `plugins[0].source.source: required` |
+| `author-not-object` | 1 | `plugin.json author: must be object` |
+| `interface-not-object` | 1 | `plugin.json interface: must be object` |
+| `plugins-not-array` | 1 | `marketplace.json plugins: must be array` |
+| `source-not-object` | 1 | `plugins[0].source: must be object` |
+| `policy-not-object` | 1 | `plugins[0].policy: must be object` |
+| `version-long-integer` | 1 | `plugin.json version: must be string` |
 | `key-with-newline` | 1 | `plugin.json "x\nfake":` |
 | `key-lone-surrogate` | 1 | `plugin.json "\ud800":` |
 | `market-not-object` | 1 | `marketplace.json: must be a JSON object` |
@@ -272,6 +282,14 @@ code:
 
 <!-- @trace
 source: idd-24-fix3
+updated: 2026-11-22
+code:
+  - tests/codex-plugin.sh
+  - tests/lib/codex_plugin_schema.py
+-->
+
+<!-- @trace
+source: idd-24-fix4
 updated: 2026-11-22
 code:
   - tests/codex-plugin.sh
