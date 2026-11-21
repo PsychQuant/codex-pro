@@ -39,8 +39,9 @@ Usage: codex_plugin_schema.py <repo-root>
 Exit:  0 both manifests conform; 1 one or more violations (each printed with
        its field), including valid JSON that is not an object; 2 a manifest is
        missing or is not strict JSON (NaN, Infinity, a repeated key, or nesting
-       deeper than the parser allows);
-       64 usage error.
+       deeper than the parser allows); 3 an unexpected internal error;
+       64 usage error. Field names that are not plain identifiers are printed
+       JSON-escaped.
 Python 3.9 compatible (macOS system Python).
 """
 
@@ -134,10 +135,19 @@ def has_type(value: Any, kind: str) -> bool:
     raise ValueError(kind)
 
 
+PLAIN_KEY = re.compile(r"[A-Za-z0-9_-]+")
+
+
+def key_label(key: str) -> str:
+    """A key as printed: plain identifiers as is, anything else JSON-escaped, so a
+    key cannot add a line of its own or carry an unprintable character."""
+    return key if PLAIN_KEY.fullmatch(key) else json.dumps(key)
+
+
 def check_fields(obj: dict, spec: dict[str, str], prefix: str, errors: list[str]) -> None:
     """Documented fields have their type; undocumented fields are violations."""
     for key, value in obj.items():
-        field = prefix + key
+        field = prefix + key_label(key)
         if key not in spec:
             errors.append(f"{field}: not documented by the pinned spec")
         elif not has_type(value, spec[key]):
@@ -253,6 +263,15 @@ def check_entry(entry: Any, prefix: str, errors: list[str]) -> None:
 
 
 def main(argv: list[str]) -> int:
+    """Exit 3 on an unexpected error, so exit 1 always means rule violations."""
+    try:
+        return run(argv)
+    except Exception as exc:  # noqa: BLE001 — the exit code is the contract
+        print(f"internal error: {type(exc).__name__}")
+        return 3
+
+
+def run(argv: list[str]) -> int:
     if len(argv) != 2:
         print("usage: codex_plugin_schema.py <repo-root>", file=sys.stderr)
         return 64

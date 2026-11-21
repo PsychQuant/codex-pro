@@ -582,13 +582,41 @@ schema_gate_verdict() {
   fi
 }
 
+# run_schema_gate <check> <repo-root> — the release gate: exactly one pass or
+# one fail. The accounting test below calls it in a subshell.
+run_schema_gate() {
+  local verdict
+  verdict=$(schema_gate_verdict "$1" "$2")
+  if [ "$verdict" = "pass" ]; then
+    pass "pinned schema check accepts the native package"
+  else
+    fail "pinned schema check accepts the native package (${verdict#fail: })"
+  fi
+}
+
 # spec-example: tests / pinned schema accepts the repository manifests
-gate_verdict=$(schema_gate_verdict "$SCHEMA_CHECK" "$REPO_ROOT")
-if [ "$gate_verdict" = "pass" ]; then
-  pass "pinned schema check accepts the native package"
-else
-  fail "pinned schema check accepts the native package (${gate_verdict#fail: })"
-fi
+run_schema_gate "$SCHEMA_CHECK" "$REPO_ROOT"
+
+# spec-example: tests / the gate's failure is counted
+# The gate's own fail must reach the fail count, so the script's exit status:
+# run it in a subshell with fresh counters against a missing checker, a checker
+# that exits 1 and one that exits 0, and read back the counts it left.
+gate_stub_dir=$(mktemp -d "${TMPDIR:-/tmp}/codex-plugin-gate.XXXXXX")
+printf 'import sys\nsys.exit(1)\n' >"$gate_stub_dir/fails.py"
+printf 'import sys\nsys.exit(0)\n' >"$gate_stub_dir/passes.py"
+while IFS='|' read -r stub expect_fail expect_pass; do
+  counts=$(PASS_COUNT=0 FAIL_COUNT=0; run_schema_gate "$gate_stub_dir/$stub" "$REPO_ROOT" >/dev/null; printf '%s %s' "$FAIL_COUNT" "$PASS_COUNT")
+  if [ "$counts" = "$expect_fail $expect_pass" ]; then
+    pass "the gate adds $expect_fail fail and $expect_pass pass for a $stub checker"
+  else
+    fail "the gate adds $expect_fail fail and $expect_pass pass for a $stub checker (got fail pass = $counts)"
+  fi
+done <<'STUBS'
+missing.py|1|0
+fails.py|1|0
+passes.py|0|1
+STUBS
+rm -rf "$gate_stub_dir"
 
 # spec-example: codex-native-plugin / pinned schema check accepts the native manifest
 if [ -r "$SCHEMA_CHECK" ]; then
@@ -647,6 +675,15 @@ source-not-local|1|plugins[0].source.source:
 source-path-not-relative|1|plugins[0].source.path:
 source-path-dotdot|1|plugins[0].source.path:
 category-missing|1|plugins[0].category:
+source-path-missing|1|plugins[0].source.path:
+version-core-leading-zero|1|plugin.json version:
+version-build-invalid|1|plugin.json version:
+name-uppercase|1|plugin.json name:
+products-not-strings|1|plugins[0].policy.products:
+default-prompt-at-limit|0|
+key-with-newline|1|plugin.json "x\nfake":
+key-lone-surrogate|1|plugin.json "\ud800":
+market-not-object|1|marketplace.json: must be a JSON object
 plugin-not-object|1|plugin.json: must be a JSON object
 author-undocumented|1|plugin.json author.twitter:
 interface-undocumented|1|plugin.json interface.tagline:
@@ -668,6 +705,9 @@ market-plugins-missing|1|marketplace.json plugins:
 entry-not-object|1|marketplace.json plugins[0]: must be an object
 plugin-duplicate-key|2|plugin.json: not JSON
 plugin-deep-nesting|2|plugin.json: not JSON
+plugin-infinity|2|plugin.json: not JSON
+plugin-not-utf8|2|plugin.json: not JSON
+plugin-unreadable|2|plugin.json: not JSON
 plugin-not-json|2|plugin.json: not JSON
 plugin-nan|2|plugin.json: not JSON
 plugin-missing|2|plugin.json: missing
@@ -712,6 +752,35 @@ elif case == "screenshot-dotdot":
     plugin["interface"]["screenshots"] = ["./assets/../shot.png"]
 elif case == "source-path-dotdot":
     entry["source"]["path"] = "./../outside"
+elif case == "source-path-missing":
+    del entry["source"]["path"]
+elif case == "version-core-leading-zero":
+    plugin["version"] = "01.2.3"
+elif case == "version-build-invalid":
+    plugin["version"] = "1.2.3+a_b"
+elif case == "name-uppercase":
+    plugin["name"] = "Codex-pro"
+elif case == "products-not-strings":
+    entry["policy"]["products"] = [1]
+elif case == "default-prompt-at-limit":
+    plugin["interface"]["defaultPrompt"] = ["x" * 128]
+elif case == "key-with-newline":
+    plugin["x\nfake"] = "y"
+elif case == "key-lone-surrogate":
+    plugin_path.write_text(json.dumps(plugin)[:-1] + ', "\\ud800": "y"}', encoding="utf-8")
+    sys.exit(0)
+elif case == "market-not-object":
+    market_path.write_text("[]", encoding="utf-8")
+    sys.exit(0)
+elif case == "plugin-infinity":
+    plugin_path.write_text('{"name": "codex-pro", "version": Infinity}', encoding="utf-8")
+    sys.exit(0)
+elif case == "plugin-not-utf8":
+    plugin_path.write_bytes(b'{"name": "\xff"}')
+    sys.exit(0)
+elif case == "plugin-unreadable":
+    plugin_path.chmod(0)
+    sys.exit(0)
 elif case == "author-undocumented":
     plugin["author"]["twitter"] = "x"
 elif case == "interface-undocumented":
@@ -821,62 +890,48 @@ else
   fail "pinned schema negative cases all ran (ran $schema_cases_ran of $schema_cases_expected)"
 fi
 
-# spec-example: tests / a broken copy fails the whole contract test
-# The gate's failure reaches the whole script. Three copies of the tree: an
-# unmodified control that must exit 0, one with a broken manifest and one without
-# the check file; each failing copy must print the gate's own failure line.
-# A nested run is recognised by a per-run token written into its copy, so an
-# inherited environment variable alone cannot switch these cases off.
-nested_marker="$REPO_ROOT/.codex-plugin-nested-run"
-if [ -n "${CODEX_PLUGIN_NESTED_TOKEN:-}" ] && [ -r "$nested_marker" ] \
-    && [ "$(cat "$nested_marker")" = "$CODEX_PLUGIN_NESTED_TOKEN" ]; then
-  echo "  → nested run: the integration cases run in the parent copy only"
-elif [ -n "$schema_tmp" ]; then
-  if git -C "$REPO_ROOT" rev-parse --is-inside-work-tree >/dev/null 2>&1 \
-      && [ "$(git -C "$REPO_ROOT" rev-parse --show-toplevel)" = "$(cd "$REPO_ROOT" && pwd -P)" ]; then
-    copy_mode="git"
-  else
-    copy_mode="tree"
-    echo "  → integration copies: no git work tree, copying the whole tree"
-  fi
-  for integration_case in control broken-manifest missing-check; do
-    copy_root="$schema_tmp/copy-$integration_case"
-    mkdir -p "$copy_root"
-    if [ "$copy_mode" = "git" ]; then
-      (cd "$REPO_ROOT" && git ls-files -z | tar --null -T - -cf -) | (cd "$copy_root" && tar -xf -)
-    else
-      cp -R "$REPO_ROOT/." "$copy_root/"
-    fi
-    copy_status=$?
-    if [ "$copy_status" -ne 0 ]; then
-      fail "integration copy of the tree for '$integration_case' ($copy_mode, status $copy_status)"
-      continue
-    fi
-    case "$integration_case" in
-      broken-manifest)
-        python3 -I -c 'import json,sys; p=sys.argv[1]; d=json.load(open(p)); d["keywords"]="codex"; open(p,"w").write(json.dumps(d))' \
-          "$copy_root/.codex-plugin/plugin.json" </dev/null ;;
-      missing-check)
-        rm -f "$copy_root/tests/lib/codex_plugin_schema.py" ;;
-    esac
-    token="$integration_case-$$-$RANDOM$RANDOM"
-    printf '%s' "$token" >"$copy_root/.codex-plugin-nested-run"
-    integration_output=$(CODEX_PLUGIN_NESTED_TOKEN="$token" bash "$copy_root/tests/codex-plugin.sh" 2>&1 </dev/null)
-    integration_exit=$?
-    gate_failed=no
-    grep -qF -- "✗ pinned schema check accepts the native package" <<<"$integration_output" && gate_failed=yes
-    if [ "$integration_case" = "control" ]; then
-      if [ "$integration_exit" -eq 0 ] && [ "$gate_failed" = "no" ]; then
-        pass "an unmodified copy of the tree passes codex-plugin.sh"
-      else
-        fail "an unmodified copy of the tree passes codex-plugin.sh (exit=$integration_exit)"
-      fi
-    elif [ "$integration_exit" -ne 0 ] && [ "$gate_failed" = "yes" ]; then
-      pass "codex-plugin.sh exits non-zero on the schema gate's own failure ($integration_case)"
-    else
-      fail "codex-plugin.sh exits non-zero on the schema gate's own failure ($integration_case; exit=$integration_exit, gate line=$gate_failed)"
-    fi
-  done
+# spec-example: tests / the case table matches the test
+# The spec's Example table must list exactly the cases this test runs.
+spec_table=$(python3 -I - "$REPO_ROOT/openspec/specs/tests/spec.md" <<'PY_TABLE'
+import re
+import sys
+text = open(sys.argv[1], encoding="utf-8").read()
+start = text.index("##### Example: pinned schema rejects a broken manifest")
+rows = []
+for line in text[start:].splitlines()[1:]:
+    if line.startswith("#"):
+        break
+    m = re.match(r"\| `([^`]+)` \| (\d) \| `(.*)` \|$", line)
+    if m:
+        rows.append("|".join(m.groups()))
+print("\n".join(rows))
+PY_TABLE
+)
+if [ "$spec_table" = "$SCHEMA_CASES" ]; then
+  pass "the spec's case table lists exactly the cases this test runs"
+else
+  fail "the spec's case table lists exactly the cases this test runs (diff: $(diff <(printf '%s\n' "$spec_table") <(printf '%s\n' "$SCHEMA_CASES") | grep '^[<>]' | head -3 | tr '\n' ' '))"
+fi
+
+# An unexpected error inside the checker exits 3, not 1 (the rule-violation code).
+internal_exit=$(python3 -I - "$SCHEMA_CHECK" "$REPO_ROOT" <<'PY_INTERNAL' 2>/dev/null
+import importlib.util
+import sys
+spec = importlib.util.spec_from_file_location("schema", sys.argv[1])
+mod = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(mod)
+def boom(*args):
+    raise RuntimeError("injected")
+mod.check_plugin = boom
+code = mod.main(["codex_plugin_schema.py", sys.argv[2]])
+print(f"exit={code}")
+PY_INTERNAL
+)
+internal_exit=$(sed -n 's/^exit=//p' <<<"$internal_exit")
+if [ "$internal_exit" = "3" ]; then
+  pass "pinned schema check exits 3 on an unexpected error"
+else
+  fail "pinned schema check exits 3 on an unexpected error (got ${internal_exit:-none})"
 fi
 [ -n "$schema_tmp" ] && rm -rf "$schema_tmp"
 
