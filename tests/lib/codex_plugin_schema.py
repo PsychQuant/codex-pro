@@ -3,25 +3,43 @@
 
 Replaces the Codex plugin-creator validator, which Codex CLI no longer ships
 and which never appeared in the upstream skills repository. The rules below are
-written from one upstream document, pinned here; the document is not copied
-(the upstream repository has no detectable license).
+written as code from one upstream document, pinned here. The document itself is
+not copied: the skill directory that holds it is Apache-2.0 (its LICENSE.txt),
+and copying it would bring a license notice into this repository for no gain.
 
   repository: openai/skills
   path:       skills/.system/plugin-creator/references/plugin-json-spec.md
   commit:     e940b8a86138adf03972802b990a1dfc57fcbf09
   sha256:     5d7223255decc44fcb93f3aa80bb17afc1469b2d3c339d65d9473c5c0c54fcdd
 
-The upstream file is a sample with a field guide, not a formal schema. Required
-here: plugin.json `name` (the guide marks it required); in marketplace.json the
-top-level `name` and `plugins`, and on each plugin entry `name`, `source` with
-`source.path`, `policy` and `category` (the guide's "always include" plus the
-fields its entry guide lists without marking them optional). Every other
-documented field is checked for its documented type when present. A field the guide does not document is a violation, so a new
-upstream field becomes a visible decision (re-pin) instead of passing silently.
+The upstream file is a sample with a field guide, not a formal schema.
+
+Required here:
+  plugin.json       `name` (the guide marks it required).
+  marketplace.json  top-level `name` and `plugins`; on each plugin entry `name`,
+                    `source` with `source.source` and `source.path`, `policy`
+                    with `policy.installation` and `policy.authentication`, and
+                    `category` (the guide's "always include" plus the fields its
+                    entry guide lists without marking them optional).
+Every other documented field is checked for its documented type when present.
+
+Where this check differs from the guide, on purpose:
+  stricter  a field the guide does not document is a violation (a new upstream
+            field becomes a re-pin decision instead of passing silently);
+            `defaultPrompt` beyond 3 entries or 128 characters is a violation
+            (the guide says the excess is ignored or truncated);
+            `source.source` must be `local` (the guide's repo workflow);
+            screenshots must end in lower-case `.png`;
+            a path with a `..` component is a violation.
+  looser    an entry `name` is not compared with the plugin folder or
+            plugin.json `name`, and an empty `plugins` array passes: the
+            codex-pro specific checks in tests/codex-plugin.sh cover both.
 
 Usage: codex_plugin_schema.py <repo-root>
 Exit:  0 both manifests conform; 1 one or more violations (each printed with
-       its field); 2 a manifest is missing or is not JSON.
+       its field), including valid JSON that is not an object; 2 a manifest is
+       missing or is not strict JSON (NaN and Infinity are not JSON);
+       64 usage error.
 Python 3.9 compatible (macOS system Python).
 """
 
@@ -40,11 +58,16 @@ SOURCE = {
     "sha256": "5d7223255decc44fcb93f3aa80bb17afc1469b2d3c339d65d9473c5c0c54fcdd",
 }
 
-KEBAB = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
+# fullmatch with explicit ASCII classes: `$` would accept a trailing newline,
+# and `\d` would accept non-ASCII digits.
+KEBAB = re.compile(r"[a-z0-9]+(?:-[a-z0-9]+)*")
+_NUM = r"(?:0|[1-9][0-9]*)"
+_PRE_ID = r"(?:0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*)"  # numeric ids: no leading zero
+_BUILD_ID = r"[0-9A-Za-z-]+"
 SEMVER = re.compile(
-    r"^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)"
-    r"(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?"
-    r"(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$"
+    rf"{_NUM}\.{_NUM}\.{_NUM}"
+    rf"(?:-{_PRE_ID}(?:\.{_PRE_ID})*)?"
+    rf"(?:\+{_BUILD_ID}(?:\.{_BUILD_ID})*)?"
 )
 
 STRING, OBJECT, STRINGS = "string", "object", "array of strings"
@@ -84,6 +107,10 @@ class ManifestUnreadable(Exception):
     pass
 
 
+def _reject_constant(token: str) -> None:
+    raise ValueError(f"{token} is not JSON")
+
+
 def has_type(value: Any, kind: str) -> bool:
     if kind == STRING:
         return isinstance(value, str)
@@ -106,21 +133,31 @@ def check_fields(obj: dict, spec: dict[str, str], prefix: str, errors: list[str]
             errors.append(f"{field}: must be {spec[key]}")
 
 
+def has_parent_component(value: str) -> bool:
+    return ".." in value.split("/")
+
+
 def check_relative(value: Any, field: str, errors: list[str]) -> None:
-    if isinstance(value, str) and not value.startswith("./"):
+    if not isinstance(value, str):
+        return
+    if not value.startswith("./"):
         errors.append(f"{field}: path must be relative and begin with ./")
+    elif has_parent_component(value):
+        errors.append(f"{field}: path must not contain a .. component")
 
 
-def load(path: Path, label: str) -> dict:
+def load(path: Path, label: str) -> Any:
+    """Parse strict JSON; a missing or unreadable file raises ManifestUnreadable."""
     try:
-        data = json.loads(path.read_text(encoding="utf-8"))
+        text = path.read_text(encoding="utf-8")
     except FileNotFoundError:
-        raise ManifestUnreadable(f"{label}: missing ({path})")
-    except (OSError, UnicodeDecodeError, ValueError) as exc:
+        raise ManifestUnreadable(f"{label}: missing")
+    except (OSError, UnicodeDecodeError) as exc:
+        raise ManifestUnreadable(f"{label}: not JSON ({type(exc).__name__})")
+    try:
+        return json.loads(text, parse_constant=_reject_constant)
+    except ValueError as exc:
         raise ManifestUnreadable(f"{label}: not JSON ({exc})")
-    if not isinstance(data, dict):
-        raise ManifestUnreadable(f"{label}: not a JSON object")
-    return data
 
 
 def check_plugin(plugin: dict, errors: list[str]) -> None:
@@ -128,10 +165,10 @@ def check_plugin(plugin: dict, errors: list[str]) -> None:
     name = plugin.get("name")
     if name is None:
         errors.append("plugin.json name: required")
-    elif isinstance(name, str) and not KEBAB.match(name):
+    elif isinstance(name, str) and not KEBAB.fullmatch(name):
         errors.append("plugin.json name: must be kebab-case")
     version = plugin.get("version")
-    if isinstance(version, str) and not SEMVER.match(version):
+    if isinstance(version, str) and not SEMVER.fullmatch(version):
         errors.append("plugin.json version: must be a semantic version")
     if isinstance(plugin.get("author"), dict):
         check_fields(plugin["author"], AUTHOR_FIELDS, "plugin.json author.", errors)
@@ -155,7 +192,9 @@ def check_interface(interface: dict, errors: list[str]) -> None:
     shots = interface.get("screenshots")
     if isinstance(shots, list):
         for index, shot in enumerate(shots):
-            if isinstance(shot, str) and not (shot.startswith("./assets/") and shot.endswith(".png")):
+            if isinstance(shot, str) and not (
+                shot.startswith("./assets/") and shot.endswith(".png") and not has_parent_component(shot)
+            ):
                 errors.append(f"plugin.json interface.screenshots[{index}]: must be a .png under ./assets/")
 
 
@@ -201,7 +240,7 @@ def check_entry(entry: Any, prefix: str, errors: list[str]) -> None:
 def main(argv: list[str]) -> int:
     if len(argv) != 2:
         print("usage: codex_plugin_schema.py <repo-root>", file=sys.stderr)
-        return 2
+        return 64
     root = Path(argv[1])
     try:
         plugin = load(root / ".codex-plugin" / "plugin.json", "plugin.json")
@@ -210,8 +249,13 @@ def main(argv: list[str]) -> int:
         print(exc)
         return 2
     errors: list[str] = []
-    check_plugin(plugin, errors)
-    check_marketplace(market, errors)
+    for label, data in (("plugin.json", plugin), ("marketplace.json", market)):
+        if not isinstance(data, dict):
+            errors.append(f"{label}: must be a JSON object")
+    if isinstance(plugin, dict):
+        check_plugin(plugin, errors)
+    if isinstance(market, dict):
+        check_marketplace(market, errors)
     for error in errors:
         print(error)
     if errors:

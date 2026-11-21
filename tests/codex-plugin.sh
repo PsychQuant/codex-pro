@@ -571,7 +571,7 @@ schema_gate_verdict() {
     printf 'fail: pinned schema check is missing (%s)\n' "$check"
     return 0
   fi
-  output=$(python3 "$check" "$root" 2>&1)
+  output=$(python3 -I "$check" "$root" 2>&1 </dev/null)
   status=$?
   if [ "$status" -eq 0 ]; then
     printf 'pass\n'
@@ -589,14 +589,30 @@ else
   fail "pinned schema check accepts the native package (${gate_verdict#fail: })"
 fi
 
+# spec-example: codex-native-plugin / pinned schema check accepts the native manifest
+if [ -r "$SCHEMA_CHECK" ]; then
+  quiet_output=$(python3 -I "$SCHEMA_CHECK" "$REPO_ROOT" 2>&1 </dev/null)
+  quiet_exit=$?
+  if [ "$quiet_exit" -eq 0 ] && [ -z "$quiet_output" ]; then
+    pass "pinned schema check exits 0 and prints nothing for the native manifest"
+  else
+    fail "pinned schema check exits 0 and prints nothing for the native manifest (exit=$quiet_exit: $quiet_output)"
+  fi
+  python3 -I "$SCHEMA_CHECK" >/dev/null 2>&1 </dev/null
+  usage_exit=$?
+  if [ "$usage_exit" -eq 64 ]; then
+    pass "pinned schema check exits 64 on a usage error"
+  else
+    fail "pinned schema check exits 64 on a usage error (got $usage_exit)"
+  fi
+fi
+
 # spec-example: tests / missing schema check fails the contract test
 missing_verdict=$(schema_gate_verdict "$REPO_ROOT/tests/lib/does-not-exist.py" "$REPO_ROOT")
+# The verdict's status word decides, not a substring of a message that holds a path.
 case "$missing_verdict" in
-  fail:*does-not-exist.py*)
-    case "$missing_verdict" in
-      *[Ss]kip*) fail "a missing schema check is reported as a failure, not a skip (got: $missing_verdict)" ;;
-      *) pass "a missing schema check is reported as a failure naming the file" ;;
-    esac ;;
+  "fail: pinned schema check is missing ($REPO_ROOT/tests/lib/does-not-exist.py)")
+    pass "a missing schema check is reported as a failure naming the file" ;;
   *) fail "a missing schema check is reported as a failure naming the file (got: $missing_verdict)" ;;
 esac
 
@@ -605,6 +621,37 @@ esac
 # given exit code and the field name in the output.
 schema_tmp=$(mktemp -d "${TMPDIR:-/tmp}/codex-plugin-schema.XXXXXX") || {
   fail "temporary directory for pinned schema negative cases"; schema_tmp=""; }
+SCHEMA_CASES=$(cat <<'CASES'
+name-missing|1|plugin.json name:
+name-not-kebab|1|plugin.json name:
+name-trailing-newline|1|plugin.json name:
+version-number|1|plugin.json version:
+version-trailing-newline|1|plugin.json version:
+version-non-ascii-digit|1|plugin.json version:
+version-prerelease-leading-zero|1|plugin.json version:
+keywords-string|1|plugin.json keywords:
+undocumented-field|1|plugin.json skill:
+skills-not-relative|1|plugin.json skills:
+skills-dotdot|1|plugin.json skills:
+default-prompt-four|1|plugin.json interface.defaultPrompt:
+default-prompt-too-long|1|plugin.json interface.defaultPrompt:
+screenshot-outside-assets|1|plugin.json interface.screenshots[0]:
+screenshot-dotdot|1|plugin.json interface.screenshots[0]:
+policy-installation-invalid|1|plugins[0].policy.installation:
+policy-authentication-invalid|1|plugins[0].policy.authentication:
+source-not-local|1|plugins[0].source.source:
+source-path-not-relative|1|plugins[0].source.path:
+source-path-dotdot|1|plugins[0].source.path:
+category-missing|1|plugins[0].category:
+plugin-not-object|1|plugin.json: must be a JSON object
+plugin-not-json|2|plugin.json: not JSON
+plugin-nan|2|plugin.json: not JSON
+plugin-missing|2|plugin.json: missing
+market-not-json|2|marketplace.json: not JSON
+CASES
+)
+schema_cases_expected=$(printf '%s\n' "$SCHEMA_CASES" | grep -c .)
+schema_cases_ran=0
 if [ -n "$schema_tmp" ] && [ -r "$SCHEMA_CHECK" ]; then
   while IFS='|' read -r case_name expect_exit expect_field; do
     [ -n "$case_name" ] || continue
@@ -612,7 +659,7 @@ if [ -n "$schema_tmp" ] && [ -r "$SCHEMA_CHECK" ]; then
     mkdir -p "$case_root/.codex-plugin" "$case_root/.agents/plugins"
     cp "$REPO_ROOT/.codex-plugin/plugin.json" "$case_root/.codex-plugin/plugin.json"
     cp "$REPO_ROOT/.agents/plugins/marketplace.json" "$case_root/.agents/plugins/marketplace.json"
-    if ! python3 - "$case_root" "$case_name" <<'PY_MUTATE'
+    if ! python3 -I - "$case_root" "$case_name" <<'PY_MUTATE'
 import json
 import sys
 from pathlib import Path
@@ -627,6 +674,26 @@ if case == "name-missing":
     del plugin["name"]
 elif case == "name-not-kebab":
     plugin["name"] = "Codex Pro"
+elif case == "name-trailing-newline":
+    plugin["name"] = "codex-pro\n"
+elif case == "version-trailing-newline":
+    plugin["version"] = "0.11.0\n"
+elif case == "version-non-ascii-digit":
+    plugin["version"] = "1.2.\u0663"
+elif case == "version-prerelease-leading-zero":
+    plugin["version"] = "1.2.3-01"
+elif case == "skills-dotdot":
+    plugin["skills"] = "./../skills/"
+elif case == "screenshot-dotdot":
+    plugin["interface"]["screenshots"] = ["./assets/../shot.png"]
+elif case == "source-path-dotdot":
+    entry["source"]["path"] = "./../outside"
+elif case == "plugin-not-object":
+    plugin_path.write_text("[]", encoding="utf-8")
+    sys.exit(0)
+elif case == "plugin-nan":
+    plugin_path.write_text('{"name": "codex-pro", "version": NaN}', encoding="utf-8")
+    sys.exit(0)
 elif case == "version-number":
     plugin["version"] = 1
 elif case == "keywords-string":
@@ -669,7 +736,8 @@ PY_MUTATE
       fail "pinned schema negative case '$case_name' could be prepared"
       continue
     fi
-    case_output=$(python3 "$SCHEMA_CHECK" "$case_root" 2>&1)
+    schema_cases_ran=$((schema_cases_ran + 1))
+    case_output=$(python3 -I "$SCHEMA_CHECK" "$case_root" 2>&1 </dev/null)
     case_exit=$?
     if [ "$case_exit" -eq "$expect_exit" ] && printf '%s' "$case_output" | grep -qF -- "$expect_field"; then
       pass "pinned schema rejects '$case_name' (exit $expect_exit, names $expect_field)"
@@ -677,27 +745,43 @@ PY_MUTATE
       case_reason=$(printf '%s\n' "$case_output" | tr '\n' ' ' | sed 's/[[:space:]]*$//')
       fail "pinned schema rejects '$case_name' (expected exit $expect_exit naming $expect_field; got exit $case_exit: $case_reason)"
     fi
-  done <<'CASES'
-name-missing|1|plugin.json name:
-name-not-kebab|1|plugin.json name:
-version-number|1|plugin.json version:
-keywords-string|1|plugin.json keywords:
-undocumented-field|1|plugin.json skill:
-skills-not-relative|1|plugin.json skills:
-default-prompt-four|1|plugin.json interface.defaultPrompt:
-default-prompt-too-long|1|plugin.json interface.defaultPrompt:
-screenshot-outside-assets|1|plugin.json interface.screenshots[0]:
-policy-installation-invalid|1|plugins[0].policy.installation:
-policy-authentication-invalid|1|plugins[0].policy.authentication:
-source-not-local|1|plugins[0].source.source:
-source-path-not-relative|1|plugins[0].source.path:
-category-missing|1|plugins[0].category:
-plugin-not-json|2|plugin.json: not JSON
-plugin-missing|2|plugin.json: missing
-market-not-json|2|marketplace.json: not JSON
-CASES
+  done <<<"$SCHEMA_CASES"
 elif [ -n "$schema_tmp" ]; then
   fail "pinned schema negative cases need the check file ($SCHEMA_CHECK)"
+fi
+if [ "$schema_cases_ran" -eq "$schema_cases_expected" ]; then
+  pass "pinned schema negative cases all ran ($schema_cases_ran of $schema_cases_expected)"
+else
+  fail "pinned schema negative cases all ran (ran $schema_cases_ran of $schema_cases_expected)"
+fi
+
+# The gate's failure reaches the whole script: a copy of the tracked tree with a
+# broken manifest, and one without the check file, must make this script exit
+# non-zero and name the schema step. Nested runs skip this section.
+if [ -n "$schema_tmp" ] && [ "${CODEX_PLUGIN_NESTED:-}" != "1" ]; then
+  for integration_case in broken-manifest missing-check; do
+    copy_root="$schema_tmp/copy-$integration_case"
+    mkdir -p "$copy_root"
+    if ! (cd "$REPO_ROOT" && git ls-files -z | tar --null -T - -cf -) | (cd "$copy_root" && tar -xf -); then
+      fail "integration copy of the tracked tree for '$integration_case'"
+      continue
+    fi
+    if [ "$integration_case" = "broken-manifest" ]; then
+      python3 -I -c 'import json,sys; p=sys.argv[1]; d=json.load(open(p)); d["keywords"]="codex"; open(p,"w").write(json.dumps(d))' \
+        "$copy_root/.codex-plugin/plugin.json"
+      expect_text="✗ pinned schema check accepts the native package"
+    else
+      rm -f "$copy_root/tests/lib/codex_plugin_schema.py"
+      expect_text="pinned schema check is missing"
+    fi
+    integration_output=$(CODEX_PLUGIN_NESTED=1 bash "$copy_root/tests/codex-plugin.sh" 2>&1 </dev/null)
+    integration_exit=$?
+    if [ "$integration_exit" -ne 0 ] && printf '%s' "$integration_output" | grep -qF -- "$expect_text"; then
+      pass "codex-plugin.sh exits non-zero and names the schema step ($integration_case)"
+    else
+      fail "codex-plugin.sh exits non-zero and names the schema step ($integration_case; exit=$integration_exit)"
+    fi
+  done
 fi
 [ -n "$schema_tmp" ] && rm -rf "$schema_tmp"
 

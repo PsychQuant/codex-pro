@@ -4,7 +4,7 @@
 
 Issue: [#24](https://github.com/PsychQuant/codex-pro/issues/24)
 
-- `tests/codex-plugin.sh` 不再呼叫 Codex 的 plugin-creator validator（Codex CLI 已不附帶，上游 `openai/skills` 的歷史裡也沒有這支腳本），改用 repo 自帶的 `tests/lib/codex_plugin_schema.py`。規則依上游 `skills/.system/plugin-creator/references/plugin-json-spec.md`，釘在 commit `e940b8a86138adf03972802b990a1dfc57fcbf09`，來源 commit 與檔案 sha256 記在檢查裡；文件沒描述的欄位一律失敗，檢查檔不存在時測試失敗、不跳過。12 個負向案例證明它會擋下壞掉的 manifest。`bash tests/run.sh` 在乾淨的 `main` 上恢復全綠。
+- `tests/codex-plugin.sh` 不再呼叫 Codex 的 plugin-creator validator（Codex CLI 已不附帶，上游 `openai/skills` 的歷史裡也沒有這支腳本），改用 repo 自帶的 `tests/lib/codex_plugin_schema.py`。規則依上游 `skills/.system/plugin-creator/references/plugin-json-spec.md`，釘在 commit `e940b8a86138adf03972802b990a1dfc57fcbf09`，來源 commit 與檔案 sha256 記在檢查裡；文件沒描述的欄位一律失敗，檢查檔不存在時測試失敗、不跳過。26 個負向案例（22 個違規、4 個缺檔或不是 JSON）與兩個整合案例證明它會擋下壞掉的 manifest，且失敗會讓整支 `tests/codex-plugin.sh` 回非零。上游檔案所在的 skill 目錄是 Apache-2.0；這裡把規則寫成程式，不複製檔案。`openspec/specs/codex-native-plugin` 的 manifest requirement 也改成這個檢查，版本不再寫死。`bash tests/run.sh` 在乾淨的 `main` 上恢復全綠。
 
 ## 0.11.0 — 2026-11-12
 
