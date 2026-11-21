@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+Issue: [#24](https://github.com/PsychQuant/codex-pro/issues/24)
+
+- `tests/codex-plugin.sh` 不再呼叫 Codex 的 plugin-creator validator（Codex CLI 已不附帶，上游 `openai/skills` 的歷史裡也沒有這支腳本），改用 repo 自帶的 `tests/lib/codex_plugin_schema.py`。規則依上游 `skills/.system/plugin-creator/references/plugin-json-spec.md`，釘在 commit `e940b8a86138adf03972802b990a1dfc57fcbf09`，來源 commit 與檔案 sha256 記在檢查裡；文件沒描述的欄位一律失敗，檢查檔不存在時測試失敗、不跳過。12 個負向案例證明它會擋下壞掉的 manifest。`bash tests/run.sh` 在乾淨的 `main` 上恢復全綠。
+
 ## 0.11.0 — 2026-11-12
 
 Issue: [#32](https://github.com/PsychQuant/codex-pro/issues/32)

@@ -192,7 +192,7 @@ scripts/generate-codex-skills.sh
 
 自動與人工測試在 `tests/`：
 
-- **Codex package contract** — `tests/codex-plugin.sh` 驗原生 manifest、repo marketplace、十個 skills、版本與 plugin-creator validator
+- **Codex package contract** — `tests/codex-plugin.sh` 驗原生 manifest、repo marketplace、十個 skills、版本，以及釘在上游 `openai/skills` commit `e940b8a861` 的 manifest schema 檢查（`tests/lib/codex_plugin_schema.py`）
 - **Codex bundle parity** — `tests/codex-skills-parity.sh` 驗兩個完整 bundle、暫存重生、相對連結、ownership 與冪等性
 - **Codex runtime** — `tests/codex-runtime.sh` 驗 provenance、wrapper、resolver matrix；`--smoke` 在 macOS 執行真 Swift 離線檢查
 - **Layer 1 (static)** — Claude manifest JSON schema、SKILL.md frontmatter、`bash -n`、batch template byte-identical sha256、namespace consistency

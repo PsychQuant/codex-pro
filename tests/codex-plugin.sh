@@ -556,22 +556,133 @@ else
   fi
 fi
 
-# Resolve the bundled plugin-creator validator without embedding a maintainer's
-# absolute home path. Tests may pin another current validator through the
-# explicit environment override when Codex stores system skills elsewhere.
-validator_path="${CODEX_PLUGIN_CREATOR_VALIDATOR:-${CODEX_HOME:-$HOME/.codex}/skills/.system/plugin-creator/scripts/validate_plugin.py}"
-if [ ! -r "$validator_path" ]; then
-  fail "current plugin-creator validator is available (checked: $validator_path)"
-else
-  validator_output=$(python3 "$validator_path" "$REPO_ROOT" 2>&1)
-  validator_exit=$?
-  if [ "$validator_exit" -eq 0 ]; then
-    pass "current plugin-creator validator accepts the native package"
-  else
-    validator_reason=$(printf '%s\n' "$validator_output" | tr '\n' ' ' | sed 's/[[:space:]]*$//')
-    fail "current plugin-creator validator accepts the native package (exit=$validator_exit: $validator_reason)"
+# Release gate: the repository-local schema check pinned to the upstream
+# plugin-creator `plugin-json-spec.md` (#24). The Codex plugin-creator
+# validator is no longer consulted: Codex CLI stopped shipping it, and it never
+# appeared in the upstream openai/skills history. The pinned repository, path,
+# commit and file hash are recorded in the check itself.
+SCHEMA_CHECK="$SCRIPT_DIR/lib/codex_plugin_schema.py"
+
+# schema_gate_verdict <check> <repo-root> — prints "pass" or "fail: <reason>".
+# A missing or unreadable check is a failure, never a skip.
+schema_gate_verdict() {
+  local check="$1" root="$2" output status reason
+  if [ ! -r "$check" ]; then
+    printf 'fail: pinned schema check is missing (%s)\n' "$check"
+    return 0
   fi
+  output=$(python3 "$check" "$root" 2>&1)
+  status=$?
+  if [ "$status" -eq 0 ]; then
+    printf 'pass\n'
+  else
+    reason=$(printf '%s\n' "$output" | tr '\n' ' ' | sed 's/[[:space:]]*$//')
+    printf 'fail: exit=%s: %s\n' "$status" "$reason"
+  fi
+}
+
+# spec-example: tests / pinned schema accepts the repository manifests
+gate_verdict=$(schema_gate_verdict "$SCHEMA_CHECK" "$REPO_ROOT")
+if [ "$gate_verdict" = "pass" ]; then
+  pass "pinned schema check accepts the native package"
+else
+  fail "pinned schema check accepts the native package (${gate_verdict#fail: })"
 fi
+
+# spec-example: tests / missing schema check fails the contract test
+missing_verdict=$(schema_gate_verdict "$REPO_ROOT/tests/lib/does-not-exist.py" "$REPO_ROOT")
+case "$missing_verdict" in
+  fail:*does-not-exist.py*)
+    case "$missing_verdict" in
+      *[Ss]kip*) fail "a missing schema check is reported as a failure, not a skip (got: $missing_verdict)" ;;
+      *) pass "a missing schema check is reported as a failure naming the file" ;;
+    esac ;;
+  *) fail "a missing schema check is reported as a failure naming the file (got: $missing_verdict)" ;;
+esac
+
+# spec-example: tests / pinned schema rejects a broken manifest
+# Each case mutates a temporary copy of the two manifests and expects the
+# given exit code and the field name in the output.
+schema_tmp=$(mktemp -d "${TMPDIR:-/tmp}/codex-plugin-schema.XXXXXX") || {
+  fail "temporary directory for pinned schema negative cases"; schema_tmp=""; }
+if [ -n "$schema_tmp" ] && [ -r "$SCHEMA_CHECK" ]; then
+  while IFS='|' read -r case_name expect_exit expect_field; do
+    [ -n "$case_name" ] || continue
+    case_root="$schema_tmp/$case_name"
+    mkdir -p "$case_root/.codex-plugin" "$case_root/.agents/plugins"
+    cp "$REPO_ROOT/.codex-plugin/plugin.json" "$case_root/.codex-plugin/plugin.json"
+    cp "$REPO_ROOT/.agents/plugins/marketplace.json" "$case_root/.agents/plugins/marketplace.json"
+    if ! python3 - "$case_root" "$case_name" <<'PY_MUTATE'
+import json
+import sys
+from pathlib import Path
+
+root, case = Path(sys.argv[1]), sys.argv[2]
+plugin_path = root / ".codex-plugin" / "plugin.json"
+market_path = root / ".agents" / "plugins" / "marketplace.json"
+plugin = json.loads(plugin_path.read_text(encoding="utf-8"))
+market = json.loads(market_path.read_text(encoding="utf-8"))
+entry = market["plugins"][0]
+if case == "name-missing":
+    del plugin["name"]
+elif case == "name-not-kebab":
+    plugin["name"] = "Codex Pro"
+elif case == "version-number":
+    plugin["version"] = 1
+elif case == "keywords-string":
+    plugin["keywords"] = "codex"
+elif case == "undocumented-field":
+    plugin["skill"] = "./skills/"
+elif case == "skills-not-relative":
+    plugin["skills"] = "skills/"
+elif case == "default-prompt-four":
+    plugin["interface"]["defaultPrompt"] = ["a", "b", "c", "d"]
+elif case == "screenshot-outside-assets":
+    plugin["interface"]["screenshots"] = ["./shot.png"]
+elif case == "policy-installation-invalid":
+    entry["policy"]["installation"] = "MAYBE"
+elif case == "source-not-local":
+    entry["source"]["source"] = "git"
+elif case == "category-missing":
+    del entry["category"]
+elif case == "plugin-not-json":
+    plugin_path.write_text("not json", encoding="utf-8")
+    sys.exit(0)
+else:
+    sys.exit(f"unknown case {case}")
+plugin_path.write_text(json.dumps(plugin), encoding="utf-8")
+market_path.write_text(json.dumps(market), encoding="utf-8")
+PY_MUTATE
+    then
+      fail "pinned schema negative case '$case_name' could be prepared"
+      continue
+    fi
+    case_output=$(python3 "$SCHEMA_CHECK" "$case_root" 2>&1)
+    case_exit=$?
+    if [ "$case_exit" -eq "$expect_exit" ] && printf '%s' "$case_output" | grep -qF -- "$expect_field"; then
+      pass "pinned schema rejects '$case_name' (exit $expect_exit, names $expect_field)"
+    else
+      case_reason=$(printf '%s\n' "$case_output" | tr '\n' ' ' | sed 's/[[:space:]]*$//')
+      fail "pinned schema rejects '$case_name' (expected exit $expect_exit naming $expect_field; got exit $case_exit: $case_reason)"
+    fi
+  done <<'CASES'
+name-missing|1|name
+name-not-kebab|1|name
+version-number|1|version
+keywords-string|1|keywords
+undocumented-field|1|skill
+skills-not-relative|1|skills
+default-prompt-four|1|defaultPrompt
+screenshot-outside-assets|1|screenshots
+policy-installation-invalid|1|policy.installation
+source-not-local|1|source.source
+category-missing|1|category
+plugin-not-json|2|plugin.json
+CASES
+elif [ -n "$schema_tmp" ]; then
+  fail "pinned schema negative cases need the check file ($SCHEMA_CHECK)"
+fi
+[ -n "$schema_tmp" ] && rm -rf "$schema_tmp"
 
 report_summary "codex-plugin"
 exit_code=$?
