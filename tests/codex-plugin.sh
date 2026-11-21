@@ -597,11 +597,21 @@ run_schema_gate() {
 # spec-example: tests / pinned schema accepts the repository manifests
 run_schema_gate "$SCHEMA_CHECK" "$REPO_ROOT"
 
+# One temporary root for the schema tests, checked and removed on exit.
+schema_tmp=$(mktemp -d "${TMPDIR:-/tmp}/codex-plugin-schema.XXXXXX") || schema_tmp=""
+if [ -n "$schema_tmp" ] && [ -d "$schema_tmp" ]; then
+  trap 'rm -rf "$schema_tmp"' EXIT
+else
+  schema_tmp=""
+  fail "temporary directory for the pinned schema tests"
+fi
+
 # spec-example: tests / the gate's failure is counted
 # The gate's own fail must reach the fail count, so the script's exit status:
 # run it in a subshell with fresh counters against a missing checker, a checker
 # that exits 1 and one that exits 0, and read back the counts it left.
-gate_stub_dir=$(mktemp -d "${TMPDIR:-/tmp}/codex-plugin-gate.XXXXXX")
+gate_stub_dir="$schema_tmp/gate-stubs"
+if [ -n "$schema_tmp" ] && mkdir -p "$gate_stub_dir"; then
 printf 'import sys\nsys.exit(1)\n' >"$gate_stub_dir/fails.py"
 printf 'import sys\nsys.exit(0)\n' >"$gate_stub_dir/passes.py"
 while IFS='|' read -r stub expect_fail expect_pass; do
@@ -616,11 +626,11 @@ missing.py|1|0
 fails.py|1|0
 passes.py|0|1
 STUBS
-rm -rf "$gate_stub_dir"
+fi
 
 # spec-example: codex-native-plugin / pinned schema check accepts the native manifest
-if [ -r "$SCHEMA_CHECK" ]; then
-  quiet_file=$(mktemp "${TMPDIR:-/tmp}/codex-plugin-quiet.XXXXXX")
+if [ -r "$SCHEMA_CHECK" ] && [ -n "$schema_tmp" ]; then
+  quiet_file="$schema_tmp/quiet-output"
   python3 -I "$SCHEMA_CHECK" "$REPO_ROOT" >"$quiet_file" 2>&1 </dev/null
   quiet_exit=$?
   if [ "$quiet_exit" -eq 0 ] && [ ! -s "$quiet_file" ]; then
@@ -628,7 +638,6 @@ if [ -r "$SCHEMA_CHECK" ]; then
   else
     fail "pinned schema check exits 0 and prints nothing for the native manifest (exit=$quiet_exit, $(wc -c <"$quiet_file" | tr -d ' ') bytes)"
   fi
-  rm -f "$quiet_file"
   python3 -I "$SCHEMA_CHECK" >/dev/null 2>&1 </dev/null
   usage_exit=$?
   if [ "$usage_exit" -eq 64 ]; then
@@ -650,9 +659,6 @@ esac
 # spec-example: tests / pinned schema rejects a broken manifest
 # Each case mutates a temporary copy of the two manifests and expects the
 # given exit code and the field name in the output.
-schema_tmp=$(mktemp -d "${TMPDIR:-/tmp}/codex-plugin-schema.XXXXXX") || {
-  fail "temporary directory for pinned schema negative cases"; schema_tmp=""; }
-[ -n "$schema_tmp" ] && trap 'rm -rf "$schema_tmp"' EXIT
 SCHEMA_CASES=$(cat <<'CASES'
 name-missing|1|plugin.json name:
 name-not-kebab|1|plugin.json name:
@@ -681,6 +687,15 @@ version-build-invalid|1|plugin.json version:
 name-uppercase|1|plugin.json name:
 products-not-strings|1|plugins[0].policy.products:
 default-prompt-at-limit|0|
+version-prerelease-build-valid|0|
+name-null|1|plugin.json name: must be string
+source-source-missing|1|plugins[0].source.source: required
+author-not-object|1|plugin.json author: must be object
+interface-not-object|1|plugin.json interface: must be object
+plugins-not-array|1|marketplace.json plugins: must be array
+source-not-object|1|plugins[0].source: must be object
+policy-not-object|1|plugins[0].policy: must be object
+version-long-integer|1|plugin.json version: must be string
 key-with-newline|1|plugin.json "x\nfake":
 key-lone-surrogate|1|plugin.json "\ud800":
 market-not-object|1|marketplace.json: must be a JSON object
@@ -719,7 +734,7 @@ schema_cases_ran=0
 if [ -n "$schema_tmp" ] && [ -r "$SCHEMA_CHECK" ]; then
   while IFS='|' read -r case_name expect_exit expect_field; do
     [ -n "$case_name" ] || continue
-    case_root="$schema_tmp/$case_name"
+    case_root="$schema_tmp/case-$case_name"
     mkdir -p "$case_root/.codex-plugin" "$case_root/.agents/plugins"
     cp "$REPO_ROOT/.codex-plugin/plugin.json" "$case_root/.codex-plugin/plugin.json"
     cp "$REPO_ROOT/.agents/plugins/marketplace.json" "$case_root/.agents/plugins/marketplace.json"
@@ -762,6 +777,27 @@ elif case == "name-uppercase":
     plugin["name"] = "Codex-pro"
 elif case == "products-not-strings":
     entry["policy"]["products"] = [1]
+elif case == "version-prerelease-build-valid":
+    plugin["version"] = "1.2.3-rc.1+build.5"
+elif case == "name-null":
+    plugin["name"] = None
+elif case == "source-source-missing":
+    del entry["source"]["source"]
+elif case == "author-not-object":
+    plugin["author"] = "someone"
+elif case == "interface-not-object":
+    plugin["interface"] = "x"
+elif case == "plugins-not-array":
+    market["plugins"] = "codex-pro"
+elif case == "source-not-object":
+    entry["source"] = "./plugins/codex-pro"
+elif case == "policy-not-object":
+    entry["policy"] = "AVAILABLE"
+elif case == "version-long-integer":
+    text = json.dumps(plugin)
+    plugin_path.write_text(text.replace(json.dumps(plugin["version"]), "1" + "0" * 5000, 1), encoding="utf-8")
+    market_path.write_text(json.dumps(market), encoding="utf-8")
+    sys.exit(0)
 elif case == "default-prompt-at-limit":
     plugin["interface"]["defaultPrompt"] = ["x" * 128]
 elif case == "key-with-newline":
@@ -779,7 +815,8 @@ elif case == "plugin-not-utf8":
     plugin_path.write_bytes(b'{"name": "\xff"}')
     sys.exit(0)
 elif case == "plugin-unreadable":
-    plugin_path.chmod(0)
+    plugin_path.unlink()
+    plugin_path.mkdir()
     sys.exit(0)
 elif case == "author-undocumented":
     plugin["author"]["twitter"] = "x"
@@ -874,7 +911,14 @@ PY_MUTATE
     schema_cases_ran=$((schema_cases_ran + 1))
     case_output=$(python3 -I "$SCHEMA_CHECK" "$case_root" 2>&1 </dev/null)
     case_exit=$?
-    if [ "$case_exit" -eq "$expect_exit" ] && grep -qF -- "$expect_field" <<<"$case_output"; then
+    if [ "$expect_exit" -eq 0 ]; then
+      if [ "$case_exit" -eq 0 ] && [ -z "$case_output" ]; then
+        pass "pinned schema accepts '$case_name' (exit 0, no output)"
+      else
+        case_reason=$(printf '%s\n' "$case_output" | tr '\n' ' ' | sed 's/[[:space:]]*$//')
+        fail "pinned schema accepts '$case_name' (expected exit 0 and no output; got exit $case_exit: $case_reason)"
+      fi
+    elif [ "$case_exit" -eq "$expect_exit" ] && grep -qF -- "$expect_field" <<<"$case_output"; then
       pass "pinned schema rejects '$case_name' (exit $expect_exit, names $expect_field)"
     else
       case_reason=$(printf '%s\n' "$case_output" | tr '\n' ' ' | sed 's/[[:space:]]*$//')
@@ -901,9 +945,15 @@ rows = []
 for line in text[start:].splitlines()[1:]:
     if line.startswith("#"):
         break
+    if not line.startswith("|"):
+        continue
+    if re.match(r"\| Case in |\| -+ \|", line):
+        continue
     m = re.match(r"\| `([^`]+)` \| (\d) \| `(.*)` \|$", line)
-    if m:
-        rows.append("|".join(m.groups()))
+    if not m:
+        rows.append("UNPARSEABLE ROW: " + line)
+        continue
+    rows.append("|".join(m.groups()))
 print("\n".join(rows))
 PY_TABLE
 )
@@ -932,6 +982,12 @@ if [ "$internal_exit" = "3" ]; then
   pass "pinned schema check exits 3 on an unexpected error"
 else
   fail "pinned schema check exits 3 on an unexpected error (got ${internal_exit:-none})"
+fi
+# The command line goes through the same wrapper.
+if [ "$(grep -v '^[[:space:]]*$' "$SCHEMA_CHECK" | tail -n 1)" = "    sys.exit(main(sys.argv))" ]; then
+  pass "the checker's command-line entry calls the exit-3 wrapper"
+else
+  fail "the checker's command-line entry calls the exit-3 wrapper"
 fi
 [ -n "$schema_tmp" ] && rm -rf "$schema_tmp"
 

@@ -38,7 +38,7 @@ Where this check differs from the guide, on purpose:
 Usage: codex_plugin_schema.py <repo-root>
 Exit:  0 both manifests conform; 1 one or more violations (each printed with
        its field), including valid JSON that is not an object; 2 a manifest is
-       missing or is not strict JSON (NaN, Infinity, a repeated key, or nesting
+       missing, unreadable, or not strict UTF-8 JSON (NaN, Infinity, a repeated key, or nesting
        deeper than the parser allows); 3 an unexpected internal error;
        64 usage error. Field names that are not plain identifiers are printed
        JSON-escaped.
@@ -48,6 +48,7 @@ Python 3.9 compatible (macOS system Python).
 from __future__ import annotations
 
 import json
+from decimal import Decimal
 import re
 import sys
 from pathlib import Path
@@ -176,7 +177,9 @@ def load(path: Path, label: str) -> Any:
     except (OSError, UnicodeDecodeError) as exc:
         raise ManifestUnreadable(f"{label}: not JSON ({type(exc).__name__})")
     try:
-        return json.loads(text, parse_constant=_reject_constant, object_pairs_hook=_reject_duplicates)
+        # Decimal: no interpreter digit limit, so a long integer is a type error on every Python.
+        return json.loads(text, parse_constant=_reject_constant, object_pairs_hook=_reject_duplicates,
+                          parse_int=Decimal)
     except ValueError as exc:
         raise ManifestUnreadable(f"{label}: not JSON ({exc})")
     except RecursionError:
@@ -186,7 +189,7 @@ def load(path: Path, label: str) -> Any:
 def check_plugin(plugin: dict, errors: list[str]) -> None:
     check_fields(plugin, PLUGIN_FIELDS, "plugin.json ", errors)
     name = plugin.get("name")
-    if name is None:
+    if "name" not in plugin:
         errors.append("plugin.json name: required")
     elif isinstance(name, str) and not KEBAB.fullmatch(name):
         errors.append("plugin.json name: must be kebab-case")
@@ -248,7 +251,9 @@ def check_entry(entry: Any, prefix: str, errors: list[str]) -> None:
     source = entry.get("source")
     if isinstance(source, dict):
         check_fields(source, SOURCE_FIELDS, prefix + "source.", errors)
-        if source.get("source") != "local":
+        if "source" not in source:
+            errors.append(f"{prefix}source.source: required")
+        elif source.get("source") != "local":
             errors.append(f"{prefix}source.source: must be local")
         if "path" not in source:
             errors.append(f"{prefix}source.path: required")
